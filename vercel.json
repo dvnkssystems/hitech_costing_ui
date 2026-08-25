@@ -1,0 +1,4 @@
+{
+  "installCommand": "git config --global url.\"https://x-access-token:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\" && pnpm install --no-frozen-lockfile",
+  "buildCommand": "pnpm run build"
+}

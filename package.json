@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-   "@frappe-vue-sdk/vue": "git+https://github.com/aniketdvnks/frappe-vue-sdk.git#v0.6.0",
+    "@frappe-vue-sdk/vue": "git+https://github.com/aniketdvnks/frappe-vue-sdk.git#v0.6.0",
     "lucide-vue-next": "^0.462.0",
     "pinia": "^2.2.6",
     "vue": "^3.5.13",
@@ -19,5 +19,6 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
     "vite": "^5.4.11"
-  }
+  },
+  "packageManager": "pnpm@9.15.0"
 }
