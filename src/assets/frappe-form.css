@@ -1,0 +1,1574 @@
+/* ------------------------------------------------------------------
+   frappe-vue-sdk — app theme
+   ------------------------------------------------------------------
+   The SDK's form.css is driven by custom properties with Vuetify-ish
+   fallbacks, so most of this is retuning those to this app's design
+   language rather than overriding rules. Loaded after the SDK
+   stylesheet in main.js.
+
+   Defaults worth knowing about, because they are what made the form
+   look unstyled:
+     --fv-border  rgba(0,0,0,.12)  → inputs read as plain text
+     --fv-primary indigo           → toolbar and tabs went purple
+     --fv-radius  6px              → sharper than anything else here
+   ------------------------------------------------------------------ */
+
+/* On :root, not `.frappe-form`. Dialogs, quick-entry and toasts render outside
+   the form element, and their styles read the same `--fv-*` variables — which
+   the SDK also defines on :root, so its near-invisible `--fv-border`
+   (rgba(0,0,0,.12)) wins there and the dialog's own `#e2e2e2` fallback never
+   applies. Scoping these to the form left every dialog unthemed. */
+:root,
+.frappe-form {
+  --fv-primary: #f97316;
+  --fv-surface: #ffffff;
+  --fv-on-surface: #0f172a;
+  --fv-error: #dc2626;
+  --fv-border: #e6ebf1;
+  --fv-medium-emphasis: 1;
+  --fv-radius: 10px;
+  --fv-control-gap: 6px;
+  --fv-control-mb: 15px;
+  --fv-input-padding: 0 13px;
+
+  /* Local tokens, matching the hand-built screens. */
+  --app-muted: #64748b;
+  --app-faint: #94a3b8;
+  --app-label: #475569;
+  --app-card-border: #eaeef3;
+  --app-row-border: #f1f5f9;
+  --app-head-bg: #f8fafc;
+  --app-input-h: 44px;
+
+  /* The SDK paints this wrapper `--fv-surface` (white), which made sense when
+     it also drew the form's own white panel. This app renders the fields as
+     numbered cards that each carry their own white, so the wrapper's white had
+     nothing to do but fill the gaps between them — a white band above every
+     card heading, with the page's grey surviving only in the outer padding.
+     The cards supply the surface; the wrapper supplies none. */
+  background: transparent;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────── */
+.frappe-form .form-toolbar {
+  padding: 4px 0 16px;
+  border-bottom: 1px solid var(--app-card-border);
+  gap: 10px;
+}
+
+/* Every toolbar control shares one shape; the save/submit family is
+   then re-coloured below. */
+.frappe-form .form-toolbar button {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.frappe-form .form-toolbar button:hover:not(:disabled) {
+  background: #f4f6f9;
+}
+
+.frappe-form .form-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* These carry `.form-toolbar` so they out-specify the generic button rule
+   above — without it the shared white treatment wins and Save renders
+   indistinguishable from Duplicate. */
+.frappe-form .form-toolbar .btn-save {
+  background: var(--fv-primary);
+  border-color: var(--fv-primary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.frappe-form .form-toolbar .btn-save:hover:not(:disabled) {
+  background: #ea580c;
+  border-color: #ea580c;
+}
+
+.frappe-form .form-toolbar .btn-submit {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+.frappe-form .form-toolbar .btn-submit:hover:not(:disabled) {
+  background: #1e293b;
+}
+
+.frappe-form .form-toolbar .btn-cancel,
+.frappe-form .form-toolbar .btn-amend,
+.frappe-form .btn-delete-selected {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.frappe-form .form-toolbar .btn-cancel:hover:not(:disabled),
+.frappe-form .form-toolbar .btn-amend:hover:not(:disabled),
+.frappe-form .btn-delete-selected:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+/* Workflow transitions are the primary action when a workflow is attached. */
+.frappe-form .form-toolbar .btn-workflow {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #ea580c;
+}
+
+.frappe-form .workflow-state-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #ea580c;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.frappe-form .form-tabs {
+  padding: 0;
+  gap: 4px;
+  border-bottom: 1px solid var(--app-card-border);
+}
+
+.frappe-form .form-tab {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-muted);
+  border-bottom-width: 2px;
+}
+
+.frappe-form .form-tab:hover {
+  color: #0f172a;
+}
+
+.frappe-form .form-tab.active {
+  color: var(--fv-primary);
+}
+
+/* ── Body and sections ────────────────────────────────────────── */
+/* Sections carry their own bottom margin through the controls inside them, so
+   this gap only needs to separate headings, not double up on it. */
+.frappe-form .form-body {
+  padding: 20px 0 4px;
+  gap: 14px;
+}
+
+.frappe-form .section-head {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--app-faint);
+  border-bottom: 1px solid var(--app-row-border);
+  padding-bottom: 9px;
+  margin-bottom: 18px;
+}
+
+/* auto-fill keeps reserving empty tracks when a section declares fewer
+   columns than fit, which left a dead third of the row. auto-fit
+   collapses them so the real columns stretch. */
+.frappe-form .section-columns {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 28px;
+}
+
+/* ── Controls ─────────────────────────────────────────────────── */
+.frappe-form .control > span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-label);
+}
+
+.frappe-form .control input:not([type='checkbox']),
+.frappe-form .control select {
+  height: var(--app-input-h);
+  font-size: 14px;
+}
+
+.frappe-form .control textarea {
+  padding: 11px 13px;
+  font-size: 14px;
+  min-height: 88px;
+}
+
+.frappe-form .control input::placeholder,
+.frappe-form .control textarea::placeholder {
+  color: var(--app-faint);
+}
+
+/* Read-only fields should read as facts, not as inputs you failed to
+   click into. */
+.frappe-form .control input:disabled,
+.frappe-form .control select:disabled,
+.frappe-form .control textarea:disabled,
+.frappe-form .control input[readonly] {
+  background: #f8fafc;
+  color: #475569;
+  opacity: 1;
+  cursor: default;
+}
+
+.frappe-form .control-check {
+  min-height: var(--app-input-h);
+  margin-bottom: 10px;
+  gap: 10px;
+}
+
+/* `> span` and not `> span:first-child`: ControlCheck puts the input first,
+   so the :first-child form matched nothing and every checkbox label rendered
+   at inherited body size. */
+.frappe-form .control-check > span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-label);
+}
+
+.frappe-form .control-heading {
+  font-size: 15px;
+  font-weight: 700;
+  border-bottom-color: var(--app-row-border);
+}
+
+/* ── Button fields ────────────────────────────────────────────────
+   ControlButton emits Frappe desk's Bootstrap classes (`btn btn-xs
+   btn-default` / `btn-primary`) and form.css defines none of them — the SDK
+   assumes the host stylesheet supplies them. Unstyled they render as bare
+   browser buttons next to fully themed inputs. */
+.frappe-form .control-button {
+  display: flex;
+  /* `.control` sets flex-direction: column, which turns align-items into
+     *horizontal* alignment — enough to centre the button in its column. Force
+     row so the button hugs the left like every other control. */
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  /* No label above it, so a little lead-in keeps it off the control above. */
+  margin-top: 6px;
+  margin-bottom: var(--fv-control-mb);
+}
+
+.frappe-form .control-button .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #0f172a;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.frappe-form .control-button .btn:hover {
+  background: #f4f6f9;
+  border-color: #cbd5e1;
+}
+
+.frappe-form .control-button .btn:active {
+  background: #eef2f6;
+}
+
+.frappe-form .control-button .btn:focus-visible {
+  outline: none;
+  border-color: var(--fv-primary);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
+}
+
+/* `df.primary` on the field marks it the section's main action. */
+.frappe-form .control-button .btn-primary {
+  background: var(--fv-primary);
+  border-color: var(--fv-primary);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.frappe-form .control-button .btn-primary:hover {
+  background: #ea580c;
+  border-color: #ea580c;
+}
+
+/* Rendered rich text. A terms block runs to thousands of pixels unbounded,
+   which buries every field below it — cap it and scroll inside instead. */
+.frappe-form .control-text-editor .html-output {
+  border-color: var(--fv-border);
+  background: #fcfdfe;
+  padding: 14px 16px;
+  max-height: 380px;
+  overflow-y: auto;
+  color: #334155;
+}
+
+.frappe-form .control-text-editor .html-output p {
+  margin: 0 0 10px;
+}
+
+.frappe-form .control-text-editor .html-output strong,
+.frappe-form .control-text-editor .html-output b {
+  color: #0f172a;
+}
+
+.frappe-form .control-text-editor .html-output ul,
+.frappe-form .control-text-editor .html-output ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+/* Required marker, matching Frappe's own affordance.
+   The `.control.reqd` class is applied by src/lib/formEnhance.js: the SDK sets
+   `df.reqd` and enforces it, but only renders a marker on a couple of control
+   types, so most required fields would otherwise look identical to optional
+   ones. The second selector catches the controls that do emit their own. */
+.frappe-form .control.reqd > span:first-child::after,
+.frappe-form .control > span:first-child.reqd::after {
+  content: ' *';
+  color: #dc2626;
+}
+
+/* Required *and* still empty — the field actually blocking the save, or the
+   report run. Tinted rather than outlined-red-on-focus so it reads at a glance
+   without shouting on a form full of them. */
+.frappe-form .control.reqd-empty > span:first-child {
+  color: #dc2626;
+  opacity: 1;
+}
+
+.frappe-form .control.reqd-empty input:not([type='checkbox']),
+.frappe-form .control.reqd-empty select,
+.frappe-form .control.reqd-empty textarea {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.frappe-form .control.reqd-empty input:focus,
+.frappe-form .control.reqd-empty select:focus,
+.frappe-form .control.reqd-empty textarea:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+}
+
+/* ── Link control ─────────────────────────────────────────────── */
+.frappe-form .link-open-btn {
+  color: var(--fv-primary);
+}
+
+/* Clear (×) button, injected by src/lib/formEnhance.js — the SDK's ControlLink
+   ships only the open-document arrow. The SDK absolutely positions that arrow
+   at right:6px, so this sits just inside it at right:26px and the input gets
+   more right padding to keep long values from running underneath both. */
+.frappe-form .link-clear-btn {
+  position: absolute;
+  right: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: none;
+  line-height: 1;
+  cursor: pointer;
+  color: #94a3b8;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.frappe-form .link-clear-btn:hover {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.frappe-form .link-clear-btn svg {
+  display: block;
+}
+
+/* Only widen the gutter when the clear button is actually present — an empty
+   Link has neither button and should keep the standard padding. */
+.frappe-form .link-wrap:has(.link-clear-btn) input {
+  padding-right: 50px;
+}
+
+/* ── Child tables ─────────────────────────────────────────────── */
+.frappe-form .control-table {
+  margin-bottom: 24px;
+}
+
+.frappe-form .table-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-label);
+  margin-bottom: 10px;
+}
+
+/* No `overflow: hidden` here, however tempting for the rounded corners: the SDK
+   relies on this staying visible so an in-cell Link autocomplete can escape the
+   table bounds. Clipping it cuts the dropdown off mid-list. Round the corner
+   cells instead. */
+.frappe-form .frappe-child-table {
+  border: 1px solid var(--app-card-border);
+  border-radius: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.frappe-form .frappe-child-table thead tr:first-child th:first-child {
+  border-top-left-radius: 12px;
+}
+.frappe-form .frappe-child-table thead tr:first-child th:last-child {
+  border-top-right-radius: 12px;
+}
+.frappe-form .frappe-child-table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: 12px;
+}
+.frappe-form .frappe-child-table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: 12px;
+}
+
+/* Sticky header so column meaning survives a long grid. */
+.frappe-form .frappe-child-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--app-head-bg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--app-muted);
+  text-transform: uppercase;
+  padding: 12px;
+  border-bottom: 1px solid var(--app-card-border);
+  white-space: nowrap;
+}
+
+.frappe-form .frappe-child-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--app-row-border);
+  font-size: 13.5px;
+  vertical-align: middle;
+}
+
+/* Cells that render as plain text (fields not editable in-grid) shouldn't
+   inherit the row height of ones that hold an input. */
+.frappe-form .frappe-child-table td:not(:has(input, select, textarea)) {
+  padding: 13px 12px;
+}
+
+.frappe-form .frappe-child-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Attach inside a grid row ──────────────────────────────────────────────
+ * The SDK's Attach control is built for a full-width form field: a 1.75rem
+ * dashed dropzone with a title and a hint line. Dropped into a table cell it is
+ * ~200px tall, which stretches the whole row and pushes every other column out
+ * of alignment — `Document Table.attach` is the case in point.
+ *
+ * Inside a grid it collapses to a single-line target the height of a normal
+ * cell input. It keeps working exactly as before — same click, same drag and
+ * drop, same upload — it just stops dictating the row height. The full control
+ * is untouched outside a table, and in the row's expanded detail view where
+ * there is room for it.
+ */
+.frappe-form .frappe-child-table td .attach-dropzone {
+  flex-direction: row;
+  gap: 8px;
+  padding: 0 12px;
+  height: 40px;
+  min-width: 132px;
+  border-width: 1px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* The icon is the affordance at this size; the two text lines are not. Keep
+   the title as a short label and drop the "Supporting PDF, JPG…" hint. */
+.frappe-form .frappe-child-table td .attach-dropzone-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* "Drag and drop file here or click to browse" is form-width copy; in a column
+   it truncates to nonsense. Shrink it away and label the target instead. The
+   original text stays in the DOM, so the accessible name is unchanged. */
+.frappe-form .frappe-child-table td .attach-dropzone-title {
+  font-size: 0;
+  overflow: hidden;
+}
+
+.frappe-form .frappe-child-table td .attach-dropzone-title::after {
+  content: 'Attach file';
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.frappe-form .frappe-child-table td .attach-dropzone-hint {
+  display: none;
+}
+
+/* An attached file shows as a compact chip rather than a 40px-thumbnail card. */
+.frappe-form .frappe-child-table td .attach-file-card {
+  gap: 8px;
+  padding: 0 10px;
+  height: 40px;
+  border-radius: 9px;
+  max-width: 220px;
+}
+
+.frappe-form .frappe-child-table td .attach-file-thumb {
+  width: 24px;
+  height: 24px;
+}
+
+.frappe-form .frappe-child-table td .attach-file-name {
+  font-size: 12.5px;
+  max-width: 110px;
+}
+
+/* Byte counts are noise in a grid — the name and the delete button are not. */
+.frappe-form .frappe-child-table td .attach-file-size {
+  display: none;
+}
+
+.frappe-form .frappe-child-table tbody tr:hover {
+  background: #fcfdfe;
+}
+
+/* Empty grid: a bare header row reads as broken rather than as "nothing here
+   yet". The message hangs off the scroll wrapper, not the tbody — making an
+   empty tbody `display:block` drops it out of table layout and the text ends up
+   squeezed into the first column's width. */
+.frappe-form .table-scroll:has(tbody:empty) {
+  border-bottom: 1px solid var(--app-card-border);
+  border-radius: 0 0 12px 12px;
+}
+
+.frappe-form .table-scroll:has(tbody:empty)::after {
+  content: 'No rows yet — use Add Row below.';
+  display: block;
+  padding: 26px 14px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--app-faint);
+}
+
+/* The table's own bottom border would otherwise sit above that message. */
+.frappe-form .table-scroll:has(tbody:empty) .frappe-child-table {
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+}
+
+/* ── Grid cell inputs ─────────────────────────────────────────────
+   The SDK renders these fully transparent (border and background) so the grid
+   reads as a table until you focus a cell. The side effect is that an editable
+   cell is indistinguishable from static text — the whole grid looks read-only.
+   Give every cell a resting affordance that firms up on hover and focus. */
+.frappe-form .frappe-child-table .control input:not([type='checkbox']),
+.frappe-form .frappe-child-table .control select,
+.frappe-form .frappe-child-table .control textarea {
+  height: 34px;
+  font-size: 13.5px;
+  border-radius: 8px;
+  border: 1px solid #eef2f6;
+  background: #fbfcfd;
+  padding: 0 9px;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+.frappe-form .frappe-child-table .control input:not([type='checkbox']):hover,
+.frappe-form .frappe-child-table .control select:hover {
+  border-color: #dbe3ec;
+  background: #fff;
+}
+
+.frappe-form .frappe-child-table .control input:not([type='checkbox']):focus,
+.frappe-form .frappe-child-table .control select:focus,
+.frappe-form .frappe-child-table .control textarea:focus {
+  background: #fff;
+  border-color: var(--fv-primary);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
+}
+
+/* Read-only cells shouldn't advertise themselves as editable. */
+.frappe-form .frappe-child-table .control input:disabled,
+.frappe-form .frappe-child-table .control select:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--app-muted);
+}
+
+/* Numbers line up on the right, like any spreadsheet or ledger. */
+.frappe-form .frappe-child-table .control input[type='number'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.frappe-form .frappe-child-table td:has(input[type='number']) {
+  text-align: right;
+}
+
+/* ── Grid structural columns ──────────────────────────────────── */
+.frappe-form .frappe-child-table .col-select,
+.frappe-form .frappe-child-table .col-srno,
+.frappe-form .frappe-child-table .col-expand {
+  width: 1%;
+  white-space: nowrap;
+  padding-left: 10px;
+  padding-right: 4px;
+}
+
+.frappe-form .frappe-child-table .col-srno {
+  color: var(--app-faint);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.frappe-form .frappe-child-table input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--fv-primary);
+  cursor: pointer;
+}
+
+.frappe-form .frappe-child-table th.reqd::after {
+  color: #dc2626;
+}
+
+/* Row expander — the grid only shows fields flagged `in_list_view`, so this is
+   how the rest of a row is reached. Make it look like a control, not debris. */
+.frappe-form .btn-expand-row {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+  color: var(--app-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.frappe-form .btn-expand-row:hover {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #ea580c;
+}
+
+.frappe-form .row-detail-grid {
+  gap: 0 24px;
+  padding: 14px 4px 2px;
+}
+
+.frappe-form .table-toolbar {
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* Add Row / Add Multiple live in .table-footer, not .table-toolbar — that one
+   holds the bulk-delete button. */
+.frappe-form .table-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.frappe-form .btn-add-row,
+.frappe-form .btn-add-multiple {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px dashed #fdba74;
+  background: #fff7ed;
+  color: #ea580c;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.frappe-form .btn-add-row:hover,
+.frappe-form .btn-add-multiple:hover {
+  background: #ffedd5;
+}
+
+/* Per-row action buttons (move, insert, duplicate, remove). */
+.frappe-form .row-actions button {
+  border-radius: 6px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+  color: var(--app-muted);
+}
+
+.frappe-form .row-actions button:hover:not(:disabled) {
+  background: #f4f6f9;
+  color: #0f172a;
+}
+
+.frappe-form .row-actions .btn-remove-row:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+/* Nothing inside the form may push the page sideways. */
+.frappe-form,
+.frappe-form .form-body,
+.frappe-form .section-columns {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* A wide grid still needs to scroll sideways, but a scroll box clips absolutely
+   positioned children — which is exactly what an open Link autocomplete is. Let
+   the box go visible for as long as one is open. */
+.frappe-form .table-scroll {
+  overflow-x: auto;
+}
+
+.frappe-form .table-scroll:has(.link-dropdown) {
+  overflow: visible;
+}
+
+/* ── Dialogs (quick entry, prompt, confirm) ───────────────────────
+   Rendered outside `.frappe-form`, so none of the control styling above
+   reaches them — each `.fv-dialog__field` holds a real SDK control that has to
+   be themed again here. */
+.fv-dialog-overlay {
+  background: rgba(15, 23, 42, 0.45);
+  padding: 24px;
+}
+
+.fv-dialog {
+  border-radius: 18px;
+  border-color: var(--app-card-border);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+}
+
+.fv-dialog__titlebar {
+  padding: 20px 24px;
+  border-bottom-color: var(--app-card-border);
+}
+
+.fv-dialog__title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+.fv-dialog__close {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 10px;
+  border: 1px solid #e6ebf1;
+  background: #fff;
+  color: var(--app-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.fv-dialog__close:hover {
+  background: #f4f6f9;
+  color: #0f172a;
+}
+
+.fv-dialog__body {
+  padding: 20px 24px 8px;
+  gap: 15px;
+  overflow-y: auto;
+}
+
+.fv-dialog__message {
+  font-size: 14.5px;
+  color: #334155;
+}
+
+.fv-dialog__field .control {
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+.fv-dialog__field .control > span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-label);
+}
+
+.fv-dialog__field .control input:not([type='checkbox']),
+.fv-dialog__field .control select {
+  height: 44px;
+  padding: 0 13px;
+  font-size: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+}
+
+.fv-dialog__field .control textarea {
+  padding: 11px 13px;
+  font-size: 14px;
+  min-height: 84px;
+  border-radius: 10px;
+  border: 1px solid var(--fv-border);
+}
+
+.fv-dialog__field .control-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.fv-dialog__field .control-check > span {
+  font-size: 14px;
+}
+
+.fv-dialog__footer {
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--app-row-border);
+}
+
+.fv-dialog__btn {
+  height: 42px;
+  padding: 0 20px;
+  border-radius: 11px;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.fv-dialog__btn--secondary {
+  border-color: #e2e8f0;
+  color: #0f172a;
+  background: #fff;
+}
+
+.fv-dialog__btn--secondary:hover {
+  background: #f4f6f9;
+}
+
+.fv-dialog__btn--primary {
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.fv-dialog__btn--primary:hover {
+  background: #ea580c;
+}
+
+/* ── Link autocomplete ────────────────────────────────────────── */
+.frappe-form .link-dropdown {
+  min-width: 240px;
+  padding: 6px;
+  margin-top: 5px;
+  border-radius: 12px;
+  border-color: var(--app-card-border);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.16);
+}
+
+.frappe-form .link-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.frappe-form .link-suggestion:hover,
+.frappe-form .link-suggestion.is-active {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.frappe-form .link-suggestion__value {
+  font-weight: 600;
+}
+
+.frappe-form .link-suggestion__description {
+  font-size: 12.5px;
+  color: var(--app-faint);
+}
+
+.frappe-form .link-dropdown__loading,
+.frappe-form .link-dropdown__empty {
+  padding: 14px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--app-faint);
+  text-align: center;
+}
+
+/* "Create a new …" sits below the results as a distinct action. */
+.frappe-form .link-create-row {
+  margin-top: 4px;
+  padding: 9px 11px;
+  border-top: 1px solid var(--app-row-border);
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fv-primary);
+  cursor: pointer;
+}
+
+.frappe-form .link-create-row:hover,
+.frappe-form .link-create-row.is-active {
+  background: #fff7ed;
+}
+
+.frappe-form .link-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 4px 8px;
+}
+
+.frappe-form .link-filter-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+
+/* ── Child-table actions, in the design's language ─────────────────────────
+ * The design draws "Add Parcel" / "Add Row" as a dashed orange tile rather
+ * than the SDK's small grey chip, and the row action beside it in the same
+ * family. Restyled rather than replaced, so the SDK keeps owning what the
+ * buttons do.
+ */
+.frappe-form .btn-add-row,
+.frappe-form .btn-add-multiple {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px dashed #fdba74;
+  background: #fff7ed;
+  color: #ea580c;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.frappe-form .btn-add-row:hover,
+.frappe-form .btn-add-multiple:hover {
+  background: #ffedd5;
+  border-color: #f97316;
+  color: #c2410c;
+}
+
+/* Add Multiple is the secondary of the pair — same shape, quieter. */
+.frappe-form .btn-add-multiple {
+  border-style: solid;
+  border-color: #e2e8f0;
+  background: #fff;
+  color: #475569;
+}
+
+.frappe-form .btn-add-multiple:hover {
+  background: #f4f6f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+/* Row delete: the design's red-tinted square, not a bare glyph. */
+.frappe-form .btn-remove-row {
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid #fee2e2;
+  background: #fff;
+  color: #dc2626;
+  padding: 0;
+}
+
+.frappe-form .btn-remove-row:hover {
+  background: #fef2f2;
+}
+
+/* ── Spacing inside the section cards ──────────────────────────────────────
+ * The SDK gives every `.control` a 15px bottom margin, which is right when
+ * controls are stacked in a column — it is the only thing separating them.
+ * Inside the card grid it doubles up with the grid's own 16px gap, so every
+ * row sat 31px from the next and the cards grew a lot of dead vertical space.
+ *
+ * The grid owns the spacing here, so the margin is dropped. Checkboxes lose
+ * their extra margin for the same reason, and their min-height too: a 44px
+ * floor was there to line a checkbox up with a text input in a column, but in
+ * a grid the row already does that.
+ */
+.frappe-form .job-grid .control,
+.frappe-form .job-grid .control-check,
+.frappe-form .job-grid .control-button {
+  margin-bottom: 0;
+}
+
+.frappe-form .job-grid .control-check {
+  min-height: 0;
+  align-self: center;
+}
+
+/* A Table's own bottom margin is likewise the grid's job. */
+.frappe-form .job-grid .control-table {
+  margin-bottom: 0;
+}
+
+/* ── Child row drawer ─────────────────────────────────────────────
+   A child row is edited in a right-hand drawer rather than in the grid's
+   cramped cells — see src/lib/childRowDrawer.js. The panel is teleported to
+   the body, so it carries `.frappe-form` on its field container to stay inside
+   the control rules above. */
+.child-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.34);
+  z-index: 60;
+}
+
+.child-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  width: min(430px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--fv-border);
+  box-shadow: -18px 0 44px rgba(15, 23, 42, 0.14);
+  outline: none;
+}
+
+.child-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 17px 20px 15px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.child-drawer__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fv-primary);
+}
+
+.child-drawer__title {
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.child-drawer__close {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+  color: var(--app-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.child-drawer__close:hover {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #ea580c;
+}
+
+.child-drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px 24px;
+}
+
+/* One field per line at full width — the whole point of the drawer over the
+   inline detail strip, which inherits the grid's column widths. */
+.child-drawer__body .control {
+  display: block;
+  margin-bottom: 15px;
+}
+
+.child-drawer__body .control input:not([type='checkbox']),
+.child-drawer__body .control select,
+.child-drawer__body .control textarea {
+  width: 100%;
+}
+
+/* Grid cells hide their labels; in the drawer the label is the only thing
+   naming the field. */
+.child-drawer__body .control > span:first-child {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.child-drawer__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--app-muted);
+}
+
+.child-drawer__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 20px;
+  border-top: 1px solid #f1f5f9;
+  background: #fcfdfe;
+}
+
+.child-drawer__nav,
+.child-drawer__done {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+
+.child-drawer__nav:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.child-drawer__nav:not(:disabled):hover {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #ea580c;
+}
+
+.child-drawer__done {
+  margin-left: auto;
+  border-color: var(--fv-primary);
+  background: var(--fv-primary);
+  color: #fff;
+}
+
+.child-drawer-enter-active,
+.child-drawer-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.child-drawer-enter-from,
+.child-drawer-leave-to {
+  opacity: 0;
+}
+
+.child-drawer-panel-enter-active,
+.child-drawer-panel-leave-active {
+  transition: transform 0.22s ease;
+}
+
+.child-drawer-panel-enter-from,
+.child-drawer-panel-leave-to {
+  transform: translateX(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .child-drawer-panel-enter-active,
+  .child-drawer-panel-leave-active,
+  .child-drawer-enter-active,
+  .child-drawer-leave-active {
+    transition: none;
+  }
+}
+
+/* ── Activity drawer ──────────────────────────────────────────────
+   The design's ACTIVITY DRAWER: one fixed rail at the right edge holding the
+   pull tab and the panel side by side, so the tab hangs off the panel's edge
+   and slides with it. Measurements below are the design's; the palette is this
+   app's tokens. See components/ActivityDrawer.vue.
+
+   Sits under the child row drawer's z-index — a row being edited is the nearer
+   task. */
+.activity-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  z-index: 55;
+}
+
+.activity-dock {
+  /* One token for the panel width and the slide distance: they are the same
+     measurement, and the two drifting apart is what parks the panel against
+     the wrong edge. */
+  --activity-panel-w: min(412px, 100vw);
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  /* Parked so the panel is off-screen and only the tab, which hangs off its
+     left edge, shows. Opening slides the whole rail left by the panel width. */
+  left: 100%;
+  z-index: 56;
+  display: flex;
+  align-items: stretch;
+  /* The design marks the rail pointer-events:none so the parked panel cannot
+     swallow clicks meant for the form; the tab and panel take them back. */
+  pointer-events: none;
+  transition: transform 0.24s ease;
+}
+
+.activity-dock.is-open {
+  transform: translateX(calc(-1 * var(--activity-panel-w)));
+}
+
+.activity-tab {
+  pointer-events: auto;
+  position: sticky;
+  top: 96px;
+  align-self: flex-start;
+  margin-left: -34px;
+  width: 34px;
+  padding: 15px 0 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--fv-border);
+  border-right: none;
+  border-radius: 11px 0 0 11px;
+  background: #fff;
+  box-shadow: -6px 0 18px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.activity-tab:hover {
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.activity-tab__label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.12em;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--app-muted);
+}
+
+.activity-tab__count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--fv-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-panel {
+  pointer-events: auto;
+  width: var(--activity-panel-w);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid var(--fv-border);
+  box-shadow: -18px 0 44px rgba(15, 23, 42, 0.14);
+}
+
+.activity-panel__head {
+  flex: none;
+  padding: 20px 22px 0;
+}
+
+.activity-panel__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-panel__id-wrap {
+  min-width: 0;
+}
+
+.activity-panel__eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--fv-primary);
+  letter-spacing: 0.09em;
+}
+
+.activity-panel__id {
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-panel__close {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 9px;
+  border: 1px solid var(--fv-border);
+  background: #fff;
+  color: var(--app-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.activity-panel__close:hover {
+  background: var(--app-row-border);
+}
+
+/* Segmented control, as in the design: a tinted trough with 4px of padding. */
+.activity-switch {
+  display: flex;
+  gap: 6px;
+  margin: 16px 0 0;
+  background: #f6f8fb;
+  padding: 4px;
+  border-radius: 11px;
+}
+
+.activity-switch__btn {
+  flex: 1;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--app-muted);
+  cursor: pointer;
+}
+
+.activity-switch__btn.is-on {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.activity-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+}
+
+.activity-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--app-muted);
+}
+
+.activity-note--error {
+  color: #b91c1c;
+}
+
+/* ── The timeline rail ─────────────────────────────────────────── */
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-row {
+  display: flex;
+  gap: 13px;
+}
+
+.activity-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  width: 22px;
+}
+
+.activity-dot {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* The connector, drawn between one dot and the next — never below the last. */
+.activity-line {
+  flex: 1;
+  width: 1px;
+  min-height: 10px;
+  background: #e6ebf1;
+  margin: 4px 0;
+}
+
+.activity-row__body {
+  padding-bottom: 18px;
+  min-width: 0;
+}
+
+.activity-row__text {
+  font-size: 13px;
+  color: var(--app-label);
+  line-height: 1.6;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.activity-row__who {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.activity-row__detail {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--app-muted);
+  overflow-wrap: anywhere;
+}
+
+.activity-row__time {
+  font-size: 11.5px;
+  color: var(--app-faint);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* ── Comments ──────────────────────────────────────────────────── */
+.activity-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.activity-comment {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.activity-comment__avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--app-row-border);
+  color: var(--app-label);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.activity-comment__bubble {
+  flex: 1;
+  min-width: 0;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+  padding: 10px 13px;
+}
+
+.activity-comment__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activity-comment__author {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f172a;
+  word-break: break-all;
+}
+
+.activity-comment__time {
+  font-size: 11px;
+  color: var(--app-faint);
+  font-weight: 600;
+}
+
+.activity-comment__text {
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.6;
+  margin-top: 4px;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.activity-scrim-enter-active,
+.activity-scrim-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.activity-scrim-enter-from,
+.activity-scrim-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-dock,
+  .activity-scrim-enter-active,
+  .activity-scrim-leave-active {
+    transition: none;
+  }
+}

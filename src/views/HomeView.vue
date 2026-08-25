@@ -1,0 +1,270 @@
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useSessionStore } from '@/stores/session'
+import { hasBackend } from '@/lib/frappe'
+import { fetchHomeStats, STATUS_STAGES } from '@/lib/home'
+import LucideIcon from '@/components/LucideIcon.vue'
+
+const router = useRouter()
+const session = useSessionStore()
+
+const stats = ref(null)
+const loading = ref(false)
+const error = ref('')
+const live = computed(() => hasBackend)
+
+const todayLabel = new Date().toLocaleDateString(undefined, {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric'
+})
+
+/** First name where there is one — "Welcome back, Administrator" reads oddly. */
+const greetingName = computed(() => {
+  const name = session.displayName || 'there'
+  return name.includes('@') ? name.split('@')[0] : name.split(' ')[0]
+})
+
+const n = (value) => (Number(value) || 0).toLocaleString()
+const pct = (value, digits = 1) =>
+  value === null || value === undefined ? '—' : `${Number(value).toFixed(digits)}%`
+
+/** Placeholder stages so the pipeline keeps its shape before data lands. */
+const emptyPipeline = STATUS_STAGES.map((s) => ({ ...s, count: 0, share: 0 }))
+const pipeline = computed(() => stats.value?.statusPipeline ?? emptyPipeline)
+
+const cards = computed(() => {
+  const s = stats.value
+  const growth = s?.growth
+  return [
+    {
+      label: 'Total Worksheets',
+      value: s ? n(s.totalWorksheets) : '—',
+      icon: 'calculator',
+      bg: '#FFF7ED',
+      fg: '#F97316',
+      to: '/ui/Costing Worksheet',
+      note:
+        !growth || growth.pct === null
+          ? { text: `${n(growth?.current)} created this month`, icon: 'clock', color: '#64748B' }
+          : {
+              text: `${growth.pct >= 0 ? '+' : ''}${growth.pct.toFixed(1)}%`,
+              suffix: 'vs last month',
+              icon: 'trending-up',
+              color: growth.pct >= 0 ? '#16A34A' : '#DC2626'
+            }
+    },
+    {
+      label: 'Draft',
+      value: s ? n(s.draftWorksheets) : '—',
+      icon: 'pencil',
+      bg: '#F1F5F9',
+      fg: '#475569',
+      to: '/ui/Costing Worksheet',
+      note: { text: 'not yet submitted for approval', icon: 'clock', color: '#64748B' }
+    },
+    {
+      label: 'Awaiting Approval',
+      value: s ? n(s.awaitingApproval) : '—',
+      icon: 'loader',
+      bg: '#FEF3C7',
+      fg: '#B45309',
+      to: '/ui/Costing Worksheet',
+      note: { text: 'BU Head or CFO review pending', icon: 'clock', color: '#B45309' }
+    },
+    {
+      label: 'Avg. Margin %',
+      value: s ? pct(s.avgMarginPercent) : '—',
+      icon: 'trending-up',
+      bg: '#ECFDF5',
+      fg: '#059669',
+      to: '/ui/Costing Worksheet',
+      note: { text: 'across worksheets with a margin', icon: 'check-circle-2', color: '#64748B' }
+    }
+  ]
+})
+
+const MODULES = [
+  {
+    label: 'Costing Worksheets',
+    desc: 'Tank & radiator cost build-ups, from geometry to margin.',
+    icon: 'calculator',
+    bg: '#FFF7ED',
+    fg: '#F97316',
+    to: '/ui/Costing Worksheet'
+  },
+  {
+    label: 'Masters',
+    desc: 'Tank types, departments, material and paint rates.',
+    icon: 'database',
+    bg: '#F5F3FF',
+    fg: '#7C3AED',
+    to: '/masters'
+  },
+  {
+    label: 'Costing Settings',
+    desc: 'Financial cost rate, scrap rules and complexity matrices.',
+    icon: 'settings',
+    bg: '#F1F5F9',
+    fg: '#475569',
+    to: '/form/Costing Settings/Costing Settings'
+  },
+  {
+    label: 'Profile',
+    desc: 'Your profile, session and sign-out.',
+    icon: 'user',
+    bg: '#EFF6FF',
+    fg: '#2563EB',
+    to: '/profile'
+  }
+]
+
+const go = (to) => router.push(to)
+
+async function load() {
+  if (!live.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    stats.value = await fetchHomeStats()
+  } catch (e) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <div style="padding:30px 36px 56px; margin:0 auto;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; margin-bottom:26px;">
+      <div>
+        <div style="font-size:13px; color:#94A3B8; font-weight:600;">{{ todayLabel }}</div>
+        <h1 style="margin:6px 0 0; font-size:28px; font-weight:800; letter-spacing:-.025em;">
+          Welcome back, {{ greetingName }}
+        </h1>
+      </div>
+      <div style="display:flex; gap:11px; flex-wrap:wrap; align-items:center;">
+        <span v-if="loading" style="font-size:13px; color:#94A3B8; font-weight:600;">Loading…</span>
+        <button
+          @click="go('/quotation/new')"
+          style="display:flex; align-items:center; gap:8px; background:#F97316; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(249,115,22,.28); font-family:inherit;"
+          class="hv1"
+        >
+          <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Worksheet
+        </button>
+      </div>
+    </div>
+
+    <div
+      v-if="!live"
+      style="display:flex; align-items:center; gap:14px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:13px; padding:15px 18px; margin-bottom:22px; flex-wrap:wrap;"
+    >
+      <span
+        style="width:34px; height:34px; border-radius:9px; background:#fff; color:#2563EB; display:flex; align-items:center; justify-content:center; font-size:17px; flex:none;"
+        ><LucideIcon name="info" /></span
+      >
+      <div style="font-size:13px; color:#2563EB;">
+        No backend configured. Set <code>VITE_FRAPPE_URL</code> in <code>.env</code> to load live figures.
+      </div>
+    </div>
+
+    <div
+      v-if="error"
+      style="display:flex; align-items:flex-start; gap:12px; background:#FEF2F2; border:1px solid #FECACA; border-radius:13px; padding:15px 18px; margin-bottom:18px;"
+    >
+      <span style="color:#DC2626; font-size:17px; flex:none;"><LucideIcon name="x" /></span>
+      <div style="min-width:0;">
+        <div style="font-size:14.5px; font-weight:700; color:#991B1B;">Could not load dashboard</div>
+        <div style="font-size:13px; color:#B91C1C; margin-top:3px; word-break:break-word;">{{ error }}</div>
+      </div>
+    </div>
+
+    <!-- KPI cards -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; margin-bottom:26px;">
+      <button
+        v-for="card in cards"
+        :key="card.label"
+        @click="go(card.to)"
+        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:22px; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit; cursor:pointer;"
+        class="hv3"
+      >
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div style="font-size:13px; color:#64748B; font-weight:600;">{{ card.label }}</div>
+            <div style="font-size:32px; font-weight:800; margin-top:8px; letter-spacing:-.02em;">{{ card.value }}</div>
+          </div>
+          <div
+            :style="{ width:'44px', height:'44px', borderRadius:'12px', background: card.bg, color: card.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'21px', flex:'none' }"
+          >
+            <LucideIcon :name="card.icon" />
+          </div>
+        </div>
+        <div
+          :style="{ marginTop:'13px', fontSize:'12.5px', color: card.note.color, fontWeight:'600', display:'flex', alignItems:'center', gap:'6px' }"
+        >
+          <span style="font-size:15px;"><LucideIcon :name="card.note.icon" /></span>
+          {{ card.note.text }}
+          <span v-if="card.note.suffix" style="color:#94A3B8; font-weight:500;">{{ card.note.suffix }}</span>
+        </div>
+      </button>
+    </div>
+
+    <!-- module grid -->
+    <h2 style="font-size:16px; font-weight:700; margin:0 0 14px;">Workspace modules</h2>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px; margin-bottom:28px;">
+      <button
+        v-for="m in MODULES"
+        :key="m.label"
+        @click="go(m.to)"
+        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:22px; cursor:pointer; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit;"
+        class="hv3"
+      >
+        <div
+          :style="{ width:'46px', height:'46px', borderRadius:'12px', background: m.bg, color: m.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flex:'none' }"
+        >
+          <LucideIcon :name="m.icon" />
+        </div>
+        <div>
+          <div style="font-size:15.5px; font-weight:700;">{{ m.label }}</div>
+          <div style="font-size:13.5px; color:#64748B; margin-top:4px; line-height:1.5;">{{ m.desc }}</div>
+        </div>
+      </button>
+    </div>
+
+    <!-- status pipeline -->
+    <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:24px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:8px;">
+        <h2 style="font-size:16px; font-weight:700; margin:0;">Worksheets by status</h2>
+        <span style="font-size:13px; color:#94A3B8; font-weight:600;">{{ n(stats?.pipelineTotal) }} worksheets total</span>
+      </div>
+      <div style="display:flex; height:13px; border-radius:999px; overflow:hidden; margin-bottom:20px; background:#F1F5F9;">
+        <div
+          v-for="stage in pipeline"
+          :key="stage.key"
+          :style="{ width: `${stage.share}%`, background: stage.color }"
+          :title="`${stage.label}: ${stage.count}`"
+        ></div>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px;">
+        <div v-for="stage in pipeline" :key="stage.key" style="display:flex; align-items:center; gap:11px;">
+          <span :style="{ width:'11px', height:'11px', borderRadius:'3px', background: stage.color, flex:'none' }"></span>
+          <div>
+            <div style="font-size:21px; font-weight:800;">{{ n(stage.count) }}</div>
+            <div style="font-size:12.5px; color:#64748B; font-weight:600;">{{ stage.label }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:22px; font-size:12px; color:#94A3B8; line-height:1.6;">
+      Costing figures reflect whatever is in the DocType today. Every rate, band and multiplier behind
+      them is seed data pending the real workbook — see the module's cost-model notes before quoting a
+      real job off these numbers.
+    </p>
+  </div>
+</template>
