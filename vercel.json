@@ -1,28 +1,28 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "git config --global url.\"https://$GITHUB_TOKEN@github.com/\".insteadOf ssh://git@github.com/ && git config --global --add url.\"https://$GITHUB_TOKEN@github.com/\".insteadOf https://github.com/ && npm ci",
-  "buildCommand": "npm run build",
+  "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://hitech.dvnks.com/api/:path*"
+      "destination": "https://freight.dvnks.com/api/:path*"
     },
     {
       "source": "/files/:path*",
-      "destination": "https://hitech.dvnks.com/files/:path*"
+      "destination": "https://freight.dvnks.com/files/:path*"
     },
     {
       "source": "/private/:path*",
-      "destination": "https://hitech.dvnks.com/private/:path*"
+      "destination": "https://freight.dvnks.com/private/:path*"
     },
     {
       "source": "/assets/:path*",
-      "destination": "https://hitech.dvnks.com/assets/:path*"
+      "destination": "https://freight.dvnks.com/assets/:path*"
     },
     {
       "source": "/printview",
-      "destination": "https://hitech.dvnks.com/printview"
+      "destination": "https://freight.dvnks.com/printview"
     },
     {
       "source": "/((?!api/|files/|private/|assets/|app/|printview).*)",
