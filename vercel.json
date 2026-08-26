@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "git config --global url.\"https://$GITHUB_TOKEN@github.com/\".insteadOf ssh://git@github.com/ && git config --global --add url.\"https://$GITHUB_TOKEN@github.com/\".insteadOf https://github.com/ && npm ci",
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
   "rewrites": [
