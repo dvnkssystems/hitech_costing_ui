@@ -77,12 +77,27 @@ function responseHeaders(response, res) {
         ? [response.headers.get('set-cookie')]
         : []
   if (cookies.length) res.setHeader('set-cookie', cookies)
+
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Frappe-CSRF-Token, Authorization')
 }
 
 export default async function handler(req, res) {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Frappe-CSRF-Token, Authorization')
+    res.statusCode = 200
+    res.end()
+    return
+  }
+
   const url = targetUrl(req)
   if (!url) {
     res.statusCode = 500
+    res.setHeader('Access-Control-Allow-Origin', '*')
     res.end('FRAPPE_URL or VITE_FRAPPE_URL is required.')
     return
   }

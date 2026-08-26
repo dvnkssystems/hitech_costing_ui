@@ -2,26 +2,31 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://freight.dvnks.com/api/:path*"
+      "destination": "/api/:path*"
     },
     {
       "source": "/files/:path*",
-      "destination": "https://freight.dvnks.com/files/:path*"
+      "destination": "/files/:path*"
     },
     {
       "source": "/private/:path*",
-      "destination": "https://freight.dvnks.com/private/:path*"
+      "destination": "/private/:path*"
     },
     {
       "source": "/assets/:path*",
-      "destination": "https://freight.dvnks.com/assets/:path*"
+      "destination": "/assets/:path*"
     },
     {
       "source": "/printview",
-      "destination": "https://freight.dvnks.com/printview"
+      "destination": "/printview"
     },
     {
       "source": "/((?!api/|files/|private/|assets/|app/|printview).*)",
