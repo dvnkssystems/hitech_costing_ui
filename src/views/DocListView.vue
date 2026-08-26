@@ -161,38 +161,64 @@ const chrome = computed(() => ({
   searchPlaceholder: layout.value?.chrome?.search_placeholder || `Search ${props.doctype} by ID…`
 }))
 
+/**
+ * Bumped on every call so a load that is still in flight when the doctype (or
+ * any other input) changes again can tell it has been superseded. Without
+ * this, two overlapping calls — the tail of the one for the doctype just
+ * navigated away from, and the fresh one for the doctype just navigated to —
+ * write to the same `columns`/`layout`/`rows` refs in whichever order their
+ * network calls happen to resolve. The stale call would then send the *new*
+ * doctype's query using the *old* doctype's field names (or vice versa),
+ * which the server correctly rejects with "Field not permitted in query".
+ */
+let loadRequest = 0
+
 async function load() {
   if (!live.value) return
+  const requestId = ++loadRequest
+  // Snapshot once: `props.doctype` can change again while this call is still
+  // awaiting a response, and every use below must stay pinned to the doctype
+  // this particular call started for.
+  const doctype = props.doctype
   loading.value = true
   error.value = ''
   try {
-    if (!columns.value.length) {
-      const stored = await fetchListLayout(props.doctype)
-      layout.value = stored.fallback ? null : stored
-      columns.value = stored.fallback
-        ? listColumns(await fetchDocTypeMeta(props.doctype))
+    let columnsForRequest = columns.value
+    let layoutForRequest = layout.value
+
+    if (!columnsForRequest.length) {
+      const stored = await fetchListLayout(doctype)
+      if (requestId !== loadRequest) return // superseded while awaiting
+      layoutForRequest = stored.fallback ? null : stored
+      columnsForRequest = stored.fallback
+        ? listColumns(await fetchDocTypeMeta(doctype))
         : stored.columns
+      if (requestId !== loadRequest) return // superseded while awaiting
+      layout.value = layoutForRequest
+      columns.value = columnsForRequest
       selections.value = defaultSelections(stored.filter_groups)
     }
 
     // The stored layout projects server-side; without one the client still has
     // to name the fields it wants.
-    const result = layout.value
-      ? await fetchLayoutList(props.doctype, {
+    const result = layoutForRequest
+      ? await fetchLayoutList(doctype, {
           filters: filters.value,
           selections: selections.value,
           card: selectedCard.value,
           search: search.value,
           page: page.value,
           pageSize: pageSize.value,
-          orderBy: orderByFor(layout.value)
+          orderBy: orderByFor(layoutForRequest)
         })
-      : await fetchDocList(props.doctype, {
-          columns: columns.value,
+      : await fetchDocList(doctype, {
+          columns: columnsForRequest,
           filters: filters.value,
           search: search.value,
           page: page.value
         })
+
+    if (requestId !== loadRequest) return // superseded while awaiting
 
     rows.value = result.rows
     total.value = result.total
@@ -200,16 +226,17 @@ async function load() {
 
     // Independent of the selection, so it rides along rather than blocking.
     if (filterGroups.value.length || cards.value.length) {
-      fetchListStats(props.doctype, { filters: filters.value, search: search.value }).then(
-        (fresh) => (stats.value = fresh)
-      )
+      fetchListStats(doctype, { filters: filters.value, search: search.value }).then((fresh) => {
+        if (requestId === loadRequest) stats.value = fresh
+      })
     }
   } catch (e) {
+    if (requestId !== loadRequest) return // superseded — a newer load owns the error state now
     error.value = e?.message ?? String(e)
     rows.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (requestId === loadRequest) loading.value = false
   }
 }
 
