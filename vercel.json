@@ -2,31 +2,26 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist",
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs20.x"
-    }
-  },
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "destination": "https://hitech.dvnks.com/api/:path*"
     },
     {
       "source": "/files/:path*",
-      "destination": "/files/:path*"
+      "destination": "https://hitech.dvnks.com/files/:path*"
     },
     {
       "source": "/private/:path*",
-      "destination": "/private/:path*"
+      "destination": "https://hitech.dvnks.com/private/:path*"
     },
     {
       "source": "/assets/:path*",
-      "destination": "/assets/:path*"
+      "destination": "https://hitech.dvnks.com/assets/:path*"
     },
     {
       "source": "/printview",
-      "destination": "/printview"
+      "destination": "https://hitech.dvnks.com/printview"
     },
     {
       "source": "/((?!api/|files/|private/|assets/|app/|printview).*)",
