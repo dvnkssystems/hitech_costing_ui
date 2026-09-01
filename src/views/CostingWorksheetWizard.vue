@@ -469,7 +469,16 @@ async function bootFrm(doctype, { name = null, initialDoc = null, scripts = [] }
     metaFetcher,
     doctype,
     name,
-    initialDoc,
+    // A hand-built initialDoc has no `docstatus` of its own -- unlike a doc
+    // loaded from the server, or one `frappe.model.get_new_doc()` would build
+    // in real Desk, it stays `undefined` rather than the real Frappe model's
+    // `0` for an unsaved draft. Every `docstatus === 0` guard anywhere in any
+    // client script (this app's own `costing_worksheet.js` RECALC_FIELDS
+    // handlers included — `recalculate()`'s very first line) then silently
+    // no-ops forever, since `undefined !== 0`: no error, no network call,
+    // nothing — exactly the bug behind Effective Labour Rate staying blank.
+    // Default it here, once, rather than in every initialDoc literal.
+    initialDoc: initialDoc ? { docstatus: 0, ...initialDoc } : initialDoc,
     autoBoot: true,
     scripts
   })
