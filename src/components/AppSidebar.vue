@@ -66,7 +66,7 @@ const initials = computed(() =>
   >
     <div style="padding:22px 20px 18px; display:flex; align-items:center; gap:11px;">
       <div
-        style="width:38px; height:38px; border-radius:11px; background:#F97316; display:flex; align-items:center; justify-content:center; color:#fff; font-size:21px; box-shadow:0 4px 12px rgba(249,115,22,.3);"
+        style="width:38px; height:38px; border-radius:11px; background:#16A34A; display:flex; align-items:center; justify-content:center; color:#fff; font-size:21px; box-shadow:0 4px 12px rgba(22, 163, 74, .3);"
       >
         <LucideIcon name="calculator" />
       </div>
@@ -95,7 +95,7 @@ const initials = computed(() =>
         margin: '14px',
         padding: '13px',
         borderRadius: '13px',
-        background: activeNav === 'profile' ? '#FFF7ED' : '#F6F8FB',
+        background: activeNav === 'profile' ? '#F0FDF4' : '#F6F8FB',
         display: 'flex',
         alignItems: 'center',
         gap: '11px',

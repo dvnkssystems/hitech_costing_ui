@@ -83,7 +83,7 @@ onMounted(load)
     >
       <RouterLink to="/" style="color:#64748B;">Home</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#F97316;">Profile</span>
+      <span style="color:#16A34A;">Profile</span>
     </div>
 
     <!-- identity header -->

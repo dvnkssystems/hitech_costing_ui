@@ -358,7 +358,7 @@ onMounted(load)
     >
       <RouterLink to="/" style="color:#64748B;">Home</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#F97316;">{{ doctype }}</span>
+      <span style="color:#16A34A;">{{ doctype }}</span>
     </div>
 
     <div
@@ -373,7 +373,7 @@ onMounted(load)
       <button
         v-if="live"
         @click="create"
-        style="display:flex; align-items:center; gap:8px; background:#F97316; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(249,115,22,.28); font-family:inherit;"
+        style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22, 163, 74, .28); font-family:inherit;"
         class="hv1"
       >
         <span style="font-size:17px;"><LucideIcon name="plus" /></span> {{ chrome.actionLabel }}
@@ -406,8 +406,8 @@ onMounted(load)
           @click="pickCard(card)"
           :style="{
             background: '#fff',
-            border: `1px solid ${selectedCard === card.name ? '#F97316' : '#EAEEF3'}`,
-            boxShadow: selectedCard === card.name ? '0 0 0 3px rgba(249,115,22,.12)' : 'none',
+            border: `1px solid ${selectedCard === card.name ? '#16A34A' : '#EAEEF3'}`,
+            boxShadow: selectedCard === card.name ? '0 0 0 3px rgba(22, 163, 74, .12)' : 'none',
             borderRadius: '14px',
             padding: '16px 18px',
             textAlign: 'left',
@@ -438,8 +438,8 @@ onMounted(load)
           @click="isMetric(option) ? null : choose(group, option.key)"
           :style="{
             background: '#fff',
-            border: `1px solid ${selections[group.key] === option.key ? '#F97316' : '#EAEEF3'}`,
-            boxShadow: selections[group.key] === option.key ? '0 0 0 3px rgba(249,115,22,.12)' : 'none',
+            border: `1px solid ${selections[group.key] === option.key ? '#16A34A' : '#EAEEF3'}`,
+            boxShadow: selections[group.key] === option.key ? '0 0 0 3px rgba(22, 163, 74, .12)' : 'none',
             borderRadius: '14px',
             padding: '16px 18px',
             textAlign: 'left',
@@ -472,7 +472,7 @@ onMounted(load)
         <span
           v-for="f in filterSummary"
           :key="f"
-          style="display:inline-flex; align-items:center; height:42px; padding:0 12px; border-radius:999px; background:#FFF7ED; color:#EA580C; font-size:12.5px; font-weight:600;"
+          style="display:inline-flex; align-items:center; height:42px; padding:0 12px; border-radius:999px; background:#F0FDF4; color:#15803D; font-size:12.5px; font-weight:600;"
           >{{ f }}</span
         >
         <button

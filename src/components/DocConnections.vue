@@ -142,8 +142,8 @@ watch(() => [props.doctype, props.docname], load)
             borderRadius: '999px',
             fontSize: '11.5px',
             fontWeight: '700',
-            background: link.count ? '#FFF7ED' : '#F1F5F9',
-            color: link.count ? '#EA580C' : '#94A3B8'
+            background: link.count ? '#F0FDF4' : '#F1F5F9',
+            color: link.count ? '#15803D' : '#94A3B8'
           }"
           >{{ link.count }}</span
         >

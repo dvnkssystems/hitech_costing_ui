@@ -43,8 +43,8 @@ const cards = computed(() => {
       label: 'Total Worksheets',
       value: s ? n(s.totalWorksheets) : '—',
       icon: 'calculator',
-      bg: '#FFF7ED',
-      fg: '#F97316',
+      bg: '#F0FDF4',
+      fg: '#16A34A',
       to: '/ui/Costing Worksheet',
       note:
         !growth || growth.pct === null
@@ -91,8 +91,8 @@ const MODULES = [
     label: 'Costing Worksheets',
     desc: 'Tank & radiator cost build-ups, from geometry to margin.',
     icon: 'calculator',
-    bg: '#FFF7ED',
-    fg: '#F97316',
+    bg: '#F0FDF4',
+    fg: '#16A34A',
     to: '/ui/Costing Worksheet'
   },
   {
@@ -152,7 +152,7 @@ onMounted(load)
         <span v-if="loading" style="font-size:13px; color:#94A3B8; font-weight:600;">Loading…</span>
         <button
           @click="go('/quotation/new')"
-          style="display:flex; align-items:center; gap:8px; background:#F97316; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(249,115,22,.28); font-family:inherit;"
+          style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22, 163, 74, .28); font-family:inherit;"
           class="hv1"
         >
           <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Worksheet

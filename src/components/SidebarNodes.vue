@@ -88,7 +88,7 @@ function itemStyle(node) {
     fontSize: '13px',
     fontWeight: on ? '700' : '500',
     color: on ? '#C2410C' : '#64748B',
-    background: on ? '#FFF7ED' : 'transparent',
+    background: on ? '#F0FDF4' : 'transparent',
     cursor: 'pointer'
   }
 }

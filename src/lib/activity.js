@@ -38,7 +38,7 @@ const KIND_STYLE = {
   comment: { icon: 'message-square-plus', color: '#7C3AED', background: '#F5F3FF' },
   change: { icon: 'pencil', color: '#2563EB', background: '#EFF6FF' },
   email: { icon: 'mail', color: '#0EA5E9', background: '#F0F9FF' },
-  assignment: { icon: 'user-plus', color: '#F97316', background: '#FFF7ED' },
+  assignment: { icon: 'user-plus', color: '#16A34A', background: '#F0FDF4' },
   attachment: { icon: 'paperclip', color: '#64748B', background: '#F1F5F9' },
   workflow: { icon: 'workflow', color: '#16A34A', background: '#ECFDF5' },
   info: { icon: 'clock', color: '#64748B', background: '#F1F5F9' }

@@ -85,21 +85,21 @@ defineEmits(['select'])
 }
 
 .wizard-crumb.is-done {
-  background: #ffece5;
-  color: #b03400;
+  background: #DCFCE7;
+  color: #15803D;
 }
 
 .wizard-crumb.is-active {
-  background: #fe4d00;
+  background: #16A34A;
   color: #fff;
 }
 
 .wizard-crumb:not(:disabled):hover {
-  background: #ffece5;
+  background: #DCFCE7;
 }
 
 .wizard-crumb.is-active:not(:disabled):hover {
-  background: #fe5900;
+  background: #15803D;
 }
 
 .wizard-crumb.is-locked {

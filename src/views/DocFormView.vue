@@ -179,7 +179,7 @@ watch([() => props.doctype, () => props.name], load)
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
       <RouterLink :to="listRouteFor(doctype)" style="color:#64748B;">{{ doctype }}</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#F97316;">{{ name || 'New' }}</span>
+      <span style="color:#16A34A;">{{ name || 'New' }}</span>
     </div>
 
     <div

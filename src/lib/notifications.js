@@ -27,7 +27,7 @@ const TYPE_META = {
   Mention: { icon: 'message-square-plus', color: '#7C3AED' },
   Assignment: { icon: 'user', color: '#2563EB' },
   Share: { icon: 'send', color: '#0EA5E9' },
-  'Energy Point': { icon: 'star', color: '#F97316' },
+  'Energy Point': { icon: 'star', color: '#16A34A' },
   Alert: { icon: 'info', color: '#16A34A' }
 }
 const DEFAULT_META = { icon: 'bell', color: '#64748B' }

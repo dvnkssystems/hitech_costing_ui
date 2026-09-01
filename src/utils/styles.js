@@ -19,7 +19,7 @@ export const navItemBase = {
 
 export function navItemStyle(active) {
   return active
-    ? { ...navItemBase, background: '#FFF7ED', color: '#EA580C', fontWeight: '600' }
+    ? { ...navItemBase, background: '#F0FDF4', color: '#15803D', fontWeight: '600' }
     : { ...navItemBase, background: 'transparent', color: '#475569', fontWeight: '500' }
 }
 
@@ -56,7 +56,7 @@ export const radioBase = {
 
 export function radioStyle(active) {
   return active
-    ? { ...radioBase, borderColor: '#F97316', background: '#FFF7ED', color: '#9A3412', fontWeight: '600' }
+    ? { ...radioBase, borderColor: '#16A34A', background: '#F0FDF4', color: '#166534', fontWeight: '600' }
     : { ...radioBase, borderColor: '#E2E8F0', color: '#475569', fontWeight: '500' }
 }
 

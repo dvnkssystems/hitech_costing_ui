@@ -5,10 +5,14 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Manrope', system-ui, sans-serif;
   background: #F6F8FB;
   color: #0F172A;
   -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Raleway', system-ui, sans-serif;
 }
 
 svg.lucide, [data-lucide] { width: 1em; height: 1em; display: block; flex: none; }
@@ -18,8 +22,8 @@ input::placeholder, textarea::placeholder { color: #94A3B8; }
 
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: #F97316 !important;
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, .12);
+  border-color: #16A34A !important;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .12);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -29,16 +33,16 @@ input:focus, select:focus, textarea:focus {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---- hover states lifted out of inline `style-hover` attrs ---- */
-.hv1:hover{background:#EA580C;}
+.hv1:hover{background:#15803D;}
 .hv2:hover{background:#F4F6F9;}
-.hv3:hover{border-color:#F97316; box-shadow:0 8px 24px rgba(15,23,42,.08);}
+.hv3:hover{border-color:#16A34A; box-shadow:0 8px 24px rgba(15,23,42,.08);}
 .hv4:hover{background:#FAFBFC;}
-.hv5:hover{color:#EA580C;}
-.hv6:hover{background:#FFF7ED; border-color:#FDBA74; color:#EA580C;}
-.hv7:hover{background:#FFF7ED;}
-.hv8:hover{background:#FFEDD5;}
+.hv5:hover{color:#15803D;}
+.hv6:hover{background:#F0FDF4; border-color:#86EFAC; color:#15803D;}
+.hv7:hover{background:#F0FDF4;}
+.hv8:hover{background:#DCFCE7;}
 .hv9:hover{background:#FEF2F2;}
-.hv10:hover{border-color:#F97316; background:#FFFBF7;}
+.hv10:hover{border-color:#16A34A; background:#F6FDF8;}
 .hv11:hover{background:#F0FDF4; border-color:#BBF7D0;}
 .hv12:hover{background:#15803D;}
 
@@ -94,7 +98,7 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
 }
 
-.notif-drawer__close:hover { background:#FFF7ED; border-color:#FDBA74; color:#EA580C; }
+.notif-drawer__close:hover { background:#F0FDF4; border-color:#86EFAC; color:#15803D; }
 
 .notif-drawer__body { flex: 1; overflow-y: auto; }
 

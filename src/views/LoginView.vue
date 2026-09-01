@@ -157,7 +157,7 @@ const fieldStyle =
   'width:100%; height:46px; border:1px solid #E6EBF1; border-radius:11px; padding:0 14px; font-size:14.5px; background:#FCFDFE; font-family:inherit;'
 const labelStyle = 'display:block; font-size:13px; font-weight:600; color:#475569; margin-bottom:7px;'
 const linkButton =
-  'background:none; border:none; padding:0; font-weight:700; color:#EA580C; cursor:pointer; font-family:inherit;'
+  'background:none; border:none; padding:0; font-weight:700; color:#15803D; cursor:pointer; font-family:inherit;'
 const backButton =
   'display:inline-flex; align-items:center; gap:7px; background:none; border:none; padding:0; margin-bottom:16px; font-size:13px; font-weight:600; color:#64748B; cursor:pointer; font-family:inherit;'
 
@@ -166,13 +166,13 @@ const primaryStyle = (enabled) => ({
   height: '48px',
   border: 'none',
   borderRadius: '12px',
-  background: enabled ? '#F97316' : '#FDBA74',
+  background: enabled ? '#16A34A' : '#86EFAC',
   color: '#fff',
   fontSize: '15px',
   fontWeight: '700',
   cursor: enabled ? 'pointer' : 'not-allowed',
   fontFamily: 'inherit',
-  boxShadow: enabled ? '0 6px 16px rgba(249,115,22,.28)' : 'none'
+  boxShadow: enabled ? '0 6px 16px rgba(22, 163, 74, .28)' : 'none'
 })
 
 const year = new Date().getFullYear()
@@ -188,14 +188,14 @@ const year = new Date().getFullYear()
          licensed image to use. -->
     <div class="auth-art">
       <div
-        style="position:absolute; inset:0; background:linear-gradient(160deg, rgba(15,23,42,.86) 0%, rgba(15,23,42,.62) 45%, rgba(249,115,22,.34) 100%); pointer-events:none;"
+        style="position:absolute; inset:0; background:linear-gradient(160deg, rgba(15,23,42,.86) 0%, rgba(15,23,42,.62) 45%, rgba(22, 163, 74, .34) 100%); pointer-events:none;"
       ></div>
       <div
         style="position:relative; height:100%; overflow-y:auto; display:flex; flex-direction:column; justify-content:space-between; gap:34px; padding:40px 46px; color:#fff;"
       >
         <div style="display:flex; align-items:center; gap:12px;">
           <div
-            style="width:40px; height:40px; border-radius:12px; background:#F97316; display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:0 6px 18px rgba(249,115,22,.4);"
+            style="width:40px; height:40px; border-radius:12px; background:#16A34A; display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:0 6px 18px rgba(22, 163, 74, .4);"
           >
             <LucideIcon name="calculator" />
           </div>
@@ -343,7 +343,7 @@ const year = new Date().getFullYear()
                    flag, so a checkbox promising that would do nothing. This
                    remembers the identifier only, which it genuinely does. -->
               <label style="display:flex; align-items:center; gap:9px; font-size:13.5px; font-weight:600; color:#475569; cursor:pointer;">
-                <input type="checkbox" v-model="rememberEmail" style="width:16px; height:16px; accent-color:#F97316;" />
+                <input type="checkbox" v-model="rememberEmail" style="width:16px; height:16px; accent-color:#16A34A;" />
                 Remember my email on this device
               </label>
 
@@ -425,7 +425,7 @@ const year = new Date().getFullYear()
               </div>
 
               <label style="display:flex; align-items:flex-start; gap:9px; font-size:13px; font-weight:500; color:#64748B; cursor:pointer; line-height:1.55;">
-                <input type="checkbox" v-model="regTerms" style="width:16px; height:16px; margin-top:2px; accent-color:#F97316;" />
+                <input type="checkbox" v-model="regTerms" style="width:16px; height:16px; margin-top:2px; accent-color:#16A34A;" />
                 <span>I agree to the Terms of Service and Privacy Policy.</span>
               </label>
 
@@ -447,7 +447,7 @@ const year = new Date().getFullYear()
                 <LucideIcon name="arrow-left" /> Back to sign in
               </button>
               <div
-                style="width:46px; height:46px; border-radius:13px; background:#FFF7ED; color:#EA580C; display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:16px;"
+                style="width:46px; height:46px; border-radius:13px; background:#F0FDF4; color:#15803D; display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:16px;"
               >
                 <LucideIcon name="key-round" />
               </div>
@@ -540,8 +540,8 @@ input:disabled {
 input:focus,
 select:focus {
   outline: none;
-  border-color: #f97316;
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12);
+  border-color: #16A34A;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
 }
 
 .auth-shell {

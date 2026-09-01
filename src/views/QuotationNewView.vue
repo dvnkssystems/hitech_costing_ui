@@ -165,10 +165,10 @@ onMounted(() => {
    the tokens and rationale there. Duplicated rather than extracted: only
    these two screens use it. */
 .qw-wizard {
-  --qw-primary: #fe4d00;
-  --qw-primary-dark: #b03400;
-  --qw-primary-hover: #fe5900;
-  --qw-primary-tint: #ffece5;
+  --qw-primary: #16A34A;
+  --qw-primary-dark: #15803D;
+  --qw-primary-hover: #15803D;
+  --qw-primary-tint: #DCFCE7;
   --qw-border: #e4dcd6;
   --qw-row-border: #f2ede9;
   --qw-text: #1c1714;
@@ -244,7 +244,7 @@ onMounted(() => {
 .qw-type-card:not(.is-disabled):hover,
 .qw-type-card.is-active {
   border-color: var(--qw-primary);
-  box-shadow: 0 8px 24px rgba(254, 77, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.15);
 }
 
 .qw-type-card.is-disabled {
@@ -302,11 +302,11 @@ onMounted(() => {
 
 .qw-tank-tile:hover {
   border-color: var(--qw-primary);
-  box-shadow: 0 8px 24px rgba(254, 77, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.15);
 }
 
 .qw-notice {
-  background: #fff7f2;
+  background: #F0FDF4;
   border: 1px solid var(--qw-border);
   border-radius: 12px;
   padding: 15px 18px;

@@ -135,7 +135,7 @@ function setWrapper(fieldname) {
     >
       <div style="display:flex; align-items:center; gap:11px; margin-bottom:18px;">
         <span
-          style="width:28px; height:28px; border-radius:8px; background:#FFF7ED; color:#F97316; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; flex:none;"
+          style="width:28px; height:28px; border-radius:8px; background:#F0FDF4; color:#16A34A; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; flex:none;"
           >{{ section.n }}</span
         >
         <h2 style="margin:0; font-size:16px; font-weight:700;">{{ section.title }}</h2>
