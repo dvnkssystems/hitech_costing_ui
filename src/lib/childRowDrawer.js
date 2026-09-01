@@ -49,8 +49,88 @@ const DRAWER_HIDDEN_FIELDS = {
   // `question_text` ("Parameter") already shows its readable text. `weight`
   // and `weighted_score` are calculate()'s own working numbers behind the
   // Order Complexity Score shown on the step's Calculated rail, not something
-  // to review or edit per question.
-  'Costing Worksheet Complexity Rating': new Set(['question', 'unit', 'weight', 'weighted_score'])
+  // to review or edit per question. `actual_value` is edited through the
+  // Score picker's own probe input (see ChildRowDrawer.vue), not a separate
+  // generic control.
+  'Costing Worksheet Complexity Rating': new Set(['question', 'unit', 'weight', 'weighted_score', 'actual_value'])
+}
+
+/* ── Complexity rating legend ────────────────────────────────────────────── */
+
+/**
+ * `Costing Worksheet Complexity Rating.rating` is a plain `1`/`2`/`3` Select —
+ * enough for `calculate()` server-side (`Order Complexity Question.get(f"rating_{n}_label")`,
+ * `costing_worksheet.py`'s `_calculate_complexity`) but meaningless to look at:
+ * the user has to pick blind, then check Result to see if it's the row they
+ * meant. The three `rating_N_label` texts that describe what each number
+ * means for THIS row's question already live on its `Order Complexity
+ * Question` master (the same text `_calculate_complexity` copies into
+ * Result) — fetch them so the drawer can show the picker with its meaning
+ * attached instead. Cached per question id: the same question is reused
+ * across every item's costing sheet in one wizard session.
+ */
+const RATING_LABEL_FIELDS = ['rating_1_label', 'rating_2_label', 'rating_3_label']
+const ratingLabelCache = new Map()
+
+export function fetchRatingLabels(frm, questionId) {
+  if (!questionId) return Promise.resolve(null)
+  if (!ratingLabelCache.has(questionId)) {
+    ratingLabelCache.set(
+      questionId,
+      frm.frappe
+        .call('frappe.client.get_value', {
+          doctype: 'Order Complexity Question',
+          filters: questionId,
+          fieldname: RATING_LABEL_FIELDS
+        })
+        .then((r) => r ?? null)
+        .catch(() => null)
+    )
+  }
+  return ratingLabelCache.get(questionId)
+}
+
+/**
+ * Parse a `rating_N_label` into a numeric band, for the `%`/`no` unit
+ * questions (No of components, In-house execution %, Scrap generation %) —
+ * the source workbook's own Rating reference column phrases these as ranges
+ * ("0-25", "26 - 75", "Less than 20%", ">75") rather than descriptions, so
+ * the user has a number in hand (a count, a percentage) and expects the
+ * matching band picked FOR them, not to guess which of three prose options
+ * their number falls under. Returns null for anything else (the RM
+ * availability / welding process style text options, which stay pick-only).
+ */
+export function parseRatingRange(label) {
+  if (!label) return null
+  const text = String(label).trim()
+  let m
+  if ((m = text.match(/^less than\s+([\d.]+)/i))) {
+    return { min: -Infinity, max: Number(m[1]), maxExclusive: true }
+  }
+  if ((m = text.match(/^>\s*([\d.]+)/))) {
+    return { min: Number(m[1]), minExclusive: true, max: Infinity }
+  }
+  if ((m = text.match(/^([\d.]+)\s*%?\s*(?:-|to)\s*([\d.]+)/i))) {
+    return { min: Number(m[1]), max: Number(m[2]) }
+  }
+  return null
+}
+
+/** The score (as `"1"`/`"2"`/`"3"`) whose band a raw number falls into,
+ *  given a row's three rating labels — or null if `value` isn't a number or
+ *  falls outside every parseable band. */
+export function matchRatingScore(value, labels) {
+  if (value === '' || value === null || value === undefined) return null
+  const n = Number(value)
+  if (Number.isNaN(n)) return null
+  for (const score of [1, 2, 3]) {
+    const range = parseRatingRange(labels?.[`rating_${score}_label`])
+    if (!range) continue
+    const aboveMin = range.minExclusive ? n > range.min : n >= range.min
+    const belowMax = range.maxExclusive ? n < range.max : n <= range.max
+    if (aboveMin && belowMax) return String(score)
+  }
+  return null
 }
 
 const TABLE_SELECTOR = '.control-table[data-fieldname]'

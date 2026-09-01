@@ -5,10 +5,11 @@ import LucideIcon from '@/components/LucideIcon.vue'
 const MASTERS = [
   { doctype: 'Tank Type', label: 'Tank Types', desc: 'Base tank definitions and their derived labour rates.', icon: 'container', bg: '#EFF6FF', fg: '#2563EB' },
   { doctype: 'Costing Department', label: 'Costing Departments', desc: 'Departments used to group processing costs.', icon: 'building-2', bg: '#F5F3FF', fg: '#7C3AED' },
-  { doctype: 'Material Rate', label: 'Material Rates', desc: 'Per-kg material rates used in worksheet costing.', icon: 'coins', bg: '#FFF7ED', fg: '#F97316' },
+  { doctype: 'Material Rate', label: 'Material Rates', desc: 'Per-kg material rates used in worksheet costing.', icon: 'coins', bg: '#F0FDF4', fg: '#16A34A' },
   { doctype: 'Paint Make', label: 'Paint Makes', desc: 'Approved paint brands/makes.', icon: 'paintbrush', bg: '#ECFDF5', fg: '#059669' },
   { doctype: 'Paint System Rate', label: 'Paint System Rates', desc: 'Price per sqm by paint make, method and DFT band.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
-  { doctype: 'Order Complexity Question', label: 'Order Complexity Questions', desc: 'Questions used to score order complexity.', icon: 'list-checks', bg: '#F1F5F9', fg: '#475569' }
+  { doctype: 'Order Complexity Question', label: 'Order Complexity Questions', desc: 'Questions used to score order complexity.', icon: 'list-checks', bg: '#F1F5F9', fg: '#475569' },
+  { doctype: 'Quotation Term', label: 'Terms & Conditions', desc: 'The Quotation Wizard\'s Terms & Conditions checklist entries.', icon: 'file-check', bg: '#FEFCE8', fg: '#CA8A04' }
 ]
 </script>
 

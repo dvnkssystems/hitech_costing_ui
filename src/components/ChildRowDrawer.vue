@@ -15,7 +15,15 @@
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { controlFor } from '@frappe-vue-sdk/vue'
-import { installRowDrawer, rowFrmFor, rowFields, tableLabel } from '@/lib/childRowDrawer'
+import {
+  installRowDrawer,
+  rowFrmFor,
+  rowFields,
+  tableLabel,
+  fetchRatingLabels,
+  parseRatingRange,
+  matchRatingScore
+} from '@/lib/childRowDrawer'
 
 const props = defineProps({
   /** The parent form's `frm`. Null until the form has loaded. */
@@ -44,6 +52,57 @@ const fields = computed(() =>
 const label = computed(() =>
   fieldname.value ? tableLabel(props.frm, fieldname.value) : ''
 )
+
+/** Whether the open row is a Complexity Rating — the one child table whose
+ *  `rating` field gets the descriptive picker below instead of the SDK's
+ *  plain `1`/`2`/`3` Select. */
+const isComplexityRating = computed(() => rowFrm.value?.doctype === 'Costing Worksheet Complexity Rating')
+const ratingLabels = ref(null)
+watch(
+  () => (isComplexityRating.value ? row.value?.question : null),
+  async (questionId) => {
+    ratingLabels.value = questionId ? await fetchRatingLabels(props.frm, questionId) : null
+  },
+  { immediate: true }
+)
+
+/**
+ * The `%`/`no` unit questions (In-house execution %, No of components, Scrap
+ * generation %) phrase their Rating reference as numeric bands ("0-25",
+ * "Less than 20%", ">75") rather than descriptions — so once the labels are
+ * in hand, offer a raw-number field that resolves straight to the matching
+ * score instead of making the user match their own number against three
+ * ranges by eye. Falls back to pick-only when no band on this row parses (a
+ * mis-typed reference, or a genuinely descriptive `%`/`no` question).
+ */
+const canProbeValue = computed(
+  () =>
+    ['%', 'no'].includes(row.value?.unit) &&
+    Boolean(ratingLabels.value) &&
+    [1, 2, 3].some((n) => parseRatingRange(ratingLabels.value[`rating_${n}_label`]))
+)
+/** Seeded from the row's own stored `actual_value` whenever the open row
+ *  changes (first open, Next/Previous, or a different row entirely) — so a
+ *  value entered earlier shows back up instead of looking cleared. */
+const probeValue = ref('')
+watch(row, (r) => {
+  probeValue.value = r?.actual_value ?? ''
+})
+
+/** Some questions (Additional Shunt Welding, Welding Process) only define
+ *  two bands on their `Order Complexity Question` master — `rating_3_label`
+ *  is blank. Score is still hard-coded to three slots everywhere else
+ *  (`Costing Worksheet Complexity Rating.rating`'s own Select options,
+ *  `_calculate_complexity`'s `{1: "Low", 2: "Medium", 3: "High"}` map), so a
+ *  literal `[1, 2, 3]` here would offer a "3 — " option that sets a Score
+ *  with no defined meaning. Only offer the bands this question actually has. */
+const availableScores = computed(() => [1, 2, 3].filter((n) => ratingLabels.value?.[`rating_${n}_label`]))
+function onProbeInput() {
+  const num = probeValue.value === '' ? null : Number(probeValue.value)
+  rowFrm.value.set_value('actual_value', Number.isFinite(num) ? num : null)
+  const matched = matchRatingScore(probeValue.value, ratingLabels.value)
+  if (matched) rowFrm.value.set_value('rating', matched)
+}
 
 const panel = ref(null)
 let lastFocused = null
@@ -86,6 +145,12 @@ watch(rows, (list) => {
   if (fieldname.value && index.value >= list.length) close()
 })
 
+// A frm swap (e.g. the wizard switching which item tab is active) while the
+// drawer is open must never leave it silently showing a row from the OLD
+// frm's table — if the new frm's same-named table happens to have enough
+// rows to stay in-bounds, the watch above alone would miss it.
+watch(() => props.frm, () => close())
+
 let teardown = null
 watch(
   () => props.root,
@@ -126,13 +191,34 @@ onBeforeUnmount(() => teardown?.())
         <!-- `frappe-form` so the app's control stylesheet reaches these fields:
              the drawer is teleported to the body, outside the form it edits. -->
         <div class="child-drawer__body frappe-form">
-          <component
-            :is="controlFor(df.fieldtype)"
-            v-for="df in fields"
-            :key="df.fieldname"
-            :frm="rowFrm"
-            :fieldname="df.fieldname"
-          />
+          <template v-for="df in fields" :key="df.fieldname">
+            <div v-if="isComplexityRating && df.fieldname === 'rating' && ratingLabels" class="control child-drawer__rating-field">
+              <span>{{ df.label }}</span>
+              <div v-if="canProbeValue" class="child-drawer__rating-probe">
+                <input
+                  type="number"
+                  v-model="probeValue"
+                  @input="onProbeInput"
+                  :placeholder="row.unit === '%' ? 'Enter the actual %' : 'Enter the actual count'"
+                />
+                <span class="child-drawer__rating-probe-hint">Picks the matching band below</span>
+              </div>
+              <div class="child-drawer__rating-options">
+                <button
+                  v-for="n in availableScores"
+                  :key="n"
+                  type="button"
+                  class="child-drawer__rating-option"
+                  :class="{ 'is-selected': String(row.rating) === String(n) }"
+                  @click="rowFrm.set_value('rating', String(n))"
+                >
+                  <span class="child-drawer__rating-option-n">{{ n }}</span>
+                  <span class="child-drawer__rating-option-text">{{ ratingLabels[`rating_${n}_label`] }}</span>
+                </button>
+              </div>
+            </div>
+            <component v-else :is="controlFor(df.fieldtype)" :frm="rowFrm" :fieldname="df.fieldname" />
+          </template>
           <p v-if="!fields.length" class="child-drawer__empty">
             This table's DocType has no editable fields.
           </p>

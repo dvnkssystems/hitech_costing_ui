@@ -224,20 +224,41 @@ export function logout() {
  * `getdoctype` already returns all of that in one response, so this populates
  * `locals` from it and hands back the parent's fields.
  */
-export async function metaFetcher(doctype, frappe) {
-  const result = await frappe.call('frappe.desk.form.load.getdoctype', {
-    doctype,
-    with_parent: 1
-  })
+// Several `useFrmRemote()` boots for the SAME doctype (e.g. one per item tab in
+// the Costing Worksheet wizard) each get their OWN, private `frappe.locals` —
+// caching just the network round-trip here (not per-call) still means every
+// boot's own `locals.DocType` store gets correctly populated below, including
+// `__custom_js`, without re-fetching identical metadata from the server.
+const getdoctypeCache = new Map()
 
-  // `getdoctype` responds with { docs: [...] } — the parent DocType followed by
-  // every child DocType it references — and no `message` wrapper.
-  const docs = Array.isArray(result?.docs) ? result.docs : []
-  // Write into the runtime's own locals and mirror that same object onto the
-  // global, rather than keeping a detached one here: anything that later
-  // assigns `globalThis.locals = frappe.locals` (installing globals for native
-  // client scripts) would otherwise silently drop everything cached below —
-  // including each DocType's `__custom_js`.
+export async function metaFetcher(doctype, frappe) {
+  let cachedDocs = getdoctypeCache.get(doctype)
+  if (!cachedDocs) {
+    const result = await frappe.call('frappe.desk.form.load.getdoctype', {
+      doctype,
+      with_parent: 1
+    })
+    // `getdoctype` responds with { docs: [...] } — the parent DocType followed
+    // by every child DocType it references — and no `message` wrapper.
+    cachedDocs = Array.isArray(result?.docs) ? result.docs : []
+    getdoctypeCache.set(doctype, cachedDocs)
+  }
+  // Deep-cloned per call, never the cached array's own objects: downstream
+  // code (e.g. `lockOnSubmit`) mutates field defs in place (`set_df_property`
+  // writes straight onto `meta.fields[i]`), and this cache is shared across
+  // every simultaneously-open frm of the same doctype (every item tab in the
+  // wizard) — sharing the raw objects would let one item's lock-on-submit (or
+  // any other in-place meta mutation) bleed into every other item's fields.
+  const docs = structuredClone(cachedDocs)
+
+  // Write into THIS call's own locals (private per frm/frappe instance) and
+  // mirror that same object onto the global, rather than keeping a detached
+  // one here: anything that later assigns `globalThis.locals = frappe.locals`
+  // (installing globals for native client scripts) would otherwise silently
+  // drop everything cached below — including each DocType's `__custom_js`.
+  // This write-back has to run on every call, cache hit or not: skipping it
+  // on a hit would leave THIS frm's own locals without the doctype it just
+  // asked for, even though some earlier, unrelated frm's locals has it.
   const locals = frappe?.locals ?? (globalThis.locals ??= {})
   const store = (locals.DocType ??= {})
   for (const doc of docs) {
