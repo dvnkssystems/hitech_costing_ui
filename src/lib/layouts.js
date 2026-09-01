@@ -20,7 +20,11 @@ import { call, hasBackend } from './frappe'
  * day one earns its own list view.
  */
 export const LIST_LAYOUTS = {
-  default: defineAsyncComponent(() => import('@/views/DocListView.vue'))
+  default: defineAsyncComponent(() => import('@/views/DocListView.vue')),
+  // Bespoke Quotation list (status tabs + derived worksheet status/product).
+  // Takes over only once the backend's `Custom UI Doctype Layout` record for
+  // Quotation has `list` set to this key — see `QuotationListView.vue`.
+  QuotationListView: defineAsyncComponent(() => import('@/views/QuotationListView.vue'))
 }
 
 /**
@@ -63,5 +67,17 @@ export function resetLayoutMap() {
   pending = null
 }
 
+/**
+ * Built-in fallback when the backend has no `Custom UI Doctype Layout`
+ * record for a DocType yet. A record still wins whenever one exists — this
+ * only fills the gap before that record gets created, so `QuotationListView`
+ * (status tabs, search, derived worksheet status) renders on `/list/Quotation`
+ * out of the box instead of silently degrading to the generic table.
+ */
+const DEFAULT_LIST_LAYOUT = {
+  Quotation: 'QuotationListView'
+}
+
 export const formLayoutFor = (map, doctype) => map?.[doctype]?.form ?? 'cards'
-export const listLayoutFor = (map, doctype) => map?.[doctype]?.list ?? 'default'
+export const listLayoutFor = (map, doctype) =>
+  map?.[doctype]?.list ?? DEFAULT_LIST_LAYOUT[doctype] ?? 'default'

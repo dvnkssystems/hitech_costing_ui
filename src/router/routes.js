@@ -11,6 +11,8 @@ const LoginView = () => import('@/views/LoginView.vue')
 const MastersView = () => import('@/views/MastersView.vue')
 const CostingWorksheetWizard = () => import('@/views/CostingWorksheetWizard.vue')
 const QuotationNewView = () => import('@/views/QuotationNewView.vue')
+const QuotationOpenView = () => import('@/views/QuotationOpenView.vue')
+const QuotationOutputView = () => import('@/views/QuotationOutputView.vue')
 
 // `meta.nav` drives the sidebar highlight. `meta.chrome: false` opts a route
 // out of the staff shell entirely.
@@ -45,7 +47,10 @@ export const routes = [
     path: '/wizard/costing-worksheet/:name?',
     name: 'costing-worksheet-wizard',
     component: CostingWorksheetWizard,
-    props: true,
+    // `?quotation=` (not a path param) carries an existing Quotation to
+    // resume — `props: true` only maps route params, not the query string,
+    // so this needs its own mapping to reach both.
+    props: (route) => ({ name: route.params.name, quotation: route.query.quotation ?? '' }),
     meta: { nav: 'form' }
   },
   // "What kind of quotation?" — sits in front of the wizard above. Its own
@@ -55,6 +60,24 @@ export const routes = [
     path: '/quotation/new',
     name: 'quotation-new',
     component: QuotationNewView,
+    meta: { nav: 'form' }
+  },
+  // Resolver: sends a Draft Quotation into the wizard to resume it, and a
+  // submitted one to the read-only review screen below. See
+  // `frappeRouting.js`'s `CUSTOM_FORM_ROUTES.Quotation`, which is what routes
+  // every "open this Quotation" action (list, search, breadcrumbs) here.
+  {
+    path: '/quotation/:name',
+    name: 'quotation-open',
+    component: QuotationOpenView,
+    props: true,
+    meta: { nav: 'form' }
+  },
+  {
+    path: '/quotation/:name/review',
+    name: 'quotation-review',
+    component: QuotationOutputView,
+    props: true,
     meta: { nav: 'form' }
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }

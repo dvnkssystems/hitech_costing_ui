@@ -82,3 +82,15 @@ const WORKSHEET_STATUS_COLOURS = {
 }
 
 export const worksheetStatusStyle = (s) => ({ ...pillBase, ...(WORKSHEET_STATUS_COLOURS[s] || {}) })
+
+/** `docstatus` on any submittable DocType: 0 Draft, 1 Submitted, 2 Cancelled. */
+const DOCSTATUS_META = {
+  0: { label: 'Draft', background: '#F1F5F9', color: '#64748B' },
+  1: { label: 'Submitted', background: '#DCFCE7', color: '#15803D' },
+  2: { label: 'Cancelled', background: '#FEE2E2', color: '#DC2626' }
+}
+
+export function docstatusBadge(docstatus) {
+  const meta = DOCSTATUS_META[docstatus] ?? DOCSTATUS_META[0]
+  return { label: meta.label, style: { ...pillBase, background: meta.background, color: meta.color } }
+}

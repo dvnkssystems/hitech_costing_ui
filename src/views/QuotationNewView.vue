@@ -89,7 +89,7 @@ onMounted(() => {
 <template>
   <div class="qw-wizard qw-new">
     <div class="qw-crumbtrail">
-      <RouterLink to="/" class="qw-crumbtrail__link">Home</RouterLink>
+      <RouterLink to="/" class="qw-crumbtrail__link">Dashboard</RouterLink>
       <LucideIcon name="chevron-right" />
       <RouterLink :to="listRouteFor('Costing Worksheet')" class="qw-crumbtrail__link">Costing Worksheet</RouterLink>
       <LucideIcon name="chevron-right" />

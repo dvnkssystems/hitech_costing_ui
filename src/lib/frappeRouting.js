@@ -15,7 +15,13 @@
  * DocTypes this app renders on a bespoke screen rather than the generic form.
  * None yet — every DocType uses `/form/:doctype/:name`.
  */
-const CUSTOM_FORM_ROUTES = {}
+const CUSTOM_FORM_ROUTES = {
+  // A Draft Quotation should resume in the same wizard that built it; a
+  // submitted one should open the read-only review/output screen instead.
+  // `QuotationOpenView` is the resolver that decides which — see
+  // `src/views/QuotationOpenView.vue`.
+  Quotation: (name) => `/quotation/${encodeURIComponent(name)}`
+}
 
 /**
  * DocTypes this app browses on a bespoke screen rather than the generic list.

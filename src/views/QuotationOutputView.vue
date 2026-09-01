@@ -1,0 +1,325 @@
+<script setup>
+/**
+ * Read-only review/output screen for a Quotation that's past Draft.
+ *
+ * `QuotationOpenView` sends every submitted Quotation here instead of the
+ * wizard — there is nothing left to edit through the costing flow once it's
+ * submitted, but the estimator still needs to see what went out, its
+ * approval state, and get to Print. There is no Quotation-level approval
+ * workflow (see `frappeRouting.js`'s comment on `CUSTOM_FORM_ROUTES`) — the
+ * "approval" shown here is each linked Costing Worksheet's own real `status`
+ * (`src/lib/home.js`'s `STATUS_STAGES`), not something invented for this page.
+ *
+ * Deliberately reads the doc plainly via `db.get_doc` rather than booting a
+ * live SDK `frm` — this page never writes, so there is no form lifecycle to
+ * manage.
+ */
+import { ref, computed, onMounted, watch } from 'vue'
+import { db } from '@/lib/frappeDb'
+import { hasBackend } from '@/lib/frappe'
+import { listRouteFor, formRouteFor } from '@/lib/frappeRouting'
+import { printRecord } from '@/lib/rowActions'
+import { STATUS_STAGES } from '@/lib/home'
+import { worksheetStatusStyle } from '@/utils/styles'
+import { money, decimal, formatDate } from '@/utils/format'
+import LucideIcon from '@/components/LucideIcon.vue'
+
+const props = defineProps({
+  name: { type: String, required: true }
+})
+
+const live = computed(() => hasBackend)
+const loading = ref(true)
+const error = ref('')
+const doc = ref(null)
+const worksheets = ref([])
+
+const WORKSHEET_FIELDS = ['name', 'status', 'tank_type', 'total_deal_value']
+
+/** Earliest-pipeline-stage status across every linked worksheet — the
+ *  "weakest link" stands in for a per-quotation status, since none exists. */
+const aggregateStatus = computed(() => {
+  if (!worksheets.value.length) return null
+  let best = null
+  for (const w of worksheets.value) {
+    const idx = STATUS_STAGES.findIndex((s) => s.key === w.status)
+    if (idx === -1) continue
+    if (best === null || idx < best) best = idx
+  }
+  return best === null ? null : STATUS_STAGES[best].key
+})
+
+function row(label, value) {
+  return value === undefined || value === null || value === '' ? null : { label, value }
+}
+
+const orderRows = computed(() => {
+  if (!doc.value) return []
+  const d = doc.value
+  return [
+    row('Customer', d.customer_name || d.party_name),
+    row('Company', d.company),
+    row('Order type', d.order_type),
+    row('Date', d.transaction_date ? formatDate(d.transaction_date) : null),
+    row('Valid till', d.valid_till ? formatDate(d.valid_till) : null)
+  ].filter(Boolean)
+})
+
+const itemRows = computed(() => {
+  const items = doc.value?.items ?? []
+  return items.map((it) => ({
+    key: it.name ?? it.item_code,
+    itemCode: it.item_code,
+    description: it.description,
+    qty: it.qty,
+    rate: money(it.rate),
+    amount: money(it.amount)
+  }))
+})
+
+const totalsRows = computed(() => {
+  if (!doc.value) return []
+  const d = doc.value
+  return [
+    row('Total', d.total !== undefined ? money(d.total) : null),
+    row('Discount', d.additional_discount_percentage ? `${decimal(d.additional_discount_percentage)} %` : null),
+    row('Net total', d.net_total !== undefined ? money(d.net_total) : null),
+    row('Grand total', d.grand_total !== undefined ? money(d.grand_total) : null)
+  ].filter(Boolean)
+})
+
+const taxRows = computed(() => {
+  const taxes = doc.value?.taxes ?? []
+  return taxes.map((t) => ({
+    key: t.name ?? t.account_head,
+    label: t.description || t.account_head,
+    rate: t.rate !== undefined ? `${decimal(t.rate)} %` : '—',
+    amount: money(t.tax_amount)
+  }))
+})
+
+const addressRows = computed(() => {
+  if (!doc.value) return []
+  const d = doc.value
+  return [
+    row('Billing address', d.customer_address),
+    row('Shipping address', d.shipping_address_name),
+    row('Incoterm', d.incoterm),
+    row('Named place', d.named_place),
+    row('Port of discharge', d.hitech_port_of_discharge)
+  ].filter(Boolean)
+})
+
+const termsRows = computed(() => {
+  if (!doc.value) return []
+  const selected = (doc.value.hitech_quotation_terms ?? []).filter((t) => t.selected)
+  const rows = [row('Terms selected', selected.length ? `${selected.length} of ${(doc.value.hitech_quotation_terms ?? []).length}` : null)]
+  rows.push(row('Notes', doc.value.hitech_terms_notes))
+  return rows.filter(Boolean)
+})
+
+const sections = computed(() =>
+  [
+    { key: 'order', n: '01', title: 'Customer & Order', rows: orderRows.value },
+    { key: 'taxes', n: '02', title: 'Taxes & Charges', rows: [row('Template', doc.value?.taxes_and_charges), ...totalsRows.value.filter(Boolean)].filter(Boolean) },
+    { key: 'address', n: '03', title: 'Address & Delivery', rows: addressRows.value },
+    { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsRows.value }
+  ].filter((s) => s.rows.length)
+)
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  doc.value = null
+  worksheets.value = []
+
+  if (!live.value) {
+    error.value = 'No Frappe backend configured. Set VITE_FRAPPE_URL in .env to view this Quotation.'
+    loading.value = false
+    return
+  }
+
+  try {
+    const [d, w] = await Promise.all([
+      db.get_doc('Quotation', props.name),
+      db.get_list('Costing Worksheet', {
+        filters: { quotation: props.name },
+        fields: WORKSHEET_FIELDS,
+        limit_page_length: 0
+      })
+    ])
+    doc.value = d
+    worksheets.value = w ?? []
+  } catch (e) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+function onPrint() {
+  printRecord('Quotation', props.name)
+}
+
+onMounted(load)
+watch(() => props.name, load)
+</script>
+
+<template>
+  <div style="padding:32px 40px 80px; margin:0 auto; max-width:1200px;">
+    <div
+      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
+    >
+      <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
+      <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
+      <RouterLink :to="listRouteFor('Quotation')" style="color:#64748B;">Quotation</RouterLink>
+      <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
+      <span style="color:#16A34A;">{{ name }}</span>
+    </div>
+
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin:0; font-size:32px; font-weight:800; letter-spacing:-.02em;">{{ name }}</h1>
+        <div v-if="doc" style="font-size:14px; color:#64748B; margin-top:6px;">
+          {{ doc.customer_name || doc.party_name }} ·
+          {{ doc.docstatus === 2 ? 'Cancelled' : doc.docstatus === 1 ? 'Submitted' : 'Draft' }}
+        </div>
+      </div>
+      <span
+        v-if="aggregateStatus"
+        :style="{ ...worksheetStatusStyle(aggregateStatus), fontSize: '13px', padding: '7px 14px' }"
+      >
+        {{ aggregateStatus }}
+      </span>
+    </div>
+
+    <div
+      v-if="!live && !loading"
+      style="display:flex; align-items:center; gap:14px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:13px; padding:15px 18px; margin-bottom:18px; flex-wrap:wrap;"
+    >
+      <span style="width:34px; height:34px; border-radius:9px; background:#fff; color:#2563EB; display:flex; align-items:center; justify-content:center; font-size:17px; flex:none;"
+        ><LucideIcon name="info" /></span
+      >
+      <div style="font-size:13px; color:#2563EB;">
+        Set <code>VITE_FRAPPE_URL</code> in <code>.env</code> to view this Quotation.
+      </div>
+    </div>
+
+    <div
+      v-if="error"
+      style="display:flex; align-items:flex-start; gap:12px; background:#FEF2F2; border:1px solid #FECACA; border-radius:13px; padding:15px 18px; margin-bottom:18px;"
+    >
+      <span style="color:#DC2626; font-size:17px; flex:none;"><LucideIcon name="x" /></span>
+      <div style="min-width:0;">
+        <div style="font-size:14.5px; font-weight:700; color:#991B1B;">Could not load {{ name }}</div>
+        <div style="font-size:13px; color:#B91C1C; margin-top:3px; word-break:break-word;">{{ error }}</div>
+      </div>
+    </div>
+
+    <div
+      v-if="loading"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:48px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;"
+    >
+      Loading…
+    </div>
+
+    <template v-if="doc">
+      <!-- Approval — one card per linked Costing Worksheet's own real status. -->
+      <div v-if="worksheets.length" style="margin-bottom:18px;">
+        <div style="font-size:12px; font-weight:700; color:#94A3B8; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px;">
+          Costing approval
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px;">
+          <RouterLink
+            v-for="w in worksheets"
+            :key="w.name"
+            :to="formRouteFor('Costing Worksheet', w.name)"
+            style="background:#fff; border:1px solid #EAEEF3; border-radius:14px; padding:16px 18px; text-decoration:none; color:inherit; display:block;"
+            class="hv4"
+          >
+            <div style="font-size:13px; font-weight:700; color:#0F172A;">{{ w.name }}</div>
+            <div style="font-size:12.5px; color:#64748B; margin-top:2px;">{{ w.tank_type || '—' }}</div>
+            <span :style="{ ...worksheetStatusStyle(w.status), marginTop: '8px' }">{{ w.status }}</span>
+          </RouterLink>
+        </div>
+      </div>
+
+      <!-- Items -->
+      <div v-if="itemRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
+        <div style="padding:16px 20px 4px; font-size:18px; font-weight:800; color:#0F172A;">Items</div>
+        <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155;">
+          <thead>
+            <tr style="background:#F8FAFC;">
+              <th style="text-align:left; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Item</th>
+              <th style="text-align:left; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Description</th>
+              <th style="text-align:right; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Qty</th>
+              <th style="text-align:right; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Rate</th>
+              <th style="text-align:right; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="it in itemRows" :key="it.key" style="border-bottom:1px solid #F1F5F9;">
+              <td style="padding:11px 20px; font-weight:600; color:#0F172A;">{{ it.itemCode }}</td>
+              <td style="padding:11px 20px; color:#64748B;">{{ it.description || '—' }}</td>
+              <td style="padding:11px 20px; text-align:right;">{{ it.qty }}</td>
+              <td style="padding:11px 20px; text-align:right;">{{ it.rate }}</td>
+              <td style="padding:11px 20px; text-align:right; font-weight:700;">{{ it.amount }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="taxRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
+        <div style="padding:16px 20px 4px; font-size:18px; font-weight:800; color:#0F172A;">Taxes &amp; charges</div>
+        <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155;">
+          <thead>
+            <tr style="background:#F8FAFC;">
+              <th style="text-align:left; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Charge</th>
+              <th style="text-align:right; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Rate</th>
+              <th style="text-align:right; padding:11px 20px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in taxRows" :key="t.key" style="border-bottom:1px solid #F1F5F9;">
+              <td style="padding:11px 20px;">{{ t.label }}</td>
+              <td style="padding:11px 20px; text-align:right;">{{ t.rate }}</td>
+              <td style="padding:11px 20px; text-align:right; font-weight:700;">{{ t.amount }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-for="sec in sections" :key="sec.key" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:18px 20px; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:14px;">
+        <div style="display:flex; align-items:baseline; gap:12px; border-bottom:1px solid #EAEEF3; padding-bottom:10px;">
+          <span style="font-size:13px; font-weight:600; color:#16A34A; font-variant-numeric:tabular-nums;">{{ sec.n }}</span>
+          <span style="font-size:18px; font-weight:800; color:#0F172A;">{{ sec.title }}</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px 22px; margin-top:14px;">
+          <div v-for="r in sec.rows" :key="r.label" style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+            <span style="font-size:12px; font-weight:600; color:#94A3B8;">{{ r.label }}</span>
+            <span style="font-size:15px; color:#0F172A; overflow-wrap:anywhere;">{{ r.value }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:12px; border-top:1px solid #EAEEF3; padding-top:18px; margin-top:8px;">
+        <button
+          type="button"
+          @click="onPrint"
+          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#fff; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#475569; cursor:pointer; font-family:inherit;"
+          class="hv2"
+        >
+          <LucideIcon name="printer" /> Print
+        </button>
+        <button
+          type="button"
+          disabled
+          title="Not available yet"
+          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#94A3B8; cursor:not-allowed; font-family:inherit;"
+        >
+          <LucideIcon name="mail" /> Email — coming soon
+        </button>
+      </div>
+    </template>
+  </div>
+</template>

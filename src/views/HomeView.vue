@@ -3,7 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { hasBackend } from '@/lib/frappe'
-import { fetchHomeStats, STATUS_STAGES } from '@/lib/home'
+import { fetchHomeStats, QUOTATION_PIPELINE_STAGES } from '@/lib/home'
+import { formRouteFor } from '@/lib/frappeRouting'
+import { formatDate, moneyCompact } from '@/utils/format'
+import { worksheetStatusStyle } from '@/utils/styles'
 import LucideIcon from '@/components/LucideIcon.vue'
 
 const router = useRouter()
@@ -32,20 +35,23 @@ const pct = (value, digits = 1) =>
   value === null || value === undefined ? '—' : `${Number(value).toFixed(digits)}%`
 
 /** Placeholder stages so the pipeline keeps its shape before data lands. */
-const emptyPipeline = STATUS_STAGES.map((s) => ({ ...s, count: 0, share: 0 }))
-const pipeline = computed(() => stats.value?.statusPipeline ?? emptyPipeline)
+const emptyPipeline = QUOTATION_PIPELINE_STAGES.map((s) => ({ ...s, count: 0, share: 0 }))
+const pipeline = computed(() => stats.value?.quotationPipeline ?? emptyPipeline)
+const recentQuotations = computed(() => stats.value?.recentQuotations ?? [])
+
+const monthLabel = new Date().toLocaleDateString(undefined, { month: 'short' })
 
 const cards = computed(() => {
   const s = stats.value
-  const growth = s?.growth
+  const growth = s?.quotationGrowth
   return [
     {
-      label: 'Total Worksheets',
-      value: s ? n(s.totalWorksheets) : '—',
-      icon: 'calculator',
+      label: 'Quotations this month',
+      value: s ? n(s.quotationsThisMonth) : '—',
+      icon: 'file-text',
       bg: '#F0FDF4',
       fg: '#16A34A',
-      to: '/ui/Costing Worksheet',
+      to: '/list/Quotation',
       note:
         !growth || growth.pct === null
           ? { text: `${n(growth?.current)} created this month`, icon: 'clock', color: '#64748B' }
@@ -57,69 +63,38 @@ const cards = computed(() => {
             }
     },
     {
-      label: 'Draft',
-      value: s ? n(s.draftWorksheets) : '—',
-      icon: 'pencil',
-      bg: '#F1F5F9',
-      fg: '#475569',
-      to: '/ui/Costing Worksheet',
-      note: { text: 'not yet submitted for approval', icon: 'clock', color: '#64748B' }
-    },
-    {
-      label: 'Awaiting Approval',
-      value: s ? n(s.awaitingApproval) : '—',
+      label: 'Pending approval',
+      value: s ? n(s.pendingApproval) : '—',
       icon: 'loader',
       bg: '#FEF3C7',
       fg: '#B45309',
-      to: '/ui/Costing Worksheet',
-      note: { text: 'BU Head or CFO review pending', icon: 'clock', color: '#B45309' }
+      to: '/list/Quotation',
+      note: {
+        text: s ? `${n(s.pendingBuHead)} with BU Head · ${n(s.pendingCfo)} with CFO` : 'BU Head or CFO review pending',
+        icon: 'clock',
+        color: '#B45309'
+      }
     },
     {
-      label: 'Avg. Margin %',
+      label: `Quoted value (${monthLabel})`,
+      value: s ? moneyCompact(s.openQuotesValue) : '—',
+      icon: 'wallet',
+      bg: '#EFF6FF',
+      fg: '#2563EB',
+      to: '/list/Quotation',
+      note: { text: `across ${s ? n(s.openQuotesCount) : '—'} open quotes`, icon: 'clock', color: '#64748B' }
+    },
+    {
+      label: 'Avg margin at deal',
       value: s ? pct(s.avgMarginPercent) : '—',
       icon: 'trending-up',
       bg: '#ECFDF5',
       fg: '#059669',
-      to: '/ui/Costing Worksheet',
-      note: { text: 'across worksheets with a margin', icon: 'check-circle-2', color: '#64748B' }
+      to: '/list/Quotation',
+      note: { text: 'target ≥ 10%', icon: 'check-circle-2', color: '#64748B' }
     }
   ]
 })
-
-const MODULES = [
-  {
-    label: 'Costing Worksheets',
-    desc: 'Tank & radiator cost build-ups, from geometry to margin.',
-    icon: 'calculator',
-    bg: '#F0FDF4',
-    fg: '#16A34A',
-    to: '/ui/Costing Worksheet'
-  },
-  {
-    label: 'Masters',
-    desc: 'Tank types, departments, material and paint rates.',
-    icon: 'database',
-    bg: '#F5F3FF',
-    fg: '#7C3AED',
-    to: '/masters'
-  },
-  {
-    label: 'Costing Settings',
-    desc: 'Financial cost rate, scrap rules and complexity matrices.',
-    icon: 'settings',
-    bg: '#F1F5F9',
-    fg: '#475569',
-    to: '/form/Costing Settings/Costing Settings'
-  },
-  {
-    label: 'Profile',
-    desc: 'Your profile, session and sign-out.',
-    icon: 'user',
-    bg: '#EFF6FF',
-    fg: '#2563EB',
-    to: '/profile'
-  }
-]
 
 const go = (to) => router.push(to)
 
@@ -155,7 +130,7 @@ onMounted(load)
           style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22, 163, 74, .28); font-family:inherit;"
           class="hv1"
         >
-          <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Worksheet
+          <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Quotation
         </button>
       </div>
     </div>
@@ -214,50 +189,62 @@ onMounted(load)
       </button>
     </div>
 
-    <!-- module grid -->
-    <h2 style="font-size:16px; font-weight:700; margin:0 0 14px;">Workspace modules</h2>
-    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:18px; margin-bottom:28px;">
-      <button
-        v-for="m in MODULES"
-        :key="m.label"
-        @click="go(m.to)"
-        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:22px; cursor:pointer; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit;"
-        class="hv3"
-      >
-        <div
-          :style="{ width:'46px', height:'46px', borderRadius:'12px', background: m.bg, color: m.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flex:'none' }"
-        >
-          <LucideIcon :name="m.icon" />
+    <!-- pipeline + recent quotations -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:18px; align-items:start;">
+      <!-- status pipeline -->
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:24px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:8px;">
+          <h2 style="font-size:16px; font-weight:700; margin:0;">Pipeline by status</h2>
+          <span style="font-size:13px; color:#94A3B8; font-weight:600;">{{ n(stats?.quotationPipelineTotal) }} total</span>
         </div>
-        <div>
-          <div style="font-size:15.5px; font-weight:700;">{{ m.label }}</div>
-          <div style="font-size:13.5px; color:#64748B; margin-top:4px; line-height:1.5;">{{ m.desc }}</div>
-        </div>
-      </button>
-    </div>
-
-    <!-- status pipeline -->
-    <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:24px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:8px;">
-        <h2 style="font-size:16px; font-weight:700; margin:0;">Worksheets by status</h2>
-        <span style="font-size:13px; color:#94A3B8; font-weight:600;">{{ n(stats?.pipelineTotal) }} worksheets total</span>
-      </div>
-      <div style="display:flex; height:13px; border-radius:999px; overflow:hidden; margin-bottom:20px; background:#F1F5F9;">
-        <div
-          v-for="stage in pipeline"
-          :key="stage.key"
-          :style="{ width: `${stage.share}%`, background: stage.color }"
-          :title="`${stage.label}: ${stage.count}`"
-        ></div>
-      </div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px;">
-        <div v-for="stage in pipeline" :key="stage.key" style="display:flex; align-items:center; gap:11px;">
-          <span :style="{ width:'11px', height:'11px', borderRadius:'3px', background: stage.color, flex:'none' }"></span>
-          <div>
-            <div style="font-size:21px; font-weight:800;">{{ n(stage.count) }}</div>
-            <div style="font-size:12.5px; color:#64748B; font-weight:600;">{{ stage.label }}</div>
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div v-for="stage in pipeline" :key="stage.key">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px;">
+              <span style="font-size:13.5px; color:#334155; font-weight:600;">{{ stage.label }}</span>
+              <span style="font-size:15px; font-weight:800;">{{ n(stage.count) }}</span>
+            </div>
+            <div style="height:9px; border-radius:999px; background:#F1F5F9; overflow:hidden;">
+              <div :style="{ height:'100%', width: `${stage.share}%`, background: stage.color, borderRadius:'999px' }"></div>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- recent quotations -->
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+        <div style="padding:20px 22px 4px; font-size:16px; font-weight:700;">Recent quotations</div>
+        <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155; margin-top:8px;">
+          <thead>
+            <tr style="background:#F8FAFC;">
+              <th style="text-align:left; padding:11px 22px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">ID</th>
+              <th style="text-align:left; padding:11px 22px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Customer</th>
+              <th style="text-align:left; padding:11px 22px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Status</th>
+              <th style="text-align:left; padding:11px 22px; font-size:12px; font-weight:700; color:#64748B; border-bottom:1px solid #EAEEF3;">Modified</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="r in recentQuotations"
+              :key="r.name"
+              @click="go(formRouteFor('Quotation', r.name))"
+              style="cursor:pointer; border-bottom:1px solid #F1F5F9;"
+              class="hv4"
+            >
+              <td style="padding:12px 22px; font-weight:700; color:#0F172A;">{{ r.name }}</td>
+              <td style="padding:12px 22px;">{{ r.customer_name || r.party_name || '—' }}</td>
+              <td style="padding:12px 22px;">
+                <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
+                <span v-else style="color:#94A3B8; font-size:13px;">—</span>
+              </td>
+              <td style="padding:12px 22px; color:#64748B;">{{ r.modified ? formatDate(String(r.modified).slice(0, 10)) : '—' }}</td>
+            </tr>
+            <tr v-if="!recentQuotations.length">
+              <td colspan="4" style="padding:28px 22px; text-align:center; color:#94A3B8; font-size:13.5px; font-weight:600;">
+                No quotations yet.
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

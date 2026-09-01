@@ -52,7 +52,7 @@ import {
 import { call, metaFetcher, hasBackend } from '@/lib/frappe'
 import { db } from '@/lib/frappeDb'
 import { installFormEnhancements } from '@/lib/formEnhance'
-import { installRouting, renderTextEditorsAsHtml, listRouteFor, formRouteFor } from '@/lib/frappeRouting'
+import { installRouting, renderTextEditorsAsHtml, listRouteFor } from '@/lib/frappeRouting'
 import { nativeClientScripts } from '@/lib/clientScripts'
 import {
   coerceTableFields,
@@ -79,7 +79,11 @@ const PAGE_STEPS = [
 ]
 
 const props = defineProps({
-  name: { type: String, default: '' }
+  name: { type: String, default: '' },
+  // Resume every Costing Worksheet already mapped onto an existing Quotation,
+  // rather than a single in-progress worksheet — see `load()`. Set by
+  // `QuotationOpenView` for a Draft Quotation opened from the list.
+  quotation: { type: String, default: '' }
 })
 
 const router = useRouter()
@@ -97,9 +101,15 @@ const activeItemStep = computed(() => (activeItem.value ? ITEM_STEPS[activeItem.
 
 const activePageStep = ref('customer')
 const activePageIndex = computed(() => PAGE_STEPS.findIndex((s) => s.key === activePageStep.value))
-const singleItemMode = computed(() => Boolean(props.name))
+// A quotation resume is multi-item-capable even when only one worksheet is
+// linked today (a harmless single tab) — only a bare worksheet resume is
+// pinned to exactly one item.
+const singleItemMode = computed(() => Boolean(props.name) && !props.quotation)
 
 const quotationName = ref(null)
+/** docstatus of `quotationName`'s Quotation — 0 until it's actually
+ *  submitted. Drives `activeItemLocked` below; see its doc comment. */
+const quotationDocstatus = ref(0)
 const submitPhase = ref('idle') // 'idle' | 'running' | 'done' | 'partial-failure'
 const submitAllError = ref('')
 
@@ -139,6 +149,13 @@ const heading = computed(() => {
   if (props.name) return props.name
   return 'New Costing Worksheet'
 })
+
+/** The breadcrumb's middle crumb follows the same identity `heading` does:
+ *  once an item has been mapped to a Quotation, `heading` shows that
+ *  Quotation's name, not the Costing Worksheet's own — the crumb linking
+ *  back to "Costing Worksheet" at that point would be pointing at the wrong
+ *  list for what's actually on screen. */
+const crumbDoctype = computed(() => (quotationName.value ? 'Quotation' : 'Costing Worksheet'))
 
 const saveState = computed(() => {
   if (submitPhase.value === 'done' || (submitPhase.value === 'idle' && allSucceeded.value)) {
@@ -379,6 +396,31 @@ function toggleTerm(entry) {
 }
 const termsSelectedCount = computed(() => termChecklist.value.filter((t) => t.row?.selected).length)
 
+/**
+ * Taxes/Address/Terms edits made while attached to an already-existing
+ * Quotation (`quotationName` set) need their own save: `submitAll()` only
+ * ever applies `quotationHeaderFrm`'s staged fields onto a Quotation it's
+ * creating for the FIRST time — see its
+ * `...(quotationName.value ? {} : { quotation_header: header })` — so once a
+ * Quotation already exists, nothing else ever persists this frm. All three
+ * steps edit the same `quotationHeaderFrm`, so one save covers whichever of
+ * them are currently dirty.
+ */
+const headerSaving = ref(false)
+const headerSaveError = ref('')
+async function saveQuotationHeader() {
+  if (!quotationHeaderFrm.value) return
+  headerSaving.value = true
+  headerSaveError.value = ''
+  try {
+    await quotationHeaderFrm.value.save()
+  } catch (e) {
+    headerSaveError.value = e?.message ?? String(e)
+  } finally {
+    headerSaving.value = false
+  }
+}
+
 /** Whether any field in `step` is read-only for `frm` — i.e. worth its own
  *  calculated-values rail. */
 function derivedFieldnames(step, frm) {
@@ -389,8 +431,25 @@ function hasDerivedFields(step, frm) {
   return derivedFieldnames(step, frm).length > 0
 }
 const activeItemHasDerived = computed(
-  () => activeItem.value && activeItemStep.value && hasDerivedFields(activeItemStep.value, activeItem.value.frm)
+  () =>
+    activeItem.value &&
+    activeItemStep.value &&
+    activeItemStep.value.key !== 'product' && // Facility/Effective Labour Rate rail hidden here, per request
+    hasDerivedFields(activeItemStep.value, activeItem.value.frm)
 )
+
+/**
+ * A Costing Worksheet's own `status` (Draft/Submitted/Quoted/Lost) no longer
+ * locks editing on its own — see `_guard_against_edit_after_submit()` in
+ * `costing_worksheet.py` and `docs/decisions.md`, "Costing Worksheet editable
+ * until its Quotation is submitted": a worksheet already marked Quoted stays
+ * editable for as long as its Quotation is still Draft. The real lock
+ * boundary is that Quotation's own docstatus — mirrored here via
+ * `quotationDocstatus` (set in `load()`) rather than re-deriving it from the
+ * worksheet's `status` field, which would drift out of sync with the actual
+ * server-side guard.
+ */
+const activeItemLocked = computed(() => Boolean(quotationName.value) && quotationDocstatus.value === 1)
 /**
  * The "Calculated" rail's rows — formatted like `sectionRows` (₹ currency,
  * 2dp) rather than `WizardStep`'s SDK controls, which bind the raw doc value
@@ -493,12 +552,32 @@ function uid() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+/**
+ * Steps navigable right away. A brand-new item starts locked to step 0, same
+ * as always — but an EXISTING worksheet (resumed from a Quotation, or opened
+ * by name) already has data sitting in every step it previously got through,
+ * regardless of its current `status`. Walk the steps in order, unlocking
+ * each as long as the one before it is complete, so reopening an
+ * already-Quoted item lands with every filled-in step (Dimensions, Volumes,
+ * Paint System, Complexity, Commercials…) directly clickable instead of
+ * relocked to just Product Line.
+ */
+function initialUnlockedSteps(frm) {
+  const unlocked = new Set([0])
+  if (frm.is_new()) return unlocked
+  for (let i = 0; i < ITEM_STEPS.length; i++) {
+    unlocked.add(i)
+    if (!stepIsComplete(frm, ITEM_STEPS[i], fieldState)) break
+  }
+  return unlocked
+}
+
 function makeItem(frm, key) {
   return shallowReactive({
     key,
     frm,
     activeStepIndex: 0,
-    unlockedSteps: new Set([0]),
+    unlockedSteps: initialUnlockedSteps(frm),
     stepError: '',
     saving: false,
     submitState: frm.docstatus === 1 ? 'succeeded' : 'pending',
@@ -571,6 +650,7 @@ async function load() {
   items.value = []
   activeItemKey.value = null
   quotationName.value = null
+  quotationDocstatus.value = 0
   submitPhase.value = 'idle'
   submitAllError.value = ''
 
@@ -581,36 +661,73 @@ async function load() {
   }
 
   try {
-    quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
-      initialDoc: { doctype: HEADER_DOCTYPE },
-      scripts: [addressQueryScript]
-    })
-
-    if (props.name) {
-      // Resuming/editing one existing worksheet — single-item mode. The same
-      // frm serves double duty as both `orderFrm` (it already has real
-      // customer/company/etc.) and the sole item.
-      const frm = await bootFrm(DOCTYPE, { name: props.name, scripts: itemScripts(DOCTYPE) })
-      orderFrm.value = frm
-      const item = makeItem(frm, uid())
-      items.value = [item]
-      activeItemKey.value = item.key
-      quotationName.value = frm.doc.quotation || null
-      activePageStep.value = 'items'
-    } else {
-      // Set by `/quotation/new` when the user picked a Tank Type there — see
-      // mappedDoc.js's `seedPendingDoc` / `takePendingDoc`. Belongs on the
-      // first ITEM (tank_type is per-item), not the shared step.
-      const seed = takePendingDoc(DOCTYPE)
-      orderFrm.value = await bootFrm(DOCTYPE, {
-        // Unique placeholder — see the comment on addItem() for why two
-        // simultaneously-open new Costing Worksheet frms can't share the
-        // default "New Costing Worksheet" name.
-        initialDoc: { doctype: DOCTYPE, name: `New Costing Worksheet (order-${uid()})` },
-        scripts: itemScripts(DOCTYPE)
+    if (props.quotation) {
+      // Resuming an existing Quotation — boot its REAL header frm (not a
+      // throwaway) so Taxes/Address/Terms show what's actually staged, then
+      // discover every Costing Worksheet already mapped onto it and load each
+      // as its own item, reusing the exact per-item boot/makeItem machinery
+      // every other path here already uses.
+      quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
+        name: props.quotation,
+        scripts: [addressQueryScript]
       })
-      await addItem(seed)
-      activePageStep.value = 'customer'
+      quotationName.value = props.quotation
+      quotationDocstatus.value = quotationHeaderFrm.value.doc.docstatus ?? 0
+
+      const linked = await db.get_list(DOCTYPE, {
+        filters: { quotation: props.quotation },
+        fields: ['name'],
+        limit_page_length: 0
+      })
+      for (const row of linked) {
+        const frm = await bootFrm(DOCTYPE, { name: row.name, scripts: itemScripts(DOCTYPE) })
+        items.value = [...items.value, makeItem(frm, uid())]
+      }
+      orderFrm.value = items.value[0]?.frm ?? null
+      activeItemKey.value = items.value[0]?.key ?? null
+      // Opened from the Quotation list — land on the summary, not back in
+      // the middle of item entry. `unlockedPageIndexes` above is derived
+      // from the loaded data (shared step complete + at least one item), so
+      // an existing Quotation always has 'review' unlocked by this point.
+      activePageStep.value = 'review'
+    } else {
+      quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
+        initialDoc: { doctype: HEADER_DOCTYPE },
+        scripts: [addressQueryScript]
+      })
+
+      if (props.name) {
+        // Resuming/editing one existing worksheet — single-item mode. The same
+        // frm serves double duty as both `orderFrm` (it already has real
+        // customer/company/etc.) and the sole item.
+        const frm = await bootFrm(DOCTYPE, { name: props.name, scripts: itemScripts(DOCTYPE) })
+        orderFrm.value = frm
+        const item = makeItem(frm, uid())
+        items.value = [item]
+        activeItemKey.value = item.key
+        quotationName.value = frm.doc.quotation || null
+        // `quotationHeaderFrm` here is a throwaway new Quotation, not this
+        // item's real one — its docstatus tells us nothing, so fetch the
+        // actual linked Quotation's.
+        quotationDocstatus.value = quotationName.value
+          ? (await db.get_value('Quotation', quotationName.value, 'docstatus'))?.docstatus ?? 0
+          : 0
+        activePageStep.value = 'items'
+      } else {
+        // Set by `/quotation/new` when the user picked a Tank Type there — see
+        // mappedDoc.js's `seedPendingDoc` / `takePendingDoc`. Belongs on the
+        // first ITEM (tank_type is per-item), not the shared step.
+        const seed = takePendingDoc(DOCTYPE)
+        orderFrm.value = await bootFrm(DOCTYPE, {
+          // Unique placeholder — see the comment on addItem() for why two
+          // simultaneously-open new Costing Worksheet frms can't share the
+          // default "New Costing Worksheet" name.
+          initialDoc: { doctype: DOCTYPE, name: `New Costing Worksheet (order-${uid()})` },
+          scripts: itemScripts(DOCTYPE)
+        })
+        await addItem(seed)
+        activePageStep.value = 'customer'
+      }
     }
   } catch (e) {
     error.value = e?.message ?? String(e)
@@ -794,20 +911,21 @@ async function submitAll() {
 
 function finishQuotation() {
   if (!quotationName.value) return
-  router.push(formRouteFor('Quotation', quotationName.value))
+  router.push(`/quotation/${encodeURIComponent(quotationName.value)}/review`)
 }
 
 onMounted(load)
 onMounted(loadTermOptions)
 watch(() => props.name, load)
+watch(() => props.quotation, load)
 </script>
 
 <template>
   <div class="qw-wizard">
     <div class="qw-crumbtrail">
-      <RouterLink to="/" class="qw-crumbtrail__link">Home</RouterLink>
+      <RouterLink to="/" class="qw-crumbtrail__link">Dashboard</RouterLink>
       <LucideIcon name="chevron-right" />
-      <RouterLink :to="listRouteFor('Costing Worksheet')" class="qw-crumbtrail__link">Costing Worksheet</RouterLink>
+      <RouterLink :to="listRouteFor(crumbDoctype)" class="qw-crumbtrail__link">{{ crumbDoctype }}</RouterLink>
       <LucideIcon name="chevron-right" />
       <span class="qw-crumbtrail__current">{{ heading }}</span>
     </div>
@@ -891,6 +1009,11 @@ watch(() => props.name, load)
                 @select="goToItemStep"
               />
 
+              <p v-if="activeItemLocked" class="qw-step-lede">
+                This Costing Worksheet's Quotation (<strong>{{ quotationName }}</strong>) has been submitted and can no
+                longer be edited.
+              </p>
+
               <div class="qw-step-layout">
                 <div class="qw-step-main">
                   <template v-for="(step, i) in ITEM_STEPS" :key="step.key">
@@ -899,13 +1022,15 @@ watch(() => props.name, load)
                         <span class="qw-step-title__n">{{ String(i + 1).padStart(2, '0') }}</span>
                         {{ step.title }}
                       </h2>
-                      <WizardStep :frm="activeItem.frm" :fields="step.fields" read-only-filter="exclude" />
-                      <div v-if="step.key === 'complexity'" class="qw-step-actions">
-                        <button type="button" @click="loadComplexityQuestions" class="qw-ghost-btn">
-                          Load default questions
-                        </button>
-                        <button type="button" @click="recalculate" class="qw-ghost-btn">Recalculate</button>
-                      </div>
+                      <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+                        <WizardStep :frm="activeItem.frm" :fields="step.fields" read-only-filter="exclude" />
+                        <div v-if="step.key === 'complexity'" class="qw-step-actions">
+                          <button type="button" @click="loadComplexityQuestions" class="qw-ghost-btn">
+                            Load default questions
+                          </button>
+                          <button type="button" @click="recalculate" class="qw-ghost-btn">Recalculate</button>
+                        </div>
+                      </fieldset>
                     </div>
                   </template>
                 </div>
@@ -928,7 +1053,12 @@ watch(() => props.name, load)
                 <button type="button" :disabled="activeItem.activeStepIndex === 0" @click="itemBack" class="qw-back-btn">
                   ← Back
                 </button>
-                <button type="button" :disabled="activeItem.saving" @click="itemNext" class="qw-next-btn">
+                <button
+                  type="button"
+                  :disabled="activeItem.saving || (activeItemLocked && activeItem.activeStepIndex === COMMERCIALS_STEP_INDEX)"
+                  @click="itemNext"
+                  class="qw-next-btn"
+                >
                   {{ activeItem.saving ? 'Saving…' : activeItem.activeStepIndex === COMMERCIALS_STEP_INDEX ? 'Save item' : 'Next' }}
                 </button>
               </div>
@@ -1044,36 +1174,40 @@ watch(() => props.name, load)
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Taxes & Charges</h2>
             <p v-if="quotationName" class="qw-step-lede">
-              Already mapped to <strong>{{ quotationName }}</strong> — edit taxes from that Quotation directly.
+              Editing taxes on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <template v-else>
-              <WizardStep :frm="quotationHeaderFrm" :fields="TAX_FIELDS" read-only-filter="exclude" />
-              <div v-if="taxTemplateError" class="qw-step-error">{{ taxTemplateError }}</div>
-              <p v-else-if="taxTemplateLoading" class="qw-step-lede" style="margin-top: 18px;">Loading tax template…</p>
-              <template v-else-if="taxRows.length">
-                <table class="qw-quotation-items" style="margin-top: 18px;">
-                  <thead>
-                    <tr>
-                      <th>Charge</th>
-                      <th>Rate</th>
-                      <th>On</th>
-                      <th>Amount ₹</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="row in taxRows" :key="row.key">
-                      <td>{{ row.label }}</td>
-                      <td>{{ row.rate }} %</td>
-                      <td>{{ row.basis }}</td>
-                      <td>{{ money(row.amount) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p class="qw-step-lede" style="margin-top: 14px;">
-                  Charges compute on the taxable value — item amount less discount (set in Address & Delivery).
-                </p>
-              </template>
+            <WizardStep :frm="quotationHeaderFrm" :fields="TAX_FIELDS" read-only-filter="exclude" />
+            <div v-if="taxTemplateError" class="qw-step-error">{{ taxTemplateError }}</div>
+            <p v-else-if="taxTemplateLoading" class="qw-step-lede" style="margin-top: 18px;">Loading tax template…</p>
+            <template v-else-if="taxRows.length">
+              <table class="qw-quotation-items" style="margin-top: 18px;">
+                <thead>
+                  <tr>
+                    <th>Charge</th>
+                    <th>Rate</th>
+                    <th>On</th>
+                    <th>Amount ₹</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in taxRows" :key="row.key">
+                    <td>{{ row.label }}</td>
+                    <td>{{ row.rate }} %</td>
+                    <td>{{ row.basis }}</td>
+                    <td>{{ money(row.amount) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="qw-step-lede" style="margin-top: 14px;">
+                Charges compute on the taxable value — item amount less discount (set in Address & Delivery).
+              </p>
             </template>
+            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
+                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
+              </button>
+              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
+            </div>
           </div>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
@@ -1086,9 +1220,15 @@ watch(() => props.name, load)
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Address & Delivery</h2>
             <p v-if="quotationName" class="qw-step-lede">
-              Already mapped to <strong>{{ quotationName }}</strong> — edit delivery details from that Quotation directly.
+              Editing delivery details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <WizardStep v-else :frm="quotationHeaderFrm" :fields="ADDRESS_FIELDS" read-only-filter="exclude" />
+            <WizardStep :frm="quotationHeaderFrm" :fields="ADDRESS_FIELDS" read-only-filter="exclude" />
+            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
+                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
+              </button>
+              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
+            </div>
           </div>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
@@ -1101,26 +1241,30 @@ watch(() => props.name, load)
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">06</span>Terms & Conditions</h2>
             <p v-if="quotationName" class="qw-step-lede">
-              Already mapped to <strong>{{ quotationName }}</strong> — edit terms from that Quotation directly.
+              Editing terms on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <template v-else>
-              <p class="qw-step-lede">
-                {{ termChecklist.length || 26 }} terms, sensible defaults pre-ticked. Selection is per quote.
-              </p>
-              <div v-if="termsError" class="qw-step-error">{{ termsError }}</div>
-              <p v-else-if="termsLoading" class="qw-step-lede">Loading terms…</p>
-              <div v-else class="qw-terms-grid">
-                <label v-for="(entry, i) in termChecklist" :key="entry.key" class="qw-term-item">
-                  <input type="checkbox" :checked="entry.row?.selected == 1" @change="toggleTerm(entry)" />
-                  <span class="qw-term-item__n">{{ String(i + 1).padStart(2, '0') }}</span>
-                  <span class="qw-term-item__text">{{ entry.text }}</span>
-                </label>
-              </div>
-              <div class="qw-terms-notes">
-                <h3 class="qw-terms-notes__title">Notes & exclusions</h3>
-                <WizardStep :frm="quotationHeaderFrm" :fields="TERMS_FIELDS" read-only-filter="exclude" />
-              </div>
-            </template>
+            <p class="qw-step-lede">
+              {{ termChecklist.length || 26 }} terms, sensible defaults pre-ticked. Selection is per quote.
+            </p>
+            <div v-if="termsError" class="qw-step-error">{{ termsError }}</div>
+            <p v-else-if="termsLoading" class="qw-step-lede">Loading terms…</p>
+            <div v-else class="qw-terms-grid">
+              <label v-for="(entry, i) in termChecklist" :key="entry.key" class="qw-term-item">
+                <input type="checkbox" :checked="entry.row?.selected == 1" @change="toggleTerm(entry)" />
+                <span class="qw-term-item__n">{{ String(i + 1).padStart(2, '0') }}</span>
+                <span class="qw-term-item__text">{{ entry.text }}</span>
+              </label>
+            </div>
+            <div class="qw-terms-notes">
+              <h3 class="qw-terms-notes__title">Notes & exclusions</h3>
+              <WizardStep :frm="quotationHeaderFrm" :fields="TERMS_FIELDS" read-only-filter="exclude" />
+            </div>
+            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
+                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
+              </button>
+              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
+            </div>
           </div>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
@@ -1212,7 +1356,7 @@ watch(() => props.name, load)
         </section>
       </div>
 
-      <ChildRowDrawer :frm="activeItem?.frm ?? null" :root="wizardEl" />
+      <ChildRowDrawer :frm="activeItem?.frm ?? null" :root="wizardEl" :read-only="activeItemLocked" />
     </template>
   </div>
 </template>

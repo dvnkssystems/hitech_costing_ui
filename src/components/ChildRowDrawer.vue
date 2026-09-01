@@ -29,7 +29,10 @@ const props = defineProps({
   /** The parent form's `frm`. Null until the form has loaded. */
   frm: { type: Object, default: null },
   /** The wrapper element holding the rendered form. */
-  root: { type: Object, default: null }
+  root: { type: Object, default: null },
+  /** True once the parent row's own frm is locked (e.g. a Costing Worksheet
+   *  past Draft status) — disables every control in the drawer body. */
+  readOnly: { type: Boolean, default: false }
 })
 
 const fieldname = ref('')
@@ -190,7 +193,7 @@ onBeforeUnmount(() => teardown?.())
 
         <!-- `frappe-form` so the app's control stylesheet reaches these fields:
              the drawer is teleported to the body, outside the form it edits. -->
-        <div class="child-drawer__body frappe-form">
+        <fieldset class="child-drawer__body frappe-form" :disabled="readOnly" style="border: none; margin: 0; min-width: 0;">
           <template v-for="df in fields" :key="df.fieldname">
             <div v-if="isComplexityRating && df.fieldname === 'rating' && ratingLabels" class="control child-drawer__rating-field">
               <span>{{ df.label }}</span>
@@ -222,7 +225,7 @@ onBeforeUnmount(() => teardown?.())
           <p v-if="!fields.length" class="child-drawer__empty">
             This table's DocType has no editable fields.
           </p>
-        </div>
+        </fieldset>
 
         <footer class="child-drawer__foot">
           <button type="button" class="child-drawer__nav" :disabled="index === 0" @click="step(-1)">
