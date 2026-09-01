@@ -5,8 +5,33 @@ import { storeToRefs } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { useSessionStore } from '@/stores/session'
 import { fetchSidebar } from '@/lib/sidebar'
+import { navItemStyle } from '@/utils/styles'
 import LucideIcon from './LucideIcon.vue'
 import SidebarNodes from './SidebarNodes.vue'
+
+/**
+ * Costing masters, hardcoded here rather than server-driven.
+ *
+ * Every other nav entry comes from `custom_ui.api.get_sidebar` (permission-
+ * filtered per user, per the doc comment below) — these don't, because
+ * adding them there means a backend `Custom UI Sidebar Item` record this
+ * frontend repo has no access to create. Until that exists, list the app's
+ * own real setup DocTypes (the same ones `MastersView.vue` links to — not
+ * the reference design's fictional "Product Category") so they're reachable
+ * without a role check. Move this to the backend list the day someone can
+ * add those records; `MASTER_NAV` and `MastersView.vue`'s `MASTERS` would
+ * then both want trimming to whichever one place keeps the list.
+ */
+const MASTER_NAV = [
+  { doctype: 'Tank Type', label: 'Tank Types', icon: 'container' },
+  { doctype: 'Costing Department', label: 'Costing Departments', icon: 'building-2' },
+  { doctype: 'Material Rate', label: 'Material Rates', icon: 'coins' },
+  { doctype: 'Paint Make', label: 'Paint Makes', icon: 'paintbrush' },
+  { doctype: 'Paint System Rate', label: 'Paint System Rates', icon: 'palette' },
+  { doctype: 'Order Complexity Question', label: 'Complexity Questions', icon: 'list-checks' },
+  { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' }
+].map((m) => ({ ...m, route: `/list/${m.doctype}` }))
+const SETTINGS_NAV = { label: 'Costing Settings', icon: 'settings', route: '/form/Costing Settings/Costing Settings' }
 
 const route = useRoute()
 const { companyName, userName } = storeToRefs(useAppStore())
@@ -14,7 +39,8 @@ const session = useSessionStore()
 const { userImage } = storeToRefs(session)
 
 /**
- * The whole nav now comes from `Custom UI Sidebar Item` records.
+ * Most of the nav comes from `Custom UI Sidebar Item` records (the
+ * `MASTER_NAV`/`SETTINGS_NAV` block above is the one hardcoded exception).
  *
  * What used to live here as MAIN_LINKS / REPORTS / EXTERNAL_LINKS is data, and
  * the permission filtering that went with it is gone: `get_sidebar()` applies
@@ -38,6 +64,18 @@ watch(() => session.user, loadSidebar)
 
 // Only the profile card still needs this; entries own their own highlight.
 const activeNav = computed(() => route.meta.nav)
+
+const masterHeaderStyle = {
+  fontSize: '11px',
+  fontWeight: '700',
+  color: '#94A3B8',
+  letterSpacing: '.08em',
+  padding: '14px 10px 8px'
+}
+// `route.path` comes back percent-encoded ("/list/Tank%20Type"); every
+// doctype name here has a space, so this needs decoding to ever match —
+// see `SidebarNodes.vue`'s own note on the same issue for report names.
+const isMasterActive = (nav) => decodeURIComponent(route.path) === nav.route
 
 // Prefer the signed-in Frappe user; fall back to the seeded demo identity when
 // there is no backend to ask.
@@ -78,21 +116,10 @@ const initials = computed(() =>
       </div>
     </div>
 
-    <!-- Sections, groups and entries all come from the server; see lib/sidebar.js. -->
-    <nav style="padding:6px 14px; flex:1; overflow-y:auto;">
-      <div
-        v-if="sidebarError"
-        style="margin:14px 4px; padding:10px 12px; border-radius:10px; background:#FEF2F2; color:#B91C1C; font-size:12.5px; line-height:1.45;"
-      >
-        {{ sidebarError }}
-      </div>
-      <SidebarNodes :nodes="items" />
-    </nav>
-
     <RouterLink
       to="/profile"
       :style="{
-        margin: '14px',
+        margin: '0 14px 14px',
         padding: '13px',
         borderRadius: '13px',
         background: activeNav === 'profile' ? '#F0FDF4' : '#F6F8FB',
@@ -127,6 +154,43 @@ const initials = computed(() =>
       </div>
       <span style="color:#CBD5E1; font-size:16px; flex:none;"><LucideIcon name="chevron-right" /></span>
     </RouterLink>
+
+    <!-- Sections, groups and entries all come from the server; see lib/sidebar.js
+         — except Costing Masters/Settings just below, hardcoded for now (see
+         the doc comment on MASTER_NAV above). -->
+    <nav style="padding:6px 14px; flex:1; overflow-y:auto;">
+      <div
+        v-if="sidebarError"
+        style="margin:14px 4px; padding:10px 12px; border-radius:10px; background:#FEF2F2; color:#B91C1C; font-size:12.5px; line-height:1.45;"
+      >
+        {{ sidebarError }}
+      </div>
+      <SidebarNodes :nodes="items" />
+
+      <div :style="masterHeaderStyle">Costing Masters</div>
+      <div style="display:flex; flex-direction:column; gap:3px;">
+        <RouterLink
+          v-for="m in MASTER_NAV"
+          :key="m.doctype"
+          :to="m.route"
+          :style="navItemStyle(isMasterActive(m))"
+          :title="m.label"
+          class="hv2"
+        >
+          <span style="font-size:19px;"><LucideIcon :name="m.icon" /></span>
+          <span>{{ m.label }}</span>
+        </RouterLink>
+        <RouterLink
+          :to="SETTINGS_NAV.route"
+          :style="navItemStyle(isMasterActive(SETTINGS_NAV))"
+          :title="SETTINGS_NAV.label"
+          class="hv2"
+        >
+          <span style="font-size:19px;"><LucideIcon :name="SETTINGS_NAV.icon" /></span>
+          <span>{{ SETTINGS_NAV.label }}</span>
+        </RouterLink>
+      </div>
+    </nav>
   </aside>
 </template>
 
