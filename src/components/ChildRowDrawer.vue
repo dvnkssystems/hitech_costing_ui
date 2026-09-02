@@ -17,6 +17,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { controlFor } from '@frappe-vue-sdk/vue'
 import {
   installRowDrawer,
+  installActualValueSync,
   rowFrmFor,
   rowFields,
   tableLabel,
@@ -155,16 +156,23 @@ watch(rows, (list) => {
 watch(() => props.frm, () => close())
 
 let teardown = null
+let actualValueTeardown = null
 watch(
   () => props.root,
   (el) => {
     teardown?.()
     teardown = el ? installRowDrawer(el, openRow) : null
     if (!el) close()
+
+    actualValueTeardown?.()
+    actualValueTeardown = el ? installActualValueSync(el, () => props.frm) : null
   },
   { immediate: true }
 )
-onBeforeUnmount(() => teardown?.())
+onBeforeUnmount(() => {
+  teardown?.()
+  actualValueTeardown?.()
+})
 </script>
 
 <template>

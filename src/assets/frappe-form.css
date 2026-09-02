@@ -476,6 +476,14 @@
   border-bottom: none;
 }
 
+/* Complexity Ratings grid: widen the Parameter column (4th cell — after the
+   select/srno/expand columns) so its label isn't truncated. */
+.frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table th:nth-child(4),
+.frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table td:nth-child(4) {
+  width: 260px;
+  min-width: 260px;
+}
+
 /* ── Attach inside a grid row ──────────────────────────────────────────────
  * The SDK's Attach control is built for a full-width form field: a 1.75rem
  * dashed dropzone with a title and a hint line. Dropped into a table cell it is

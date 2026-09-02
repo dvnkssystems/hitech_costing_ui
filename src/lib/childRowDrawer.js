@@ -283,3 +283,55 @@ export function installRowDrawer(root, open) {
     for (const button of root.querySelectorAll(`[${INJECTED_ATTR}]`)) button.remove()
   }
 }
+
+/* ── Actual-value → Score sync in the grid ───────────────────────────────── */
+
+const ACTUAL_VALUE_SELECTOR = 'label.control[data-fieldname="actual_value"]'
+
+/**
+ * Band-matching a typed number to its Score is currently wired to only one of
+ * `actual_value`'s two entry points: `ChildRowDrawer.vue`'s probe input. The
+ * same number typed straight into the grid's own "Actual Value" column (the
+ * real, `in_list_view` field, edited by the SDK's own control) left `rating`
+ * untouched, so the row's Score/Result/Weighted Score kept showing stale
+ * numbers until the user also opened the drawer and retyped the value there.
+ * This mirrors `onProbeInput` for that second entry point.
+ *
+ * Listens on the bubble phase (unlike `installRowDrawer`'s click handler)
+ * so the SDK's own control has already committed the keystroke to `frm.doc`
+ * by the time this reads it — a capture-phase listener on `root` would run
+ * before that commit and always see the row's previous value.
+ *
+ * Returns a teardown function; call it on unmount.
+ */
+export function installActualValueSync(root, getFrm) {
+  if (!root) return () => {}
+
+  const onEdit = async (event) => {
+    const label = event.target.closest?.(ACTUAL_VALUE_SELECTOR)
+    const tr = label?.closest('tr')
+    const table = label?.closest(TABLE_SELECTOR)
+    if (!label || !tr || !table) return
+
+    const frm = typeof getFrm === 'function' ? getFrm() : getFrm
+    const fieldname = table.dataset.fieldname
+    const doctype = frm?.fields_dict?.[fieldname]?.df?.options
+    if (doctype !== 'Costing Worksheet Complexity Rating') return
+
+    const row = frm.doc?.[fieldname]?.[indexOfRow(tr)]
+    if (!row || !['%', 'no'].includes(row.unit)) return
+
+    const labels = await fetchRatingLabels(frm, row.question)
+    const matched = matchRatingScore(row.actual_value, labels)
+    if (matched && String(row.rating) !== matched) {
+      rowFrmFor(frm, fieldname, row).set_value('rating', matched)
+    }
+  }
+
+  root.addEventListener('input', onEdit)
+  root.addEventListener('change', onEdit)
+  return () => {
+    root.removeEventListener('input', onEdit)
+    root.removeEventListener('change', onEdit)
+  }
+}

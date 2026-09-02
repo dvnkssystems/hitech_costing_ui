@@ -57,7 +57,6 @@ import { nativeClientScripts } from '@/lib/clientScripts'
 import {
   coerceTableFields,
   hideEmptyReadOnlyFields,
-  lockOnSubmit,
   hideNamingSeries,
   restoreOnloadCustomButtons,
   installWorkflowActions
@@ -509,12 +508,18 @@ function addressQueryScript(frappe) {
   })
 }
 
+/** Deliberately omits `lockOnSubmit`: a Costing Worksheet's own docstatus
+ *  does NOT lock its fields here — see `activeItemLocked` above for why
+ *  (the real boundary is the Quotation's docstatus). Applying the generic
+ *  desk rule ("submitted doc's fields go read_only") would stamp
+ *  `df.read_only` onto every field the moment `submit_and_map` submits an
+ *  item, and `WizardStep`'s `exclude` filter then drops every one of them
+ *  from step 1 and every per-item step — a blank card, not a locked one. */
 function itemScripts(doctype) {
   return [
     nativeClientScripts(doctype),
     renderTextEditorsAsHtml(doctype),
     hideEmptyReadOnlyFields(doctype),
-    lockOnSubmit(doctype),
     hideNamingSeries(doctype),
     installWorkflowActions(doctype, { stateField: 'status' })
   ]
@@ -893,8 +898,8 @@ async function submitAll() {
       quotationName.value = quotationName.value ?? result?.message
 
       // frm.call() goes through run_doc_method, not frm.submit() — replay the
-      // trigger sequence submit() normally runs, so lockOnSubmit locks this
-      // item and its own refresh handler repopulates its custom buttons.
+      // trigger sequence submit() normally runs, so this item's own refresh
+      // handler repopulates its custom buttons and its workflow state updates.
       await item.frm.trigger?.('after_save')
       await item.frm.trigger?.('refresh')
       await item.frm.trigger?.('on_submit')
@@ -955,16 +960,21 @@ watch(() => props.quotation, load)
       <div ref="wizardEl" class="frappe-form">
         <!-- 01 · Customer & Order (shared, once) -->
         <section v-if="activePageStep === 'customer'">
+          <p v-if="activeItemLocked" class="qw-step-lede">
+            This Quotation (<strong>{{ quotationName }}</strong>) has been submitted and can no longer be edited.
+          </p>
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">01</span>Customer & Order</h2>
-            <WizardStep :frm="orderFrm" :fields="SHARED_STEP.fields" read-only-filter="exclude" />
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+              <WizardStep :frm="orderFrm" :fields="SHARED_STEP.fields" read-only-filter="exclude" />
+            </fieldset>
           </div>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" disabled>← Back</button>
             <button
               type="button"
               class="qw-next-btn"
-              :disabled="!stepIsComplete(orderFrm, SHARED_STEP, fieldState)"
+              :disabled="activeItemLocked || !stepIsComplete(orderFrm, SHARED_STEP, fieldState)"
               @click="pageNext"
             >
               Next
