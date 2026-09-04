@@ -18,12 +18,14 @@ import { controlFor } from '@frappe-vue-sdk/vue'
 import {
   installRowDrawer,
   installActualValueSync,
+  installActualValueUnitControl,
   rowFrmFor,
   rowFields,
   tableLabel,
   fetchRatingLabels,
   parseRatingRange,
-  matchRatingScore
+  matchRatingScore,
+  NUMERIC_UNITS
 } from '@/lib/childRowDrawer'
 
 const props = defineProps({
@@ -72,16 +74,16 @@ watch(
 
 /**
  * The `%`/`no` unit questions (In-house execution %, No of components, Scrap
- * generation %) phrase their Rating reference as numeric bands ("0-25",
- * "Less than 20%", ">75") rather than descriptions — so once the labels are
- * in hand, offer a raw-number field that resolves straight to the matching
+ * generation %) phrase their Rating reference as numeric bands ("0-25", "Less
+ * than 20%", ">75") rather than descriptions — so once the labels are in
+ * hand, offer a raw-number field that resolves straight to the matching
  * score instead of making the user match their own number against three
  * ranges by eye. Falls back to pick-only when no band on this row parses (a
  * mis-typed reference, or a genuinely descriptive `%`/`no` question).
  */
 const canProbeValue = computed(
   () =>
-    ['%', 'no'].includes(row.value?.unit) &&
+    NUMERIC_UNITS.includes(row.value?.unit) &&
     Boolean(ratingLabels.value) &&
     [1, 2, 3].some((n) => parseRatingRange(ratingLabels.value[`rating_${n}_label`]))
 )
@@ -157,6 +159,7 @@ watch(() => props.frm, () => close())
 
 let teardown = null
 let actualValueTeardown = null
+let actualValueUnitTeardown = null
 watch(
   () => props.root,
   (el) => {
@@ -166,12 +169,16 @@ watch(
 
     actualValueTeardown?.()
     actualValueTeardown = el ? installActualValueSync(el, () => props.frm) : null
+
+    actualValueUnitTeardown?.()
+    actualValueUnitTeardown = el ? installActualValueUnitControl(el, () => props.frm) : null
   },
   { immediate: true }
 )
 onBeforeUnmount(() => {
   teardown?.()
   actualValueTeardown?.()
+  actualValueUnitTeardown?.()
 })
 </script>
 

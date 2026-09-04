@@ -20,10 +20,10 @@
    applies. Scoping these to the form left every dialog unthemed. */
 :root,
 .frappe-form {
-  --fv-primary: #16A34A;
+  --fv-primary: var(--ht-navy);
   --fv-surface: #ffffff;
   --fv-on-surface: #0f172a;
-  --fv-error: #dc2626;
+  --fv-error: var(--ht-danger);
   --fv-border: #e6ebf1;
   --fv-medium-emphasis: 1;
   --fv-radius: 10px;
@@ -88,12 +88,12 @@
   background: var(--fv-primary);
   border-color: var(--fv-primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
+  box-shadow: 0 4px 12px var(--ht-navy-shadow);
 }
 
 .frappe-form .form-toolbar .btn-save:hover:not(:disabled) {
-  background: #15803D;
-  border-color: #15803D;
+  background: #0E4079;
+  border-color: #0E4079;
 }
 
 .frappe-form .form-toolbar .btn-submit {
@@ -109,21 +109,21 @@
 .frappe-form .form-toolbar .btn-cancel,
 .frappe-form .form-toolbar .btn-amend,
 .frappe-form .btn-delete-selected {
-  color: #dc2626;
+  color: var(--ht-danger);
   border-color: #fecaca;
 }
 
 .frappe-form .form-toolbar .btn-cancel:hover:not(:disabled),
 .frappe-form .form-toolbar .btn-amend:hover:not(:disabled),
 .frappe-form .btn-delete-selected:hover:not(:disabled) {
-  background: #fef2f2;
+  background: var(--ht-danger-tint);
 }
 
 /* Workflow transitions are the primary action when a workflow is attached. */
 .frappe-form .form-toolbar .btn-workflow {
-  background: #F0FDF4;
-  border-color: #86EFAC;
-  color: #15803D;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-border);
+  color: #0E4079;
 }
 
 .frappe-form .workflow-state-badge {
@@ -131,8 +131,8 @@
   align-items: center;
   padding: 5px 12px;
   border-radius: 999px;
-  background: #F0FDF4;
-  color: #15803D;
+  background: var(--ht-navy-tint);
+  color: #0E4079;
   font-size: 12.5px;
   font-weight: 600;
 }
@@ -291,7 +291,7 @@
 .frappe-form .control-button .btn:focus-visible {
   outline: none;
   border-color: var(--fv-primary);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.14);
+  box-shadow: 0 0 0 3px rgba(11, 52, 101, 0.14);
 }
 
 /* `df.primary` on the field marks it the section's main action. */
@@ -299,12 +299,12 @@
   background: var(--fv-primary);
   border-color: var(--fv-primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
+  box-shadow: 0 4px 12px var(--ht-navy-shadow);
 }
 
 .frappe-form .control-button .btn-primary:hover {
-  background: #15803D;
-  border-color: #15803D;
+  background: #0E4079;
+  border-color: #0E4079;
 }
 
 /* Rendered rich text. A terms block runs to thousands of pixels unbounded,
@@ -341,28 +341,28 @@
 .frappe-form .control.reqd > span:first-child::after,
 .frappe-form .control > span:first-child.reqd::after {
   content: ' *';
-  color: #dc2626;
+  color: var(--ht-danger);
 }
 
 /* Required *and* still empty — the field actually blocking the save, or the
    report run. Tinted rather than outlined-red-on-focus so it reads at a glance
    without shouting on a form full of them. */
 .frappe-form .control.reqd-empty > span:first-child {
-  color: #dc2626;
+  color: var(--ht-danger);
   opacity: 1;
 }
 
 .frappe-form .control.reqd-empty input:not([type='checkbox']),
 .frappe-form .control.reqd-empty select,
 .frappe-form .control.reqd-empty textarea {
-  border-color: #fca5a5;
-  background: #fef2f2;
+  border-color: var(--ht-danger);
+  background: var(--ht-danger-tint);
 }
 
 .frappe-form .control.reqd-empty input:focus,
 .frappe-form .control.reqd-empty select:focus,
 .frappe-form .control.reqd-empty textarea:focus {
-  border-color: #dc2626;
+  border-color: var(--ht-danger);
   box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
 }
 
@@ -392,7 +392,7 @@
 }
 
 .frappe-form .link-clear-btn:hover {
-  color: #dc2626;
+  color: var(--ht-danger);
   background: rgba(220, 38, 38, 0.08);
 }
 
@@ -482,6 +482,19 @@
 .frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table td:nth-child(4) {
   width: 260px;
   min-width: 260px;
+}
+
+/* Actual Value column (5th cell): a `text`-unit row's rating label
+   ("Non standard market…", "No shunt welding…") is longer than the numeric
+   box this column was sized for and was clipping — widen it to match. */
+.frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table th:nth-child(5),
+.frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table td:nth-child(5) {
+  width: 220px;
+  min-width: 220px;
+}
+
+.frappe-form .control-table[data-fieldname="complexity_ratings"] .frappe-child-table label.control select[data-unit-select] {
+  width: 100%;
 }
 
 /* ── Attach inside a grid row ──────────────────────────────────────────────
@@ -616,7 +629,7 @@
 .frappe-form .frappe-child-table .control textarea:focus {
   background: #fff;
   border-color: var(--fv-primary);
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+  box-shadow: 0 0 0 3px rgba(11, 52, 101, 0.12);
 }
 
 /* Read-only cells shouldn't advertise themselves as editable. */
@@ -635,6 +648,28 @@
 
 .frappe-form .frappe-child-table td:has(input[type='number']) {
   text-align: right;
+}
+
+/* Actual Value column (Complexity Ratings): a `percentage`-unit row's numeric
+   box gets a `%` suffix so it reads as a percentage rather than a bare count
+   — see `installActualValueUnitControl` in `src/lib/childRowDrawer.js`. */
+.frappe-form .frappe-child-table label.control.unit-percentage {
+  position: relative;
+}
+
+.frappe-form .frappe-child-table label.control.unit-percentage input {
+  padding-right: 22px;
+}
+
+.frappe-form .frappe-child-table label.control.unit-percentage::after {
+  content: '%';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12.5px;
+  color: var(--app-muted);
+  pointer-events: none;
 }
 
 /* ── Grid structural columns ──────────────────────────────────── */
@@ -663,7 +698,7 @@
 }
 
 .frappe-form .frappe-child-table th.reqd::after {
-  color: #dc2626;
+  color: var(--ht-danger);
 }
 
 /* Row expander — the grid only shows fields flagged `in_list_view`, so this is
@@ -680,9 +715,9 @@
 }
 
 .frappe-form .btn-expand-row:hover {
-  background: #F0FDF4;
-  border-color: #86EFAC;
-  color: #15803D;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-border);
+  color: #0E4079;
 }
 
 .frappe-form .row-detail-grid {
@@ -708,9 +743,9 @@
   height: 34px;
   padding: 0 14px;
   border-radius: 9px;
-  border: 1px dashed #86EFAC;
-  background: #F0FDF4;
-  color: #15803D;
+  border: 1px dashed var(--ht-border);
+  background: var(--ht-navy-tint);
+  color: #0E4079;
   font-size: 13.5px;
   font-weight: 600;
   font-family: inherit;
@@ -719,7 +754,7 @@
 
 .frappe-form .btn-add-row:hover,
 .frappe-form .btn-add-multiple:hover {
-  background: #DCFCE7;
+  background: var(--ht-navy-tint);
 }
 
 /* Per-row action buttons (move, insert, duplicate, remove). */
@@ -736,9 +771,9 @@
 }
 
 .frappe-form .row-actions .btn-remove-row:hover:not(:disabled) {
-  background: #fef2f2;
+  background: var(--ht-danger-tint);
   border-color: #fecaca;
-  color: #dc2626;
+  color: var(--ht-danger);
 }
 
 /* Nothing inside the form may push the page sideways. */
@@ -885,11 +920,11 @@
 }
 
 .fv-dialog__btn--primary {
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
+  box-shadow: 0 4px 12px var(--ht-navy-shadow);
 }
 
 .fv-dialog__btn--primary:hover {
-  background: #15803D;
+  background: #0E4079;
 }
 
 /* ── Link autocomplete ────────────────────────────────────────── */
@@ -915,8 +950,8 @@
 
 .frappe-form .link-suggestion:hover,
 .frappe-form .link-suggestion.is-active {
-  background: #F0FDF4;
-  color: #166534;
+  background: var(--ht-navy-tint);
+  color: var(--ht-navy-hover);
 }
 
 .frappe-form .link-suggestion__value {
@@ -951,7 +986,7 @@
 
 .frappe-form .link-create-row:hover,
 .frappe-form .link-create-row.is-active {
-  background: #F0FDF4;
+  background: var(--ht-navy-tint);
 }
 
 .frappe-form .link-filter-row {
@@ -984,9 +1019,9 @@
   gap: 7px;
   padding: 10px 16px;
   border-radius: 10px;
-  border: 1px dashed #86EFAC;
-  background: #F0FDF4;
-  color: #15803D;
+  border: 1px dashed var(--ht-border);
+  background: var(--ht-navy-tint);
+  color: #0E4079;
   font-size: 14px;
   font-weight: 600;
   font-family: inherit;
@@ -995,9 +1030,9 @@
 
 .frappe-form .btn-add-row:hover,
 .frappe-form .btn-add-multiple:hover {
-  background: #DCFCE7;
-  border-color: #16A34A;
-  color: #c2410c;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-navy);
+  color: var(--ht-navy-hover);
 }
 
 /* Add Multiple is the secondary of the pair — same shape, quieter. */
@@ -1020,14 +1055,14 @@
   height: 32px;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid #fee2e2;
+  border: 1px solid var(--ht-danger-tint);
   background: #fff;
-  color: #dc2626;
+  color: var(--ht-danger);
   padding: 0;
 }
 
 .frappe-form .btn-remove-row:hover {
-  background: #fef2f2;
+  background: var(--ht-danger-tint);
 }
 
 /* ── Spacing inside the section cards ──────────────────────────────────────
@@ -1121,9 +1156,9 @@
 }
 
 .child-drawer__close:hover {
-  background: #F0FDF4;
-  border-color: #86EFAC;
-  color: #15803D;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-border);
+  color: #0E4079;
 }
 
 .child-drawer__body {
@@ -1267,9 +1302,9 @@
 }
 
 .child-drawer__nav:not(:disabled):hover {
-  background: #F0FDF4;
-  border-color: #86EFAC;
-  color: #15803D;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-border);
+  color: #0E4079;
 }
 
 .child-drawer__done {
@@ -1369,8 +1404,8 @@
 }
 
 .activity-tab:hover {
-  background: #F0FDF4;
-  border-color: #86EFAC;
+  background: var(--ht-navy-tint);
+  border-color: var(--ht-border);
 }
 
 .activity-tab__label {

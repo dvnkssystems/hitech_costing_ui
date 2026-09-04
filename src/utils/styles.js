@@ -19,7 +19,7 @@ export const navItemBase = {
 
 export function navItemStyle(active) {
   return active
-    ? { ...navItemBase, background: '#F0FDF4', color: '#15803D', fontWeight: '600' }
+    ? { ...navItemBase, background: '#E9EFF7', color: '#0B3465', fontWeight: '600' }
     : { ...navItemBase, background: 'transparent', color: '#475569', fontWeight: '500' }
 }
 
@@ -35,7 +35,7 @@ export const tabBase = {
 
 export function tabStyle(active) {
   return active
-    ? { ...tabBase, background: '#0F172A', color: '#fff', borderColor: '#0F172A' }
+    ? { ...tabBase, background: '#0B3465', color: '#fff', borderColor: '#0B3465' }
     : { ...tabBase, background: '#fff', color: '#475569' }
 }
 
@@ -56,7 +56,7 @@ export const radioBase = {
 
 export function radioStyle(active) {
   return active
-    ? { ...radioBase, borderColor: '#16A34A', background: '#F0FDF4', color: '#166534', fontWeight: '600' }
+    ? { ...radioBase, borderColor: '#0B3465', background: '#E9EFF7', color: '#0B3465', fontWeight: '600' }
     : { ...radioBase, borderColor: '#E2E8F0', color: '#475569', fontWeight: '500' }
 }
 
@@ -71,23 +71,26 @@ const pillBase = {
   whiteSpace: 'nowrap'
 }
 
-/** `Costing Worksheet.status` — the six values the DocType declares. */
+/** `Costing Worksheet.status` — the six values the DocType declares.
+ *  Colours follow the brandbook's own status-pill rule: green is approval/
+ *  positive movement only (Approved, Quoted), red is Lost, everything else
+ *  (Draft, Pending) is a neutral/amber non-outcome. */
 const WORKSHEET_STATUS_COLOURS = {
-  Draft: { background: '#F1F5F9', color: '#64748B' },
+  Draft: { background: '#EDF1F6', color: '#5E6B7A' },
   'Pending BU Head': { background: '#FEF3C7', color: '#B45309' },
   'Pending CFO': { background: '#FEF3C7', color: '#B45309' },
-  Approved: { background: '#EFF6FF', color: '#2563EB' },
-  Quoted: { background: '#DCFCE7', color: '#15803D' },
-  Lost: { background: '#FEE2E2', color: '#DC2626' }
+  Approved: { background: 'rgba(16,120,48,.1)', color: '#107830' },
+  Quoted: { background: 'rgba(16,120,48,.1)', color: '#107830' },
+  Lost: { background: 'rgba(230,57,70,.1)', color: '#E63946' }
 }
 
 export const worksheetStatusStyle = (s) => ({ ...pillBase, ...(WORKSHEET_STATUS_COLOURS[s] || {}) })
 
 /** `docstatus` on any submittable DocType: 0 Draft, 1 Submitted, 2 Cancelled. */
 const DOCSTATUS_META = {
-  0: { label: 'Draft', background: '#F1F5F9', color: '#64748B' },
-  1: { label: 'Submitted', background: '#DCFCE7', color: '#15803D' },
-  2: { label: 'Cancelled', background: '#FEE2E2', color: '#DC2626' }
+  0: { label: 'Draft', background: '#EDF1F6', color: '#5E6B7A' },
+  1: { label: 'Submitted', background: 'rgba(16,120,48,.1)', color: '#107830' },
+  2: { label: 'Cancelled', background: 'rgba(230,57,70,.1)', color: '#E63946' }
 }
 
 export function docstatusBadge(docstatus) {

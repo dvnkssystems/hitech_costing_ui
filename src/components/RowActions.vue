@@ -25,7 +25,7 @@ const emit = defineEmits(['run'])
  */
 const COLORS = {
   slate: '#475569',
-  green: '#16A34A',
+  green: '#107830',
   red: '#DC2626',
   amber: '#B45309',
   blue: '#1D4ED8'

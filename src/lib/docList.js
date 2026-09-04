@@ -150,8 +150,8 @@ export function formatCell(value, fieldtype) {
   if (fieldtype === 'Check') return value ? 'Yes' : 'No'
   if (fieldtype === 'Currency' || fieldtype === 'Float') {
     return Number(value).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4
     })
   }
   if (fieldtype === 'Int') return Number(value).toLocaleString()

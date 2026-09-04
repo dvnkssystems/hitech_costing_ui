@@ -131,11 +131,11 @@ function setWrapper(fieldname) {
     <section
       v-for="section in sections"
       :key="`${activeTab}-${section.n}`"
-      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:24px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:24px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
     >
       <div style="display:flex; align-items:center; gap:11px; margin-bottom:18px;">
         <span
-          style="width:28px; height:28px; border-radius:8px; background:#F0FDF4; color:#16A34A; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; flex:none;"
+          style="width:28px; height:28px; border-radius:8px; background:#E9EFF7; color:#0B3465; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; flex:none;"
           >{{ section.n }}</span
         >
         <h2 style="margin:0; font-size:16px; font-weight:700;">{{ section.title }}</h2>
@@ -161,7 +161,7 @@ function setWrapper(fieldname) {
   <!-- No sections came back from the meta — see useCards. -->
   <div
     v-else
-    style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:8px 20px 20px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+    style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:8px 20px 20px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
   >
     <FormLayout :frm="frm" />
   </div>

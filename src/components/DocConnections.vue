@@ -97,7 +97,7 @@ watch(() => [props.doctype, props.docname], load)
 <template>
   <div
     v-if="links.length || loading"
-    style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:18px 20px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+    style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:18px 20px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
   >
     <div
       style="font-size:11px; font-weight:700; letter-spacing:.08em; color:#94A3B8; text-transform:uppercase; margin-bottom:12px;"
@@ -142,8 +142,8 @@ watch(() => [props.doctype, props.docname], load)
             borderRadius: '999px',
             fontSize: '11.5px',
             fontWeight: '700',
-            background: link.count ? '#F0FDF4' : '#F1F5F9',
-            color: link.count ? '#15803D' : '#94A3B8'
+            background: link.count ? '#E9EFF7' : '#F1F5F9',
+            color: link.count ? '#0B3465' : '#94A0AE'
           }"
           >{{ link.count }}</span
         >

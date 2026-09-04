@@ -42,7 +42,7 @@ defineEmits(['select'])
 .wizard-crumbs {
   display: flex;
   flex-wrap: wrap;
-  border: 1px solid #e4dcd6;
+  border: 1px solid #D7DEE8;
   border-radius: 8px;
   overflow: hidden;
   background: #fff;
@@ -58,10 +58,10 @@ defineEmits(['select'])
   gap: 6px;
   padding: 12px 8px;
   border: none;
-  border-right: 1px solid #e4dcd6;
+  border-right: 1px solid #D7DEE8;
   background: #fff;
-  color: #6e635b;
-  font: 600 12px/1 'Nunito', system-ui, sans-serif;
+  color: #5E6B7A;
+  font: 600 12px/1 'Raleway', system-ui, sans-serif;
   letter-spacing: 0.02em;
   cursor: pointer;
   overflow: hidden;
@@ -85,21 +85,21 @@ defineEmits(['select'])
 }
 
 .wizard-crumb.is-done {
-  background: #DCFCE7;
-  color: #15803D;
+  background: #E9EFF7;
+  color: #0B3465;
 }
 
 .wizard-crumb.is-active {
-  background: #16A34A;
+  background: #0B3465;
   color: #fff;
 }
 
 .wizard-crumb:not(:disabled):hover {
-  background: #DCFCE7;
+  background: #E9EFF7;
 }
 
 .wizard-crumb.is-active:not(:disabled):hover {
-  background: #15803D;
+  background: #0E4079;
 }
 
 .wizard-crumb.is-locked {

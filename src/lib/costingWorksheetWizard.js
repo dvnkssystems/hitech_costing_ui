@@ -42,7 +42,6 @@ export const ITEM_STEPS = [
     title: 'Product Line',
     fields: [
       'tank_type',
-      'facility',
       'labour_rate_source',
       'manual_labour_rate_inr_per_kg',
       'labour_override_reason',
@@ -142,8 +141,15 @@ export const ITEM_STEPS = [
 
 /** Real, standard Quotation fields (ERPNext core) covering taxes, address and
  *  delivery — see `QUOTATION_HEADER_FIELDS` in the backend's
- *  `costing_worksheet.py`, which this must stay in sync with. */
-export const TAX_FIELDS = ['taxes_and_charges']
+ *  `costing_worksheet.py`, which this must stay in sync with.
+ *
+ *  `disable_rounded_total` is the one exception: the backend allowlist
+ *  doesn't cover it yet, so toggling it before a Quotation exists previews
+ *  the rounding math client-side (see CostingWorksheetWizard.vue's totals
+ *  block) but won't carry into the Quotation the first item creates —
+ *  it only actually persists once resuming/editing a Quotation that
+ *  already exists, via the Taxes step's own Save Changes. */
+export const TAX_FIELDS = ['taxes_and_charges', 'disable_rounded_total']
 export const ADDRESS_FIELDS = [
   'customer_address',
   'shipping_address_name',
@@ -234,6 +240,19 @@ export function volumesSplitError(frm) {
   const split = tank + accessory
   if (Math.abs(split - total) < 0.005) return ''
   return `Tank Weight (${tank.toFixed(2)} kg) + Accessory Weight (${accessory.toFixed(2)} kg) = ${split.toFixed(2)} kg, which does not match Total Finished Weight (${total.toFixed(2)} kg) from the Volumes table. Fix the split before continuing.`
+}
+
+/** Mirrors the backend's submit-time check (`costing_worksheet.py`,
+ *  `_validate_before_submit`'s `MIN_PURE_MARGIN_PERCENT` guard) that Pure
+ *  Margin % never goes to submission below the floor. Run here too, on the
+ *  Commercials step itself, so a thin-or-negative margin is caught before
+ *  "Save item" instead of only at Review & Submit. */
+export const MIN_PURE_MARGIN_PERCENT = 20
+
+export function pureMarginError(frm) {
+  const percent = Number(frm.doc?.pure_margin_percent) || 0
+  if (percent >= MIN_PURE_MARGIN_PERCENT) return ''
+  return `Pure Margin % (${percent.toFixed(2)}%) is below the minimum required margin of ${MIN_PURE_MARGIN_PERCENT}%. Increase Deal Price - FG or reduce cost before continuing.`
 }
 
 /* ── Taxes & Charges step ────────────────────────────────────────────────── */

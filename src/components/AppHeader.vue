@@ -275,7 +275,7 @@ const initials = computed(() =>
               :key="hit.id"
               @click="openHit(hit)"
               @mousemove="activeIndex = indexOf(hit)"
-              :style="`width:100%; text-align:left; display:flex; align-items:center; gap:11px; padding:9px 16px; border:none; cursor:pointer; background:${indexOf(hit) === activeIndex ? '#F0FDF4' : '#fff'};`"
+              :style="`width:100%; text-align:left; display:flex; align-items:center; gap:11px; padding:9px 16px; border:none; cursor:pointer; background:${indexOf(hit) === activeIndex ? '#E9EFF7' : '#fff'};`"
             >
               <span
                 style="flex:none; width:28px; height:28px; border-radius:8px; background:#F1F5F9; color:#475569; display:flex; align-items:center; justify-content:center; font-size:14px;"
@@ -298,7 +298,7 @@ const initials = computed(() =>
               :key="hit.id"
               @click="openHit(hit)"
               @mousemove="activeIndex = indexOf(hit)"
-              :style="`width:100%; text-align:left; display:block; padding:9px 16px; border:none; cursor:pointer; background:${indexOf(hit) === activeIndex ? '#F0FDF4' : '#fff'};`"
+              :style="`width:100%; text-align:left; display:block; padding:9px 16px; border:none; cursor:pointer; background:${indexOf(hit) === activeIndex ? '#E9EFF7' : '#fff'};`"
             >
               <span style="display:block; font-size:13.5px; font-weight:600; color:#0F172A;">{{ hit.label }}</span>
               <span
@@ -335,7 +335,7 @@ const initials = computed(() =>
         <LucideIcon name="bell" />
         <span
           v-if="notifications"
-          style="position:absolute; top:8px; right:9px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#16A34A; color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:2px solid #fff;"
+          style="position:absolute; top:8px; right:9px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#0B3465; color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:2px solid #fff;"
           >{{ notifications }}</span
         >
       </button>
@@ -368,7 +368,7 @@ const initials = computed(() =>
               <button
                 v-if="notifications"
                 @click="app.markAllNotificationsRead()"
-                style="border:none; background:none; color:#16A34A; font-size:12px; font-weight:600; cursor:pointer; padding:2px 4px;"
+                style="border:none; background:none; color:#0B3465; font-size:12px; font-weight:600; cursor:pointer; padding:2px 4px;"
               >
                 Mark all read
               </button>
@@ -438,7 +438,7 @@ const initials = computed(() =>
                 </span>
                 <span
                   v-if="!item.read"
-                  style="flex:none; width:8px; height:8px; border-radius:50%; background:#16A34A; margin-top:6px;"
+                  style="flex:none; width:8px; height:8px; border-radius:50%; background:#0B3465; margin-top:6px;"
                 ></span>
               </button>
             </div>

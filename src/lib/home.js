@@ -20,12 +20,12 @@ function monthBounds(offset = 0) {
  * Worksheets: whichever linked worksheet sits earliest in this list order.
  */
 export const STATUS_STAGES = [
-  { key: 'Draft', label: 'Draft', color: '#94A3B8' },
+  { key: 'Draft', label: 'Draft', color: '#5E6B7A' },
   { key: 'Pending BU Head', label: 'Pending BU Head', color: '#F59E0B' },
   { key: 'Pending CFO', label: 'Pending CFO', color: '#F59E0B' },
-  { key: 'Approved', label: 'Approved', color: '#2563EB' },
-  { key: 'Quoted', label: 'Quoted', color: '#22C55E' },
-  { key: 'Lost', label: 'Lost', color: '#EF4444' }
+  { key: 'Approved', label: 'Approved', color: '#107830' },
+  { key: 'Quoted', label: 'Quoted', color: '#107830' },
+  { key: 'Lost', label: 'Lost', color: '#E63946' }
 ]
 
 /** `STATUS_STAGES`, bucketed into the stages a Quotation-facing dashboard
@@ -33,16 +33,16 @@ export const STATUS_STAGES = [
  *  approval" bucket, and a Quotation with no linked worksheet yet reads as
  *  "Draft" rather than falling out of every bucket. */
 export const QUOTATION_PIPELINE_STAGES = [
-  { key: 'Draft', label: 'Draft', color: '#94A3B8', match: (s) => !s || s === 'Draft' },
+  { key: 'Draft', label: 'Draft', color: '#5E6B7A', match: (s) => !s || s === 'Draft' },
   {
     key: 'Pending approval',
     label: 'Pending approval',
     color: '#F59E0B',
     match: (s) => s === 'Pending BU Head' || s === 'Pending CFO'
   },
-  { key: 'Approved', label: 'Approved', color: '#2563EB', match: (s) => s === 'Approved' },
-  { key: 'Quoted', label: 'Quoted', color: '#22C55E', match: (s) => s === 'Quoted' },
-  { key: 'Lost', label: 'Lost', color: '#EF4444', match: (s) => s === 'Lost' }
+  { key: 'Approved', label: 'Approved', color: '#107830', match: (s) => s === 'Approved' },
+  { key: 'Quoted', label: 'Quoted', color: '#107830', match: (s) => s === 'Quoted' },
+  { key: 'Lost', label: 'Lost', color: '#E63946', match: (s) => s === 'Lost' }
 ]
 
 /** Weakest-link worksheet status per Quotation `name`, for however many

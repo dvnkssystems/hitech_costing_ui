@@ -87,7 +87,7 @@ function cardValue(card) {
   if (card.function === 'Count') return Number(value).toLocaleString()
 
   const amount = card.show_full_number
-    ? Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    ? Number(value).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
     : formatCell(value, 'Currency')
 
   return card.currency ? `${card.currency} ${amount}` : amount
@@ -354,11 +354,11 @@ onMounted(load)
 <template>
   <div style="padding:30px 36px 56px; margin:0 auto;">
     <div
-      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
+      style="font-size:13px; color:#94A0AE; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
     >
       <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#16A34A;">{{ doctype }}</span>
+      <span style="color:#0B3465;">{{ doctype }}</span>
     </div>
 
     <div
@@ -373,7 +373,7 @@ onMounted(load)
       <button
         v-if="live"
         @click="create"
-        style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22, 163, 74, .28); font-family:inherit;"
+        style="display:flex; align-items:center; gap:8px; background:#0B3465; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(11, 52, 101, .28); font-family:inherit;"
         class="hv1"
       >
         <span style="font-size:17px;"><LucideIcon name="plus" /></span> {{ chrome.actionLabel }}
@@ -406,8 +406,8 @@ onMounted(load)
           @click="pickCard(card)"
           :style="{
             background: '#fff',
-            border: `1px solid ${selectedCard === card.name ? '#16A34A' : '#EAEEF3'}`,
-            boxShadow: selectedCard === card.name ? '0 0 0 3px rgba(22, 163, 74, .12)' : 'none',
+            border: `1px solid ${selectedCard === card.name ? '#0B3465' : '#EAEEF3'}`,
+            boxShadow: selectedCard === card.name ? '0 0 0 3px rgba(11, 52, 101, .12)' : 'none',
             borderRadius: '14px',
             padding: '16px 18px',
             textAlign: 'left',
@@ -438,8 +438,8 @@ onMounted(load)
           @click="isMetric(option) ? null : choose(group, option.key)"
           :style="{
             background: '#fff',
-            border: `1px solid ${selections[group.key] === option.key ? '#16A34A' : '#EAEEF3'}`,
-            boxShadow: selections[group.key] === option.key ? '0 0 0 3px rgba(22, 163, 74, .12)' : 'none',
+            border: `1px solid ${selections[group.key] === option.key ? '#0B3465' : '#EAEEF3'}`,
+            boxShadow: selections[group.key] === option.key ? '0 0 0 3px rgba(11, 52, 101, .12)' : 'none',
             borderRadius: '14px',
             padding: '16px 18px',
             textAlign: 'left',
@@ -457,10 +457,10 @@ onMounted(load)
       </div>
 
       <div
-        style="background:#fff; border:1px solid #EAEEF3; border-radius:14px; padding:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px;"
+        style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px;"
       >
         <div style="position:relative; flex:1; min-width:220px;">
-          <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:#94A3B8; font-size:16px;">
+          <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:#94A0AE; font-size:16px;">
             <LucideIcon name="search" />
           </span>
           <input
@@ -472,7 +472,7 @@ onMounted(load)
         <span
           v-for="f in filterSummary"
           :key="f"
-          style="display:inline-flex; align-items:center; height:42px; padding:0 12px; border-radius:999px; background:#F0FDF4; color:#15803D; font-size:12.5px; font-weight:600;"
+          style="display:inline-flex; align-items:center; height:42px; padding:0 12px; border-radius:999px; background:#E9EFF7; color:#0B3465; font-size:12.5px; font-weight:600;"
           >{{ f }}</span
         >
         <button
@@ -494,7 +494,7 @@ onMounted(load)
             {{ option.label }}
           </option>
         </select>
-        <span v-if="loading" style="font-size:13px; color:#94A3B8; font-weight:600;">Loading…</span>
+        <span v-if="loading" style="font-size:13px; color:#94A0AE; font-weight:600;">Loading…</span>
       </div>
 
       <!-- Chips are the same groups as the cards, drawn as a row of buttons. -->
@@ -537,7 +537,7 @@ onMounted(load)
       </div>
 
       <div
-        style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+        style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);"
       >
         <div style="overflow-x:auto;">
           <table style="width:100%; border-collapse:collapse; min-width:700px;">
@@ -599,7 +599,7 @@ onMounted(load)
               <tr v-if="!rows.length && !loading">
                 <td
                   :colspan="columns.length + (hasNameColumn ? 1 : 2)"
-                  style="padding:44px 18px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;"
+                  style="padding:44px 18px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;"
                 >
                   {{ emptyMessage }}
                 </td>

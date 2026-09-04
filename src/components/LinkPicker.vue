@@ -154,8 +154,8 @@ const optionStyle = (i) => ({
   textAlign: 'left',
   padding: '9px 12px',
   border: 'none',
-  background: highlighted.value === i ? '#F0FDF4' : 'transparent',
-  color: highlighted.value === i ? '#166534' : '#334155',
+  background: highlighted.value === i ? '#E9EFF7' : 'transparent',
+  color: highlighted.value === i ? '#0B3465' : '#334155',
   fontSize: '13.5px',
   fontWeight: highlighted.value === i ? '600' : '500',
   fontFamily: 'inherit',
@@ -202,7 +202,7 @@ const optionStyle = (i) => ({
 
     <div
       v-if="showList"
-      style="position:absolute; z-index:40; left:0; right:0; top:calc(100% + 4px); background:#fff; border:1px solid #E6EBF1; border-radius:11px; box-shadow:0 12px 28px rgba(15,23,42,.12); overflow:hidden; max-height:264px; overflow-y:auto;"
+      style="position:absolute; z-index:40; left:0; right:0; top:calc(100% + 4px); background:#fff; border:1px solid #E6EBF1; border-radius:8px; box-shadow:0 12px 28px rgba(15,23,42,.12); overflow:hidden; max-height:264px; overflow-y:auto;"
     >
       <button
         v-for="(name, i) in results"

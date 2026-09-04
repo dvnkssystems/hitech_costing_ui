@@ -1,0 +1,75 @@
+/**
+ * Hi-Tech Radiators brand tokens — derived from the "Hi-Tech Brandbook"
+ * (claude.ai/design project 5c872dca-09de-4271-9b6d-f6ce2464f848).
+ *
+ * Navy carries the brand and every primary action. Green is reserved for
+ * confirmation, approval and positive movement — never a decorative fill.
+ * Raleway sets everything the reader reads; IBM Plex Mono sets everything
+ * the reader compares (quotation numbers, item codes, weights, rates,
+ * totals) so digits align column to column.
+ */
+:root {
+  /* Core */
+  --ht-navy: #0B3465;
+  --ht-navy-hover: #0E4079;
+  --ht-deep-navy: #0E1B2B;
+  --ht-green: #107830;
+  --ht-green-hover: #0D6428;
+  --ht-navy-tint: #E9EFF7;
+
+  /* Neutrals & states */
+  --ht-surface: #FFFFFF;
+  --ht-canvas: #F4F6F9;
+  --ht-subtle: #EDF1F6;
+  --ht-border: #D7DEE8;
+  --ht-muted: #5E6B7A;
+  --ht-faint: #94A0AE;
+  --ht-body: #33414F;
+  --ht-danger: #E63946;
+  --ht-green-tint: rgba(16, 120, 48, .1);
+  --ht-danger-tint: rgba(230, 57, 70, .1);
+  --ht-navy-shadow: rgba(11, 52, 101, .22);
+
+  /* Type */
+  --ht-font-sans: 'Raleway', system-ui, sans-serif;
+  --ht-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Radius — the mark is built from square-cut bars, so corners stay tight */
+  --ht-radius-sm: 4px;
+  --ht-radius-md: 5px;
+  --ht-radius-lg: 8px;
+  --ht-radius-xl: 10px;
+  --ht-radius-pill: 999px;
+
+  /* Elevation */
+  --ht-shadow-raised: 0 2px 8px rgba(14, 27, 43, .07);
+  --ht-shadow-overlay: 0 12px 32px rgba(14, 27, 43, .14);
+
+  /* Spacing — 4px base step. Control height 44px; dense table rows 40px. */
+  --ht-space-1: 4px;
+  --ht-space-2: 8px;
+  --ht-space-3: 12px;
+  --ht-space-4: 16px;
+  --ht-space-6: 24px;
+  --ht-space-8: 32px;
+  --ht-space-12: 48px;
+  --ht-control-h: 44px;
+  --ht-row-h: 40px;
+}
+
+body {
+  font-family: var(--ht-font-sans);
+  background: var(--ht-canvas);
+  color: var(--ht-body);
+}
+
+a {
+  color: var(--ht-navy);
+}
+a:hover {
+  color: var(--ht-green);
+}
+
+.ht-mono {
+  font-family: var(--ht-font-mono);
+}

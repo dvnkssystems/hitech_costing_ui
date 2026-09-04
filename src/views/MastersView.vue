@@ -8,6 +8,7 @@ const MASTERS = [
   { doctype: 'Material Rate', label: 'Material Rates', desc: 'Per-kg material rates used in worksheet costing.', icon: 'coins', bg: '#F0FDF4', fg: '#16A34A' },
   { doctype: 'Paint Make', label: 'Paint Makes', desc: 'Approved paint brands/makes.', icon: 'paintbrush', bg: '#ECFDF5', fg: '#059669' },
   { doctype: 'Paint System Rate', label: 'Paint System Rates', desc: 'Price per sqm by paint make, method and DFT band.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
+  { doctype: 'DFT Range', label: 'DFT Ranges', desc: 'Dry film thickness bands used by Paint System Rates and the Paint System step.', icon: 'layers', bg: '#FFF7ED', fg: '#EA580C' },
   { doctype: 'Order Complexity Question', label: 'Order Complexity Questions', desc: 'Questions used to score order complexity.', icon: 'list-checks', bg: '#F1F5F9', fg: '#475569' },
   { doctype: 'Quotation Term', label: 'Terms & Conditions', desc: 'The Quotation Wizard\'s Terms & Conditions checklist entries.', icon: 'file-check', bg: '#FEFCE8', fg: '#CA8A04' }
 ]
@@ -28,11 +29,11 @@ const MASTERS = [
         v-for="m in MASTERS"
         :key="m.doctype"
         :to="`/ui/${m.doctype}`"
-        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:22px; cursor:pointer; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(15,23,42,.04); color:inherit;"
+        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:22px; cursor:pointer; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(15,23,42,.04); color:inherit;"
         class="hv3"
       >
         <div
-          :style="{ width:'46px', height:'46px', borderRadius:'12px', background: m.bg, color: m.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flex:'none' }"
+          :style="{ width:'46px', height:'46px', borderRadius:'8px', background: m.bg, color: m.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'22px', flex:'none' }"
         >
           <LucideIcon :name="m.icon" />
         </div>

@@ -91,7 +91,7 @@ onMounted(() => {
     <div class="qw-crumbtrail">
       <RouterLink to="/" class="qw-crumbtrail__link">Dashboard</RouterLink>
       <LucideIcon name="chevron-right" />
-      <RouterLink :to="listRouteFor('Costing Worksheet')" class="qw-crumbtrail__link">Costing Worksheet</RouterLink>
+      <RouterLink :to="listRouteFor('Quotation')" class="qw-crumbtrail__link">Quotation</RouterLink>
       <LucideIcon name="chevron-right" />
       <span class="qw-crumbtrail__current">New quote</span>
     </div>
@@ -165,17 +165,17 @@ onMounted(() => {
    the tokens and rationale there. Duplicated rather than extracted: only
    these two screens use it. */
 .qw-wizard {
-  --qw-primary: #16A34A;
-  --qw-primary-dark: #15803D;
-  --qw-primary-hover: #15803D;
-  --qw-primary-tint: #DCFCE7;
-  --qw-border: #e4dcd6;
-  --qw-row-border: #f2ede9;
-  --qw-text: #1c1714;
-  --qw-body: #3a322d;
-  --qw-muted: #6e635b;
-  --qw-faint: #a79c94;
-  font-family: 'Nunito', system-ui, sans-serif;
+  --qw-primary: #0B3465;
+  --qw-primary-dark: #0B3465;
+  --qw-primary-hover: #0E4079;
+  --qw-primary-tint: #E9EFF7;
+  --qw-border: #D7DEE8;
+  --qw-row-border: #EDF1F6;
+  --qw-text: #0E1B2B;
+  --qw-body: #33414F;
+  --qw-muted: #5E6B7A;
+  --qw-faint: #94A0AE;
+  font-family: 'Raleway', system-ui, sans-serif;
   color: var(--qw-body);
   padding: 30px 36px 80px;
   margin: 0 auto;
@@ -207,14 +207,14 @@ onMounted(() => {
 
 .qw-heading {
   margin: 0 0 8px;
-  font: 900 32px/1.15 'Nunito', system-ui, sans-serif;
+  font: 900 32px/1.15 'Raleway', system-ui, sans-serif;
   letter-spacing: -0.02em;
   color: var(--qw-text);
 }
 
 .qw-lede {
   margin: 0 0 22px;
-  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
+  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
   color: var(--qw-muted);
   max-width: 68ch;
 }
@@ -234,7 +234,7 @@ onMounted(() => {
   cursor: pointer;
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 20px;
   font-family: inherit;
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
@@ -244,7 +244,7 @@ onMounted(() => {
 .qw-type-card:not(.is-disabled):hover,
 .qw-type-card.is-active {
   border-color: var(--qw-primary);
-  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.15);
+  box-shadow: 0 8px 24px rgba(11, 52, 101, 0.15);
 }
 
 .qw-type-card.is-disabled {
@@ -259,13 +259,13 @@ onMounted(() => {
 }
 
 .qw-type-card__name {
-  font: 800 24px/1.2 'Nunito', system-ui, sans-serif;
+  font: 800 24px/1.2 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
   margin: 8px 0 6px;
 }
 
 .qw-type-card__desc {
-  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
+  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
   color: var(--qw-muted);
 }
 
@@ -277,7 +277,7 @@ onMounted(() => {
 
 .qw-section-title {
   margin: 0 0 6px;
-  font: 800 24px/1.2 'Nunito', system-ui, sans-serif;
+  font: 800 24px/1.2 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -292,9 +292,9 @@ onMounted(() => {
   cursor: pointer;
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 16px;
-  font: 700 15px/1.3 'Nunito', system-ui, sans-serif;
+  font: 700 15px/1.3 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -302,13 +302,13 @@ onMounted(() => {
 
 .qw-tank-tile:hover {
   border-color: var(--qw-primary);
-  box-shadow: 0 8px 24px rgba(22, 163, 74, 0.15);
+  box-shadow: 0 8px 24px rgba(11, 52, 101, 0.15);
 }
 
 .qw-notice {
-  background: #F0FDF4;
+  background: var(--qw-primary-tint);
   border: 1px solid var(--qw-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 15px 18px;
   font-size: 13px;
   color: var(--qw-primary-dark);
@@ -317,7 +317,7 @@ onMounted(() => {
 .qw-loading {
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 24px;
   text-align: center;
   color: var(--qw-faint);
@@ -331,7 +331,7 @@ onMounted(() => {
   gap: 12px;
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 15px 18px;
 }
 
@@ -360,7 +360,7 @@ onMounted(() => {
   border: 1px solid var(--qw-border);
   padding: 9px 15px;
   border-radius: 10px;
-  font: 600 13.5px/1 'Nunito', system-ui, sans-serif;
+  font: 600 13.5px/1 'Raleway', system-ui, sans-serif;
   cursor: pointer;
 }
 

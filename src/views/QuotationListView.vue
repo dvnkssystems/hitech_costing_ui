@@ -197,11 +197,11 @@ onMounted(load)
 <template>
   <div style="padding:30px 36px 56px; margin:0 auto;">
     <div
-      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
+      style="font-size:13px; color:#94A0AE; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
     >
       <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#16A34A;">Quotation</span>
+      <span style="color:#0B3465;">Quotation</span>
     </div>
 
     <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; margin-bottom:22px;">
@@ -212,7 +212,7 @@ onMounted(load)
       <button
         v-if="live"
         @click="create"
-        style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22,163,74,.28); font-family:inherit;"
+        style="display:flex; align-items:center; gap:8px; background:#0B3465; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(11,52,101,.28); font-family:inherit;"
         class="hv1"
       >
         <LucideIcon name="plus" /> New Quotation
@@ -240,20 +240,20 @@ onMounted(load)
           :style="{
             padding: '9px 16px', borderRadius: '999px', cursor: 'pointer', fontFamily: 'inherit',
             fontSize: '13px', fontWeight: '600', border: 'none',
-            background: activeTab === tab.key ? '#16A34A' : '#fff',
+            background: activeTab === tab.key ? '#0B3465' : '#fff',
             color: activeTab === tab.key ? '#fff' : '#475569',
-            boxShadow: activeTab === tab.key ? '0 4px 12px rgba(22,163,74,.25)' : 'inset 0 0 0 1px #E6EBF1'
+            boxShadow: activeTab === tab.key ? '0 4px 12px rgba(11,52,101,.25)' : 'inset 0 0 0 1px #E6EBF1'
           }"
         >
           {{ tab.label }} {{ tabCounts[tab.key] ?? 0 }}
         </button>
       </div>
 
-      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:14px; padding:16px; display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:14px; align-items:end; margin-bottom:16px;">
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:16px; display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:14px; align-items:end; margin-bottom:16px;">
         <div>
           <label style="display:block; font-size:12.5px; font-weight:600; color:#64748B; margin-bottom:6px;">Search</label>
           <div style="position:relative;">
-            <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:#94A3B8; font-size:16px;">
+            <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:#94A0AE; font-size:16px;">
               <LucideIcon name="search" />
             </span>
             <input
@@ -299,11 +299,11 @@ onMounted(load)
         <div style="display:flex; align-items:center; gap:12px; height:42px;">
           <button
             @click="clearAll"
-            style="background:none; border:none; color:#16A34A; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit; padding:0;"
+            style="background:none; border:none; color:#0B3465; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit; padding:0;"
           >
             Clear
           </button>
-          <span v-if="loading" style="font-size:13px; color:#94A3B8; font-weight:600;">Loading…</span>
+          <span v-if="loading" style="font-size:13px; color:#94A0AE; font-weight:600;">Loading…</span>
         </div>
       </div>
 
@@ -318,7 +318,7 @@ onMounted(load)
         </div>
       </div>
 
-      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);">
         <div style="overflow-x:auto;">
           <table style="width:100%; border-collapse:collapse; min-width:700px;">
             <thead>
@@ -342,14 +342,14 @@ onMounted(load)
                 <td style="padding:14px 18px;">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                     <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                    <span v-else style="color:#94A3B8; font-size:13px;">—</span>
+                    <span v-else style="color:#94A0AE; font-size:13px;">—</span>
                     <span :style="docstatusBadge(r.docstatus).style">{{ docstatusBadge(r.docstatus).label }}</span>
                   </div>
                 </td>
                 <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">Open →</td>
               </tr>
               <tr v-if="!pageRows.length && !loading">
-                <td colspan="7" style="padding:44px 18px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;">
+                <td colspan="7" style="padding:44px 18px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;">
                   No Quotation records{{ search || activeTab !== 'All' ? ' match this filter' : ' yet' }}.
                 </td>
               </tr>

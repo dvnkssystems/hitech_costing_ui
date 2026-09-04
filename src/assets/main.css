@@ -5,46 +5,49 @@
 
 body {
   margin: 0;
-  font-family: 'Manrope', system-ui, sans-serif;
-  background: #F6F8FB;
-  color: #0F172A;
+  font-family: var(--ht-font-sans);
+  background: var(--ht-canvas);
+  color: var(--ht-deep-navy);
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Raleway', system-ui, sans-serif;
+  font-family: var(--ht-font-sans);
 }
 
 svg.lucide, [data-lucide] { width: 1em; height: 1em; display: block; flex: none; }
 
 input, select, textarea, button { font-family: inherit; }
-input::placeholder, textarea::placeholder { color: #94A3B8; }
+input::placeholder, textarea::placeholder { color: var(--ht-faint); }
 
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: #16A34A !important;
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, .12);
+  border-color: var(--ht-navy) !important;
+  box-shadow: 0 0 0 3px rgba(11, 52, 101, .12);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #D9E0E8; border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--ht-border); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- hover states lifted out of inline `style-hover` attrs ---- */
-.hv1:hover{background:#15803D;}
-.hv2:hover{background:#F4F6F9;}
-.hv3:hover{border-color:#16A34A; box-shadow:0 8px 24px rgba(15,23,42,.08);}
+/* ---- hover states lifted out of inline `style-hover` attrs ----
+   Navy is the interactive/primary-action hover everywhere; green stays
+   reserved for genuinely positive/approval states (hv9's danger tint is
+   unrelated and untouched). */
+.hv1:hover{background:var(--ht-navy-hover);}
+.hv2:hover{background:var(--ht-canvas);}
+.hv3:hover{border-color:var(--ht-navy); box-shadow:0 8px 24px rgba(11,52,101,.12);}
 .hv4:hover{background:#FAFBFC;}
-.hv5:hover{color:#15803D;}
-.hv6:hover{background:#F0FDF4; border-color:#86EFAC; color:#15803D;}
-.hv7:hover{background:#F0FDF4;}
-.hv8:hover{background:#DCFCE7;}
+.hv5:hover{color:var(--ht-green-hover);}
+.hv6:hover{background:var(--ht-navy-tint); border-color:var(--ht-border); color:var(--ht-navy);}
+.hv7:hover{background:var(--ht-navy-tint);}
+.hv8:hover{background:var(--ht-navy-tint);}
 .hv9:hover{background:#FEF2F2;}
-.hv10:hover{border-color:#16A34A; background:#F6FDF8;}
-.hv11:hover{background:#F0FDF4; border-color:#BBF7D0;}
-.hv12:hover{background:#15803D;}
+.hv10:hover{border-color:var(--ht-navy); background:var(--ht-navy-tint);}
+.hv11:hover{background:var(--ht-navy-tint); border-color:var(--ht-border);}
+.hv12:hover{background:var(--ht-navy-hover);}
 
 /* ---- Notifications drawer ----
    The bell opens a drawer pinned to the right edge, the same gesture as the
@@ -98,7 +101,7 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
 }
 
-.notif-drawer__close:hover { background:#F0FDF4; border-color:#86EFAC; color:#15803D; }
+.notif-drawer__close:hover { background:var(--ht-navy-tint); border-color:var(--ht-border); color:var(--ht-navy); }
 
 .notif-drawer__body { flex: 1; overflow-y: auto; }
 

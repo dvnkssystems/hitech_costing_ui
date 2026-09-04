@@ -79,16 +79,16 @@ onMounted(load)
 <template>
   <div style="padding:30px 36px 80px; margin:0 auto;">
     <div
-      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:14px;"
+      style="font-size:13px; color:#94A0AE; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:14px;"
     >
       <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#16A34A;">Profile</span>
+      <span style="color:#0B3465;">Profile</span>
     </div>
 
     <!-- identity header -->
     <div
-      style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:20px 22px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+      style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:20px 22px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
     >
       <img
         v-if="userImage"
@@ -151,14 +151,14 @@ onMounted(load)
 
     <div
       v-if="loading"
-      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:48px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:48px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;"
     >
       Loading profile…
     </div>
 
     <div
       v-else-if="frm"
-      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:8px 20px 20px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:8px 20px 20px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
     >
       <FormView :frm="frm" @error="error = $event" />
     </div>

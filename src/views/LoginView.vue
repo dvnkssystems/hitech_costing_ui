@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/app'
 import { hasBackend } from '@/lib/frappe'
 import { signUp, requestPasswordReset, googleLoginEnabled, googleLoginUrl } from '@/lib/auth'
 import LucideIcon from '@/components/LucideIcon.vue'
+import httLogo from '@/assets/brand/htt-logo.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -157,7 +158,7 @@ const fieldStyle =
   'width:100%; height:46px; border:1px solid #E6EBF1; border-radius:11px; padding:0 14px; font-size:14.5px; background:#FCFDFE; font-family:inherit;'
 const labelStyle = 'display:block; font-size:13px; font-weight:600; color:#475569; margin-bottom:7px;'
 const linkButton =
-  'background:none; border:none; padding:0; font-weight:700; color:#15803D; cursor:pointer; font-family:inherit;'
+  'background:none; border:none; padding:0; font-weight:700; color:#0B3465; cursor:pointer; font-family:inherit;'
 const backButton =
   'display:inline-flex; align-items:center; gap:7px; background:none; border:none; padding:0; margin-bottom:16px; font-size:13px; font-weight:600; color:#64748B; cursor:pointer; font-family:inherit;'
 
@@ -165,14 +166,14 @@ const primaryStyle = (enabled) => ({
   width: '100%',
   height: '48px',
   border: 'none',
-  borderRadius: '12px',
-  background: enabled ? '#16A34A' : '#86EFAC',
+  borderRadius: '8px',
+  background: enabled ? '#0B3465' : '#9CB0C7',
   color: '#fff',
   fontSize: '15px',
   fontWeight: '700',
   cursor: enabled ? 'pointer' : 'not-allowed',
   fontFamily: 'inherit',
-  boxShadow: enabled ? '0 6px 16px rgba(22, 163, 74, .28)' : 'none'
+  boxShadow: enabled ? '0 6px 16px rgba(11, 52, 101, .28)' : 'none'
 })
 
 const year = new Date().getFullYear()
@@ -188,22 +189,19 @@ const year = new Date().getFullYear()
          licensed image to use. -->
     <div class="auth-art">
       <div
-        style="position:absolute; inset:0; background:linear-gradient(160deg, rgba(15,23,42,.86) 0%, rgba(15,23,42,.62) 45%, rgba(22, 163, 74, .34) 100%); pointer-events:none;"
+        style="position:absolute; inset:0; background:linear-gradient(160deg, rgba(14,27,43,.86) 0%, rgba(14,27,43,.62) 45%, rgba(11, 52, 101, .5) 100%); pointer-events:none;"
       ></div>
       <div
         style="position:relative; height:100%; overflow-y:auto; display:flex; flex-direction:column; justify-content:space-between; gap:34px; padding:40px 46px; color:#fff;"
       >
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div
-            style="width:40px; height:40px; border-radius:12px; background:#16A34A; display:flex; align-items:center; justify-content:center; font-size:22px; box-shadow:0 6px 18px rgba(22, 163, 74, .4);"
-          >
-            <LucideIcon name="calculator" />
+        <div style="display:flex; align-items:center; gap:14px;">
+          <!-- Brandbook rule: "On navy, the logo sits in a white keyline box.
+               Do not knock it out to a single flat colour." -->
+          <div style="background:#fff; border-radius:8px; padding:10px 14px; display:flex; flex:none;">
+            <img :src="httLogo" alt="HTT Innovations" style="height:34px; width:auto; display:block;" />
           </div>
-          <div>
-            <div style="font-size:17px; font-weight:800; letter-spacing:-.02em; line-height:1;">{{ companyName }}</div>
-            <div style="font-size:11px; color:rgba(255,255,255,.62); font-weight:600; letter-spacing:.08em; margin-top:4px;">
-              TANK &amp; RADIATOR COSTING
-            </div>
+          <div style="font-size:11px; color:rgba(255,255,255,.62); font-weight:600; letter-spacing:.08em;">
+            TANK &amp; RADIATOR COSTING
           </div>
         </div>
 
@@ -246,7 +244,7 @@ const year = new Date().getFullYear()
           <!-- Offline notice applies to every pane. -->
           <div
             v-if="!live"
-            style="display:flex; align-items:flex-start; gap:11px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:12px; padding:13px 15px; margin-bottom:20px;"
+            style="display:flex; align-items:flex-start; gap:11px; background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:13px 15px; margin-bottom:20px;"
           >
             <span style="color:#2563EB; font-size:16px; flex:none;"><LucideIcon name="info" /></span>
             <div style="font-size:12.5px; color:#2563EB; line-height:1.5;">
@@ -257,7 +255,7 @@ const year = new Date().getFullYear()
 
           <div
             v-if="error || localError"
-            style="display:flex; align-items:flex-start; gap:11px; background:#FEF2F2; border:1px solid #FECACA; border-radius:12px; padding:13px 15px; margin-bottom:18px;"
+            style="display:flex; align-items:flex-start; gap:11px; background:#FEF2F2; border:1px solid #FECACA; border-radius:8px; padding:13px 15px; margin-bottom:18px;"
           >
             <span style="color:#DC2626; font-size:16px; flex:none;"><LucideIcon name="x" /></span>
             <div style="font-size:12.5px; color:#B91C1C; line-height:1.5; word-break:break-word;">
@@ -276,7 +274,7 @@ const year = new Date().getFullYear()
               <button
                 type="button"
                 @click="goGoogle"
-                style="width:100%; height:48px; display:flex; align-items:center; justify-content:center; gap:10px; background:#fff; border:1px solid #E2E8F0; border-radius:12px; font-size:14.5px; font-weight:600; color:#0F172A; cursor:pointer; font-family:inherit;"
+                style="width:100%; height:48px; display:flex; align-items:center; justify-content:center; gap:10px; background:#fff; border:1px solid #E2E8F0; border-radius:8px; font-size:14.5px; font-weight:600; color:#0F172A; cursor:pointer; font-family:inherit;"
                 class="hv4"
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -289,7 +287,7 @@ const year = new Date().getFullYear()
               </button>
               <div style="display:flex; align-items:center; gap:14px; margin:22px 0;">
                 <div style="flex:1; height:1px; background:#EAEEF3;"></div>
-                <span style="font-size:12px; font-weight:600; color:#94A3B8; letter-spacing:.04em;">OR</span>
+                <span style="font-size:12px; font-weight:600; color:#94A0AE; letter-spacing:.04em;">OR</span>
                 <div style="flex:1; height:1px; background:#EAEEF3;"></div>
               </div>
             </template>
@@ -330,7 +328,7 @@ const year = new Date().getFullYear()
                     type="button"
                     :aria-label="showPassword ? 'Hide password' : 'Show password'"
                     @click="showPassword = !showPassword"
-                    style="position:absolute; right:6px; top:50%; transform:translateY(-50%); width:34px; height:34px; border:none; background:none; color:#94A3B8; font-size:17px; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:8px;"
+                    style="position:absolute; right:6px; top:50%; transform:translateY(-50%); width:34px; height:34px; border:none; background:none; color:#94A0AE; font-size:17px; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:8px;"
                     class="hv2"
                   >
                     <LucideIcon :name="showPassword ? 'eye-off' : 'eye'" />
@@ -343,7 +341,7 @@ const year = new Date().getFullYear()
                    flag, so a checkbox promising that would do nothing. This
                    remembers the identifier only, which it genuinely does. -->
               <label style="display:flex; align-items:center; gap:9px; font-size:13.5px; font-weight:600; color:#475569; cursor:pointer;">
-                <input type="checkbox" v-model="rememberEmail" style="width:16px; height:16px; accent-color:#16A34A;" />
+                <input type="checkbox" v-model="rememberEmail" style="width:16px; height:16px; accent-color:#0B3465;" />
                 Remember my email on this device
               </label>
 
@@ -380,11 +378,11 @@ const year = new Date().getFullYear()
                   gap: '12px',
                   padding: '16px 18px',
                   borderRadius: '13px',
-                  background: regResult.ok ? '#F0FDF4' : '#FFFBEB',
-                  border: `1px solid ${regResult.ok ? '#BBF7D0' : '#FDE68A'}`
+                  background: regResult.ok ? 'rgba(16,120,48,.1)' : '#FFFBEB',
+                  border: `1px solid ${regResult.ok ? 'rgba(16,120,48,.3)' : '#FDE68A'}`
                 }"
               >
-                <span :style="{ color: regResult.ok ? '#15803D' : '#B45309', fontSize: '18px', flex: 'none' }">
+                <span :style="{ color: regResult.ok ? '#107830' : '#B45309', fontSize: '18px', flex: 'none' }">
                   <LucideIcon :name="regResult.ok ? 'mail-check' : 'info'" />
                 </span>
                 <div :style="{ fontSize: '13.5px', lineHeight: '1.6', color: regResult.ok ? '#14532D' : '#78350F' }">
@@ -425,7 +423,7 @@ const year = new Date().getFullYear()
               </div>
 
               <label style="display:flex; align-items:flex-start; gap:9px; font-size:13px; font-weight:500; color:#64748B; cursor:pointer; line-height:1.55;">
-                <input type="checkbox" v-model="regTerms" style="width:16px; height:16px; margin-top:2px; accent-color:#16A34A;" />
+                <input type="checkbox" v-model="regTerms" style="width:16px; height:16px; margin-top:2px; accent-color:#0B3465;" />
                 <span>I agree to the Terms of Service and Privacy Policy.</span>
               </label>
 
@@ -433,7 +431,7 @@ const year = new Date().getFullYear()
                 {{ regBusy ? 'Creating…' : 'Create account' }}
               </button>
 
-              <div style="font-size:12.5px; color:#94A3B8; line-height:1.6;">
+              <div style="font-size:12.5px; color:#94A0AE; line-height:1.6;">
                 Your workspace administrator decides which company and role the account gets — those are set on the
                 Frappe user record after the address is verified.
               </div>
@@ -447,7 +445,7 @@ const year = new Date().getFullYear()
                 <LucideIcon name="arrow-left" /> Back to sign in
               </button>
               <div
-                style="width:46px; height:46px; border-radius:13px; background:#F0FDF4; color:#15803D; display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:16px;"
+                style="width:46px; height:46px; border-radius:8px; background:rgba(16,120,48,.1); color:#107830; display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:16px;"
               >
                 <LucideIcon name="key-round" />
               </div>
@@ -476,7 +474,7 @@ const year = new Date().getFullYear()
 
             <div v-else style="text-align:center;">
               <div
-                style="width:54px; height:54px; border-radius:16px; background:#DCFCE7; color:#15803D; display:flex; align-items:center; justify-content:center; font-size:26px; margin:0 auto 18px;"
+                style="width:54px; height:54px; border-radius:8px; background:rgba(16,120,48,.1); color:#107830; display:flex; align-items:center; justify-content:center; font-size:26px; margin:0 auto 18px;"
               >
                 <LucideIcon name="mail-check" />
               </div>
@@ -489,7 +487,7 @@ const year = new Date().getFullYear()
                    so it cannot be used to find out who has an account. Say so
                    rather than implying the mail definitely went out. -->
               <div
-                style="padding:16px 18px; border:1px solid #EAEEF3; background:#FCFDFE; border-radius:13px; font-size:13.5px; color:#64748B; line-height:1.65; text-align:left; margin-bottom:20px;"
+                style="padding:16px 18px; border:1px solid #EAEEF3; background:#FCFDFE; border-radius:8px; font-size:13.5px; color:#64748B; line-height:1.65; text-align:left; margin-bottom:20px;"
               >
                 {{ resetMessage || 'If that address is registered, the reset instructions are on their way.' }}
                 Nothing after a minute or two? Check spam, or confirm your administrator has invited that address to the
@@ -516,7 +514,7 @@ const year = new Date().getFullYear()
           </div>
 
           <div
-            style="margin-top:34px; padding-top:18px; border-top:1px solid #F1F5F9; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:12.5px; color:#94A3B8;"
+            style="margin-top:34px; padding-top:18px; border-top:1px solid #F1F5F9; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:12.5px; color:#94A0AE;"
           >
             <span>© {{ year }} {{ companyName }}</span>
             <span style="display:inline-flex; align-items:center; gap:6px;">
@@ -540,8 +538,8 @@ input:disabled {
 input:focus,
 select:focus {
   outline: none;
-  border-color: #16A34A;
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+  border-color: #0B3465;
+  box-shadow: 0 0 0 3px rgba(11, 52, 101, 0.12);
 }
 
 .auth-shell {

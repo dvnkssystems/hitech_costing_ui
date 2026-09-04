@@ -49,8 +49,8 @@ const cards = computed(() => {
       label: 'Quotations this month',
       value: s ? n(s.quotationsThisMonth) : '—',
       icon: 'file-text',
-      bg: '#F0FDF4',
-      fg: '#16A34A',
+      bg: 'rgba(16,120,48,.1)',
+      fg: '#107830',
       to: '/list/Quotation',
       note:
         !growth || growth.pct === null
@@ -59,7 +59,7 @@ const cards = computed(() => {
               text: `${growth.pct >= 0 ? '+' : ''}${growth.pct.toFixed(1)}%`,
               suffix: 'vs last month',
               icon: 'trending-up',
-              color: growth.pct >= 0 ? '#16A34A' : '#DC2626'
+              color: growth.pct >= 0 ? '#107830' : '#E63946'
             }
     },
     {
@@ -118,16 +118,16 @@ onMounted(load)
   <div style="padding:30px 36px 56px; margin:0 auto;">
     <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; margin-bottom:26px;">
       <div>
-        <div style="font-size:13px; color:#94A3B8; font-weight:600;">{{ todayLabel }}</div>
+        <div style="font-size:13px; color:#94A0AE; font-weight:600;">{{ todayLabel }}</div>
         <h1 style="margin:6px 0 0; font-size:28px; font-weight:800; letter-spacing:-.025em;">
           Welcome back, {{ greetingName }}
         </h1>
       </div>
       <div style="display:flex; gap:11px; flex-wrap:wrap; align-items:center;">
-        <span v-if="loading" style="font-size:13px; color:#94A3B8; font-weight:600;">Loading…</span>
+        <span v-if="loading" style="font-size:13px; color:#94A0AE; font-weight:600;">Loading…</span>
         <button
           @click="go('/quotation/new')"
-          style="display:flex; align-items:center; gap:8px; background:#16A34A; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(22, 163, 74, .28); font-family:inherit;"
+          style="display:flex; align-items:center; gap:8px; background:#0B3465; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(11, 52, 101, .28); font-family:inherit;"
           class="hv1"
         >
           <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Quotation
@@ -165,7 +165,7 @@ onMounted(load)
         v-for="card in cards"
         :key="card.label"
         @click="go(card.to)"
-        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:22px; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit; cursor:pointer;"
+        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:22px; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit; cursor:pointer;"
         class="hv3"
       >
         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -184,7 +184,7 @@ onMounted(load)
         >
           <span style="font-size:15px;"><LucideIcon :name="card.note.icon" /></span>
           {{ card.note.text }}
-          <span v-if="card.note.suffix" style="color:#94A3B8; font-weight:500;">{{ card.note.suffix }}</span>
+          <span v-if="card.note.suffix" style="color:#94A0AE; font-weight:500;">{{ card.note.suffix }}</span>
         </div>
       </button>
     </div>
@@ -192,10 +192,10 @@ onMounted(load)
     <!-- pipeline + recent quotations -->
     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:18px; align-items:start;">
       <!-- status pipeline -->
-      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:24px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:24px; box-shadow:0 1px 2px rgba(15,23,42,.04);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:8px;">
           <h2 style="font-size:16px; font-weight:700; margin:0;">Pipeline by status</h2>
-          <span style="font-size:13px; color:#94A3B8; font-weight:600;">{{ n(stats?.quotationPipelineTotal) }} total</span>
+          <span style="font-size:13px; color:#94A0AE; font-weight:600;">{{ n(stats?.quotationPipelineTotal) }} total</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:18px;">
           <div v-for="stage in pipeline" :key="stage.key">
@@ -211,7 +211,7 @@ onMounted(load)
       </div>
 
       <!-- recent quotations -->
-      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);">
+      <div style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04);">
         <div style="padding:20px 22px 4px; font-size:16px; font-weight:700;">Recent quotations</div>
         <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155; margin-top:8px;">
           <thead>
@@ -234,12 +234,12 @@ onMounted(load)
               <td style="padding:12px 22px;">{{ r.customer_name || r.party_name || '—' }}</td>
               <td style="padding:12px 22px;">
                 <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                <span v-else style="color:#94A3B8; font-size:13px;">—</span>
+                <span v-else style="color:#94A0AE; font-size:13px;">—</span>
               </td>
               <td style="padding:12px 22px; color:#64748B;">{{ r.modified ? formatDate(String(r.modified).slice(0, 10)) : '—' }}</td>
             </tr>
             <tr v-if="!recentQuotations.length">
-              <td colspan="4" style="padding:28px 22px; text-align:center; color:#94A3B8; font-size:13.5px; font-weight:600;">
+              <td colspan="4" style="padding:28px 22px; text-align:center; color:#94A0AE; font-size:13.5px; font-weight:600;">
                 No quotations yet.
               </td>
             </tr>
@@ -248,7 +248,7 @@ onMounted(load)
       </div>
     </div>
 
-    <p style="margin-top:22px; font-size:12px; color:#94A3B8; line-height:1.6;">
+    <p style="margin-top:22px; font-size:12px; color:#94A0AE; line-height:1.6;">
       Costing figures reflect whatever is in the DocType today. Every rate, band and multiplier behind
       them is seed data pending the real workbook — see the module's cost-model notes before quoting a
       real job off these numbers.

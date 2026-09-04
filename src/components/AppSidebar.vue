@@ -8,6 +8,7 @@ import { fetchSidebar } from '@/lib/sidebar'
 import { navItemStyle } from '@/utils/styles'
 import LucideIcon from './LucideIcon.vue'
 import SidebarNodes from './SidebarNodes.vue'
+import httLogo from '@/assets/brand/htt-logo.png'
 
 /**
  * Costing masters, hardcoded here rather than server-driven.
@@ -28,13 +29,14 @@ const MASTER_NAV = [
   { doctype: 'Material Rate', label: 'Material Rates', icon: 'coins' },
   { doctype: 'Paint Make', label: 'Paint Makes', icon: 'paintbrush' },
   { doctype: 'Paint System Rate', label: 'Paint System Rates', icon: 'palette' },
+  { doctype: 'DFT Range', label: 'DFT Ranges', icon: 'layers' },
   { doctype: 'Order Complexity Question', label: 'Complexity Questions', icon: 'list-checks' },
   { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' }
 ].map((m) => ({ ...m, route: `/list/${m.doctype}` }))
 const SETTINGS_NAV = { label: 'Costing Settings', icon: 'settings', route: '/form/Costing Settings/Costing Settings' }
 
 const route = useRoute()
-const { companyName, userName } = storeToRefs(useAppStore())
+const { userName } = storeToRefs(useAppStore())
 const session = useSessionStore()
 const { userImage } = storeToRefs(session)
 
@@ -68,7 +70,7 @@ const activeNav = computed(() => route.meta.nav)
 const masterHeaderStyle = {
   fontSize: '11px',
   fontWeight: '700',
-  color: '#94A3B8',
+  color: '#94A0AE',
   letterSpacing: '.08em',
   padding: '14px 10px 8px'
 }
@@ -102,17 +104,10 @@ const initials = computed(() =>
   <aside
     style="width:252px; flex:none; background:#fff; border-right:1px solid #EAEEF3; display:flex; flex-direction:column; height:100%;"
   >
-    <div style="padding:22px 20px 18px; display:flex; align-items:center; gap:11px;">
-      <div
-        style="width:38px; height:38px; border-radius:11px; background:#16A34A; display:flex; align-items:center; justify-content:center; color:#fff; font-size:21px; box-shadow:0 4px 12px rgba(22, 163, 74, .3);"
-      >
-        <LucideIcon name="calculator" />
-      </div>
-      <div>
-        <div style="font-size:16px; font-weight:800; letter-spacing:-.02em; line-height:1;">{{ companyName }}</div>
-        <div style="font-size:11px; color:#94A3B8; font-weight:600; letter-spacing:.06em; margin-top:3px;">
-          TANK &amp; RADIATOR COSTING
-        </div>
+    <div style="padding:20px 20px 16px; display:flex; flex-direction:column; gap:6px;">
+      <img :src="httLogo" alt="HTT Innovations" style="height:46px; width:auto; display:block;" />
+      <div style="font-size:11px; color:#94A0AE; font-weight:600; letter-spacing:.06em;">
+        TANK &amp; RADIATOR COSTING
       </div>
     </div>
 
@@ -122,7 +117,7 @@ const initials = computed(() =>
         margin: '0 14px 14px',
         padding: '13px',
         borderRadius: '13px',
-        background: activeNav === 'profile' ? '#F0FDF4' : '#F6F8FB',
+        background: activeNav === 'profile' ? '#E9EFF7' : '#F4F6F9',
         display: 'flex',
         alignItems: 'center',
         gap: '11px',
@@ -140,7 +135,7 @@ const initials = computed(() =>
       />
       <div
         v-else
-        style="width:38px; height:38px; border-radius:50%; background:#0F172A; color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; flex:none;"
+        style="width:38px; height:38px; border-radius:50%; background:#0E1B2B; color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; flex:none;"
       >
         {{ initials }}
       </div>
@@ -161,7 +156,7 @@ const initials = computed(() =>
     <nav style="padding:6px 14px; flex:1; overflow-y:auto;">
       <div
         v-if="sidebarError"
-        style="margin:14px 4px; padding:10px 12px; border-radius:10px; background:#FEF2F2; color:#B91C1C; font-size:12.5px; line-height:1.45;"
+        style="margin:14px 4px; padding:10px 12px; border-radius:10px; background:rgba(230,57,70,.1); color:#E63946; font-size:12.5px; line-height:1.45;"
       >
         {{ sidebarError }}
       </div>

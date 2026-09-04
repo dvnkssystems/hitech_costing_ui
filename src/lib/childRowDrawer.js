@@ -90,6 +90,11 @@ export function fetchRatingLabels(frm, questionId) {
   return ratingLabelCache.get(questionId)
 }
 
+/** `Order Complexity Question.unit`'s real Select options — `""`, `"text"`,
+ *  `"%"` and `"no"` (see the DocType JSON). The numeric-band ones, grouped
+ *  for the two places below that treat them alike. */
+export const NUMERIC_UNITS = ['%', 'no']
+
 /**
  * Parse a `rating_N_label` into a numeric band, for the `%`/`no` unit
  * questions (No of components, In-house execution %, Scrap generation %) —
@@ -319,7 +324,7 @@ export function installActualValueSync(root, getFrm) {
     if (doctype !== 'Costing Worksheet Complexity Rating') return
 
     const row = frm.doc?.[fieldname]?.[indexOfRow(tr)]
-    if (!row || !['%', 'no'].includes(row.unit)) return
+    if (!row || !NUMERIC_UNITS.includes(row.unit)) return
 
     const labels = await fetchRatingLabels(frm, row.question)
     const matched = matchRatingScore(row.actual_value, labels)
@@ -334,4 +339,160 @@ export function installActualValueSync(root, getFrm) {
     root.removeEventListener('input', onEdit)
     root.removeEventListener('change', onEdit)
   }
+}
+
+/* ── Actual-value column: shape by unit ──────────────────────────────────── */
+
+/** Marks the `<select>` this module injects in place of the SDK's own numeric
+ *  input, so the mutation observer below can tell its own writes apart from
+ *  ones worth reacting to (same idea as `INJECTED_ATTR` above). */
+const UNIT_SELECT_ATTR = 'data-unit-select'
+/** Class toggled on the `label.control` cell for a `percentage` row, purely
+ *  for the `%` suffix in `frappe-form.css` — no behavioural meaning. */
+const UNIT_PERCENT_CLASS = 'unit-percentage'
+
+/**
+ * Shapes the grid's own "Actual Value" cell to match each row's `unit`,
+ * instead of the one plain numeric box the SDK renders for every row alike
+ * (`Costing Worksheet Complexity Rating.actual_value` is a single field with
+ * a single fieldtype in its DocType — the grid has no per-row hook to vary
+ * the control it picks by a sibling field's value):
+ *
+ *  - `text` rows (RM availability, Welding Process…) are answered by picking
+ *    one of the question's three Rating Labels, not typing a number — a
+ *    `<select>` of that row's own labels replaces the numeric box. Picking
+ *    one writes the label text to `actual_value` (same field, same
+ *    `set_value` path any other control uses) and the matching score to
+ *    `rating`, the same pairing `ChildRowDrawer.vue`'s picker buttons write.
+ *  - `percentage` rows keep the numeric box but bound it to 0–100 and mark it
+ *    with a `%` suffix, so a percentage can't be typed as e.g. 500.
+ *  - `number` rows (and anything unrecognised) are left exactly as the SDK
+ *    renders them.
+ *
+ * DOM augmentation for the same reason `installRowDrawer` is (see the module
+ * doc comment): `ControlTable` is not exported, so there is nothing to
+ * subclass or wrap — only its rendered output to adjust after the fact.
+ *
+ * Returns a teardown function; call it on unmount.
+ */
+export function installActualValueUnitControl(root, getFrm) {
+  if (!root || typeof MutationObserver === 'undefined') return () => {}
+
+  async function syncCell(label) {
+    const tr = label.closest('tr')
+    const table = label.closest(TABLE_SELECTOR)
+    if (!tr || !table) return
+
+    const frm = typeof getFrm === 'function' ? getFrm() : getFrm
+    const fieldname = table.dataset.fieldname
+    const doctype = frm?.fields_dict?.[fieldname]?.df?.options
+    if (doctype !== 'Costing Worksheet Complexity Rating') return
+
+    const row = frm.doc?.[fieldname]?.[indexOfRow(tr)]
+    const input = label.querySelector('input')
+    if (!row || !input) return
+
+    if (row.unit !== 'text') {
+      label.querySelector(`select[${UNIT_SELECT_ATTR}]`)?.remove()
+      input.style.display = ''
+      label.classList.toggle(UNIT_PERCENT_CLASS, row.unit === '%')
+      if (row.unit === '%') {
+        input.min = '0'
+        input.max = '100'
+      }
+      return
+    }
+
+    label.classList.remove(UNIT_PERCENT_CLASS)
+    const labels = await fetchRatingLabels(frm, row.question)
+    const options = [1, 2, 3]
+      .map((n) => ({ n, text: labels?.[`rating_${n}_label`] }))
+      .filter((o) => o.text)
+    // No parseable labels (question not yet resolved, or a mis-set row) —
+    // fall back to the plain numeric box rather than an empty dropdown.
+    if (!options.length) {
+      label.querySelector(`select[${UNIT_SELECT_ATTR}]`)?.remove()
+      input.style.display = ''
+      return
+    }
+
+    input.style.display = 'none'
+    // Re-query rather than reuse a pre-`await` snapshot: `sync()` can run
+    // again (another mutation batch) while this same cell's `syncCell` is
+    // still awaiting `fetchRatingLabels` above, and a stale `existingSelect`
+    // captured before the await would race that second call into appending
+    // its own `<select>` alongside it — the "select shows up multiple times"
+    // bug. Querying fresh here means whichever call runs its synchronous
+    // continuation first (microtasks never interleave) is the one and only
+    // one that creates the element; the other finds it and reuses it.
+    let select = label.querySelector(`select[${UNIT_SELECT_ATTR}]`)
+    if (!select) {
+      select = document.createElement('select')
+      select.setAttribute(UNIT_SELECT_ATTR, '')
+      select.addEventListener('change', (event) => {
+        // Read the chosen `<option>` itself rather than re-matching
+        // `event.target.value` against the `options` array this closure was
+        // created with — that array is a snapshot from whenever THIS select
+        // was first built, and options are only rebuilt (see below) when
+        // `select.dataset.optionsFor` goes stale, which a listener attached
+        // once at creation would never see.
+        const chosen = event.target.selectedOptions[0]
+        if (!chosen || !chosen.value) return
+        // Re-resolve `frm`/`row` here rather than close over the `frm`/`row`
+        // this listener was created with: `calculate()`'s own recalculation
+        // (triggered by every pick, via the `rating` field's native-script
+        // handler) round-trips through the backend and comes back with a
+        // freshly rebuilt `complexity_ratings` array — new row objects, same
+        // `row.name`s, so Vue keeps this exact `<select>` (and its listener)
+        // mounted via its `:key`, but the *row object* the very first pick's
+        // listener closed over is now a detached copy nothing reads from
+        // anymore. Writing to it "worked" (no error, `select.value` even
+        // updates), but `calculate()` reruns against the LIVE array, which
+        // never saw the write — so Score/Result/Criticality silently stop
+        // updating from the second pick onward. Resolving fresh each time,
+        // the same way the grid's plain-number sync and the drawer's own
+        // picker already do, means there is never a stale row to write into.
+        const currentFrm = typeof getFrm === 'function' ? getFrm() : getFrm
+        const currentRow = currentFrm?.doc?.[fieldname]?.[indexOfRow(tr)]
+        if (!currentRow) return
+        select.dataset.pendingRating = chosen.value
+        rowFrmFor(currentFrm, fieldname, currentRow).set_value({ actual_value: chosen.text, rating: chosen.value })
+      })
+      label.appendChild(select)
+    }
+    if (select.dataset.optionsFor !== String(row.question)) {
+      const placeholder = new Option('Select…', '', true, true)
+      placeholder.disabled = true
+      select.replaceChildren(placeholder, ...options.map((o) => new Option(o.text, String(o.n))))
+      select.dataset.optionsFor = String(row.question)
+    }
+    const settledRating = row.rating ? String(row.rating) : ''
+    if (select.dataset.pendingRating) {
+      if (select.dataset.pendingRating === settledRating) delete select.dataset.pendingRating
+      else if (select.value === select.dataset.pendingRating) return
+    }
+    if (select.value !== settledRating) select.value = settledRating
+  }
+
+  function sync() {
+    for (const label of root.querySelectorAll(ACTUAL_VALUE_SELECTOR)) syncCell(label)
+  }
+
+  const observer = new MutationObserver((records) => {
+    const relevant = records.some((record) => {
+      // `replaceChildren()` above populating its own `<option>`s is this
+      // module's own write, keyed on its `<select>` parent rather than the
+      // `<option>` nodes themselves (which don't carry `UNIT_SELECT_ATTR`) —
+      // without this, every populate re-triggers `sync()`, which re-awaits
+      // `fetchRatingLabels` for every cell again on the same tick.
+      if (record.target?.nodeType === 1 && record.target.hasAttribute?.(UNIT_SELECT_ATTR)) return false
+      return [...record.addedNodes].some((node) => !(node.nodeType === 1 && node.hasAttribute?.(UNIT_SELECT_ATTR)))
+    })
+    if (relevant) sync()
+  })
+  observer.observe(root, { childList: true, subtree: true })
+
+  sync()
+
+  return () => observer.disconnect()
 }

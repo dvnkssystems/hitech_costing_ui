@@ -173,13 +173,13 @@ watch([() => props.doctype, () => props.name], load)
 <template>
   <div style="padding:30px 36px 80px; margin:0 auto;">
     <div
-      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
+      style="font-size:13px; color:#94A0AE; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
     >
       <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
       <RouterLink :to="listRouteFor(doctype)" style="color:#64748B;">{{ doctype }}</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#16A34A;">{{ name || 'New' }}</span>
+      <span style="color:#0B3465;">{{ name || 'New' }}</span>
     </div>
 
     <div
@@ -234,7 +234,7 @@ watch([() => props.doctype, () => props.name], load)
 
     <div
       v-if="loading"
-      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:48px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:48px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;"
     >
       Loading form…
     </div>
@@ -249,7 +249,7 @@ watch([() => props.doctype, () => props.name], load)
       <div ref="formEl">
         <form class="frappe-form" @submit.prevent>
           <div
-            style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:8px 20px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
+            style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:8px 20px; margin-bottom:18px; box-shadow:0 1px 2px rgba(15,23,42,.04);"
           >
             <FormToolbar :frm="frm" @error="error = $event" @duplicate="onDuplicate" />
           </div>

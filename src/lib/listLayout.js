@@ -126,8 +126,8 @@ export const orderByFor = (layout) =>
  * today still matches the app after a restyle.
  */
 const BADGE_COLORS = {
-  green: { bg: '#DCFCE7', fg: '#15803D' },
-  red: { bg: '#FEE2E2', fg: '#B91C1C' },
+  green: { bg: 'rgba(16,120,48,.1)', fg: '#107830' },
+  red: { bg: 'rgba(230,57,70,.1)', fg: '#E63946' },
   amber: { bg: '#FEF3C7', fg: '#B45309' },
   blue: { bg: '#DBEAFE', fg: '#1D4ED8' },
   grey: { bg: '#F1F5F9', fg: '#475569' }

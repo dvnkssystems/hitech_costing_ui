@@ -33,6 +33,7 @@ const loading = ref(true)
 const error = ref('')
 const doc = ref(null)
 const worksheets = ref([])
+const termOptions = ref([])
 
 const WORKSHEET_FIELDS = ['name', 'status', 'tank_type', 'total_deal_value']
 
@@ -112,8 +113,12 @@ const addressRows = computed(() => {
 
 const termsRows = computed(() => {
   if (!doc.value) return []
-  const selected = (doc.value.hitech_quotation_terms ?? []).filter((t) => t.selected)
-  const rows = [row('Terms selected', selected.length ? `${selected.length} of ${(doc.value.hitech_quotation_terms ?? []).length}` : null)]
+  const all = doc.value.hitech_quotation_terms ?? []
+  const selected = all.filter((t) => t.selected)
+  const textByTerm = new Map(termOptions.value.map((o) => [o.name, o.term_text]))
+  const selectedTexts = selected.map((t) => textByTerm.get(t.term) ?? t.term)
+  const rows = [row('Terms selected', selected.length ? `${selected.length} of ${all.length}` : null)]
+  if (selectedTexts.length) rows.push(row('Selected terms', selectedTexts.join('; ')))
   rows.push(row('Notes', doc.value.hitech_terms_notes))
   return rows.filter(Boolean)
 })
@@ -140,16 +145,18 @@ async function load() {
   }
 
   try {
-    const [d, w] = await Promise.all([
+    const [d, w, t] = await Promise.all([
       db.get_doc('Quotation', props.name),
       db.get_list('Costing Worksheet', {
         filters: { quotation: props.name },
         fields: WORKSHEET_FIELDS,
         limit_page_length: 0
-      })
+      }),
+      db.get_list('Quotation Term', { fields: ['name', 'term_text'], limit_page_length: 0 })
     ])
     doc.value = d
     worksheets.value = w ?? []
+    termOptions.value = t ?? []
   } catch (e) {
     error.value = e?.message ?? String(e)
   } finally {
@@ -168,13 +175,13 @@ watch(() => props.name, load)
 <template>
   <div style="padding:32px 40px 80px; margin:0 auto; max-width:1200px;">
     <div
-      style="font-size:13px; color:#94A3B8; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
+      style="font-size:13px; color:#94A0AE; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;"
     >
       <RouterLink to="/" style="color:#64748B;">Dashboard</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
       <RouterLink :to="listRouteFor('Quotation')" style="color:#64748B;">Quotation</RouterLink>
       <span style="font-size:13px;"><LucideIcon name="chevron-right" /></span>
-      <span style="color:#16A34A;">{{ name }}</span>
+      <span style="color:#0B3465;">{{ name }}</span>
     </div>
 
     <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px; flex-wrap:wrap;">
@@ -218,7 +225,7 @@ watch(() => props.name, load)
 
     <div
       v-if="loading"
-      style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:48px; text-align:center; color:#94A3B8; font-size:14px; font-weight:600;"
+      style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:48px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;"
     >
       Loading…
     </div>
@@ -226,7 +233,7 @@ watch(() => props.name, load)
     <template v-if="doc">
       <!-- Approval — one card per linked Costing Worksheet's own real status. -->
       <div v-if="worksheets.length" style="margin-bottom:18px;">
-        <div style="font-size:12px; font-weight:700; color:#94A3B8; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px;">
+        <div style="font-size:12px; font-weight:700; color:#94A0AE; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px;">
           Costing approval
         </div>
         <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px;">
@@ -234,7 +241,7 @@ watch(() => props.name, load)
             v-for="w in worksheets"
             :key="w.name"
             :to="formRouteFor('Costing Worksheet', w.name)"
-            style="background:#fff; border:1px solid #EAEEF3; border-radius:14px; padding:16px 18px; text-decoration:none; color:inherit; display:block;"
+            style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:16px 18px; text-decoration:none; color:inherit; display:block;"
             class="hv4"
           >
             <div style="font-size:13px; font-weight:700; color:#0F172A;">{{ w.name }}</div>
@@ -245,7 +252,7 @@ watch(() => props.name, load)
       </div>
 
       <!-- Items -->
-      <div v-if="itemRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
+      <div v-if="itemRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
         <div style="padding:16px 20px 4px; font-size:18px; font-weight:800; color:#0F172A;">Items</div>
         <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155;">
           <thead>
@@ -269,7 +276,7 @@ watch(() => props.name, load)
         </table>
       </div>
 
-      <div v-if="taxRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
+      <div v-if="taxRows.length" style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:18px;">
         <div style="padding:16px 20px 4px; font-size:18px; font-weight:800; color:#0F172A;">Taxes &amp; charges</div>
         <table style="width:100%; border-collapse:collapse; font-size:14px; color:#334155;">
           <thead>
@@ -289,14 +296,14 @@ watch(() => props.name, load)
         </table>
       </div>
 
-      <div v-for="sec in sections" :key="sec.key" style="background:#fff; border:1px solid #EAEEF3; border-radius:16px; padding:18px 20px; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:14px;">
+      <div v-for="sec in sections" :key="sec.key" style="background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:18px 20px; box-shadow:0 2px 8px rgba(38,38,38,.06); margin-bottom:14px;">
         <div style="display:flex; align-items:baseline; gap:12px; border-bottom:1px solid #EAEEF3; padding-bottom:10px;">
-          <span style="font-size:13px; font-weight:600; color:#16A34A; font-variant-numeric:tabular-nums;">{{ sec.n }}</span>
+          <span style="font-size:13px; font-weight:600; color:#0B3465; font-variant-numeric:tabular-nums;">{{ sec.n }}</span>
           <span style="font-size:18px; font-weight:800; color:#0F172A;">{{ sec.title }}</span>
         </div>
         <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px 22px; margin-top:14px;">
           <div v-for="r in sec.rows" :key="r.label" style="display:flex; flex-direction:column; gap:2px; min-width:0;">
-            <span style="font-size:12px; font-weight:600; color:#94A3B8;">{{ r.label }}</span>
+            <span style="font-size:12px; font-weight:600; color:#94A0AE;">{{ r.label }}</span>
             <span style="font-size:15px; color:#0F172A; overflow-wrap:anywhere;">{{ r.value }}</span>
           </div>
         </div>
@@ -315,7 +322,7 @@ watch(() => props.name, load)
           type="button"
           disabled
           title="Not available yet"
-          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#94A3B8; cursor:not-allowed; font-family:inherit;"
+          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#94A0AE; cursor:not-allowed; font-family:inherit;"
         >
           <LucideIcon name="mail" /> Email — coming soon
         </button>

@@ -46,6 +46,8 @@ import {
   COMMERCIALS_STEP_INDEX,
   stepIsComplete,
   volumesSplitError,
+  pureMarginError,
+  MIN_PURE_MARGIN_PERCENT,
   taxBasisLabel,
   computeTaxRow
 } from '@/lib/costingWorksheetWizard'
@@ -53,7 +55,7 @@ import { call, metaFetcher, hasBackend } from '@/lib/frappe'
 import { db } from '@/lib/frappeDb'
 import { installFormEnhancements } from '@/lib/formEnhance'
 import { installRouting, renderTextEditorsAsHtml, listRouteFor } from '@/lib/frappeRouting'
-import { nativeClientScripts } from '@/lib/clientScripts'
+import { nativeClientScripts, flt } from '@/lib/clientScripts'
 import {
   coerceTableFields,
   hideEmptyReadOnlyFields,
@@ -62,7 +64,7 @@ import {
   installWorkflowActions
 } from '@/lib/frmCompat'
 import { installDeskApis, installAmend, takePendingDoc } from '@/lib/mappedDoc'
-import { money, decimal, formatDate } from '@/utils/format'
+import { money, decimal, formatDate, moneyInWords } from '@/utils/format'
 
 const DOCTYPE = 'Costing Worksheet'
 const HEADER_DOCTYPE = 'Quotation'
@@ -146,15 +148,22 @@ function pageNext() {
 const heading = computed(() => {
   if (quotationName.value) return quotationName.value
   if (props.name) return props.name
-  return 'New Costing Worksheet'
+  // No worksheet name yet and nothing mapped to a Quotation yet either — this
+  // is the brand-new front door reached from `/quotation/new`, so it should
+  // read like the Quotation it's about to become, not the Costing Worksheet
+  // record backing it.
+  return 'New Quotation'
 })
 
 /** The breadcrumb's middle crumb follows the same identity `heading` does:
  *  once an item has been mapped to a Quotation, `heading` shows that
  *  Quotation's name, not the Costing Worksheet's own — the crumb linking
  *  back to "Costing Worksheet" at that point would be pointing at the wrong
- *  list for what's actually on screen. */
-const crumbDoctype = computed(() => (quotationName.value ? 'Quotation' : 'Costing Worksheet'))
+ *  list for what's actually on screen. Same reasoning for a brand-new,
+ *  unnamed worksheet (`heading` above already reads "New Quotation" there);
+ *  only a resumed, already-named worksheet (`props.name`) keeps its own
+ *  "Costing Worksheet" identity. */
+const crumbDoctype = computed(() => (quotationName.value || !props.name ? 'Quotation' : 'Costing Worksheet'))
 
 const saveState = computed(() => {
   if (submitPhase.value === 'done' || (submitPhase.value === 'idle' && allSucceeded.value)) {
@@ -213,7 +222,13 @@ const taxReviewRows = computed(() => {
   return rows
 })
 const termsReviewRows = computed(() => {
-  const rows = [{ label: 'Terms selected', value: `${termsSelectedCount.value} of ${termChecklist.value.length}` }]
+  const selectedTexts = termChecklist.value.filter((t) => t.row?.selected).map((t) => t.text)
+  const rows = [{ label: 'Terms selected', value: `${selectedTexts.length} of ${termChecklist.value.length}` }]
+  // A checklist reads as a wall of semicolon-joined text once flattened to one
+  // string — render it as the same checked-item list the Terms & Conditions
+  // step itself uses instead. `list` (not `value`) signals the template to
+  // branch into that layout.
+  if (selectedTexts.length) rows.push({ label: 'Selected terms', list: selectedTexts })
   return rows.concat(sectionRows(quotationHeaderFrm.value, TERMS_FIELDS))
 })
 
@@ -343,6 +358,18 @@ const taxRows = computed(() =>
 )
 const taxTotalRaw = computed(() => taxRows.value.reduce((sum, r) => sum + r.amount, 0))
 
+/** Client-side preview of the real Quotation's own Grand Total / Rounding /
+ *  In Words fields — no real Quotation exists yet at this point for a
+ *  brand-new wizard run, so these mirror ERPNext's own math (grand total =
+ *  net total + taxes; rounded total = nearest rupee unless disabled; rounding
+ *  adjustment = the difference) against the client-side `taxRows` above,
+ *  rather than reading server-computed fields. */
+const grandTotalRaw = computed(() => taxableValue.value + taxTotalRaw.value)
+const disableRoundedTotal = computed(() => Boolean(quotationHeaderFrm.value?.doc?.disable_rounded_total))
+const roundedTotalRaw = computed(() => (disableRoundedTotal.value ? grandTotalRaw.value : Math.round(grandTotalRaw.value)))
+const roundingAdjustmentRaw = computed(() => roundedTotalRaw.value - grandTotalRaw.value)
+const totalsInWords = computed(() => moneyInWords(roundedTotalRaw.value))
+
 /* ── Terms & Conditions step ─────────────────────────────────────────────── */
 
 const termOptions = ref([])
@@ -471,7 +498,8 @@ function derivedRows(frm, fieldnames) {
     .map((fieldname) => {
       const df = frm.fields_dict?.[fieldname]?.df
       if (!df) return null
-      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]) }
+      const low = fieldname === 'pure_margin_percent' && Number(frm.doc?.[fieldname] ?? 0) < MIN_PURE_MARGIN_PERCENT
+      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]), low }
     })
     .filter(Boolean)
 }
@@ -612,8 +640,21 @@ function makeItem(frm, key) {
 async function addItem(seedDoc) {
   const key = uid()
   const shared = orderFrm.value ? pick(orderFrm.value.doc, SHARED_FIELDNAMES) : {}
-  const initialDoc = { doctype: DOCTYPE, name: `New Costing Worksheet (${key})`, ...shared, ...(seedDoc ?? {}) }
+  const initialDoc = { doctype: DOCTYPE, name: `New Costing Worksheet (${key})`, ...shared }
   const frm = await bootFrm(DOCTYPE, { initialDoc, scripts: itemScripts(DOCTYPE) })
+  // `seedDoc` goes through `set_value`, not the `initialDoc` merge above:
+  // `boot-frm.ts` builds a new doc as a plain object merge
+  // (`{ ...defaults, ...initialDoc }`), which lands the raw value on
+  // `frm.doc` but never runs the field's own change trigger — exactly the
+  // "silently no-ops forever" trap `bootFrm()`'s own comment on `docstatus`
+  // describes. Tank Type's trigger is what derives Facility/Labour Rate for
+  // this step, so seeding it that way leaves those blank until the estimator
+  // re-touches the field by hand. `applyMappedDoc` in mappedDoc.js hits the
+  // same trap and already solves it the same way.
+  for (const [fieldname, value] of Object.entries(seedDoc ?? {})) {
+    if (fieldname === 'doctype' || fieldname === 'name') continue
+    await frm.set_value(fieldname, value)
+  }
   const item = makeItem(frm, key)
   items.value = [...items.value, item]
   activeItemKey.value = item.key
@@ -773,12 +814,53 @@ function markSaved(frm) {
   frm.doc.__unsaved = 0
 }
 
+/** Index of the Complexity step — the one place a "Load default questions"
+ *  auto-trigger below cares which step it just landed on. */
+const COMPLEXITY_STEP_INDEX = ITEM_STEPS.findIndex((s) => s.key === 'complexity')
+
+/** Complexity Ratings starts empty for every new item, and every item uses
+ *  the same default question set — so load it automatically the first time
+ *  an item reaches this step, rather than making the estimator find and
+ *  click a button for what's never actually a choice. Skipped once rows
+ *  already exist (a resumed, already-scored item) so this never clobbers
+ *  real answers. */
+function autoLoadComplexityQuestions(item) {
+  if (!item || item.activeStepIndex !== COMPLEXITY_STEP_INDEX) return
+  if (item.frm.doc?.complexity_ratings?.length) return
+  loadComplexityQuestions()
+}
+
+/** Deal Price - FG starts at 0 for every new item; default it to the item's
+ *  own built-up cost (Total FG Cost (INR/kg)) the first time Commercials is
+ *  reached, so margin starts at 0% and the estimator adjusts the price up
+ *  from cost instead of typing one in from scratch. Skipped once a price is
+ *  already set, so revisiting this step never overwrites a real entry.
+ *
+ *  `total_fg_cost_inr_kg` is the end of a chain of client-side divisions
+ *  (rate-per-kg math throughout the costing sheet), so it routinely carries
+ *  IEEE-754 noise out past a dozen digits (`1208.68864223999999`) — invisible
+ *  everywhere else because every other display goes through `money()`'s
+ *  rounding, but this is a straight `set_value` into a *live, editable*
+ *  Currency field, whose input shows the raw doc value verbatim. `flt(…, 2)`
+ *  (Frappe's own float-round, same as the Currency fieldtype's own default
+ *  precision) is what the real desk form's Currency control applies before
+ *  ever displaying a value — do the same here before it ever reaches the field. */
+function autoPrefillDealPrice(item) {
+  if (!item || item.activeStepIndex !== COMMERCIALS_STEP_INDEX) return
+  const doc = item.frm.doc
+  if (Number(doc.deal_price_fg_inr_per_kg) > 0) return
+  const cost = flt(doc.total_fg_cost_inr_kg, 2)
+  if (cost > 0) item.frm.set_value('deal_price_fg_inr_per_kg', cost)
+}
+
 function goToItemStep(i) {
   const item = activeItem.value
   if (!item || i === item.activeStepIndex) return
   if (i > item.activeStepIndex && !item.unlockedSteps.has(i)) return
   item.stepError = ''
   item.activeStepIndex = i
+  autoLoadComplexityQuestions(item)
+  autoPrefillDealPrice(item)
 }
 function itemBack() {
   const item = activeItem.value
@@ -803,6 +885,13 @@ async function itemNext() {
       return
     }
   }
+  if (step.key === 'commercials') {
+    const marginError = pureMarginError(item.frm)
+    if (marginError) {
+      item.stepError = marginError
+      return
+    }
+  }
 
   if (item.activeStepIndex === COMMERCIALS_STEP_INDEX) {
     item.saving = true
@@ -816,12 +905,15 @@ async function itemNext() {
       return
     }
     item.saving = false
-    return // last item step — "Save item" only, no auto-advance anywhere
+    pageNext() // last item step — saving it also advances off the Costing Sheet page
+    return
   }
 
   const nextIndex = item.activeStepIndex + 1
   item.unlockedSteps = new Set(item.unlockedSteps).add(nextIndex)
   item.activeStepIndex = nextIndex
+  autoLoadComplexityQuestions(item)
+  autoPrefillDealPrice(item)
 }
 
 /** The native client script's own buttons — reused rather than reimplemented. */
@@ -1035,9 +1127,6 @@ watch(() => props.quotation, load)
                       <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
                         <WizardStep :frm="activeItem.frm" :fields="step.fields" read-only-filter="exclude" />
                         <div v-if="step.key === 'complexity'" class="qw-step-actions">
-                          <button type="button" @click="loadComplexityQuestions" class="qw-ghost-btn">
-                            Load default questions
-                          </button>
                           <button type="button" @click="recalculate" class="qw-ghost-btn">Recalculate</button>
                         </div>
                       </fieldset>
@@ -1049,9 +1138,10 @@ watch(() => props.quotation, load)
                   <div class="qw-derived__eyebrow">Calculated</div>
                   <div class="qw-derived__hint">Recalculates live as you edit this step's fields.</div>
                   <div class="qw-derived__rows">
-                    <div v-for="row in activeItemDerivedRows" :key="row.label" class="qw-derived__row">
+                    <div v-for="row in activeItemDerivedRows" :key="row.label" class="qw-derived__row" :class="{ 'qw-derived__row--low': row.low }">
                       <span class="qw-derived__k">{{ row.label }}</span>
                       <span class="qw-derived__v">{{ row.value }}</span>
+                      <span v-if="row.low" class="qw-derived__warning">Below the {{ MIN_PURE_MARGIN_PERCENT }}% minimum</span>
                     </div>
                   </div>
                 </aside>
@@ -1186,31 +1276,58 @@ watch(() => props.quotation, load)
             <p v-if="quotationName" class="qw-step-lede">
               Editing taxes on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <WizardStep :frm="quotationHeaderFrm" :fields="TAX_FIELDS" read-only-filter="exclude" />
+            <WizardStep :frm="quotationHeaderFrm" :fields="['taxes_and_charges']" read-only-filter="exclude" />
             <div v-if="taxTemplateError" class="qw-step-error">{{ taxTemplateError }}</div>
             <p v-else-if="taxTemplateLoading" class="qw-step-lede" style="margin-top: 18px;">Loading tax template…</p>
-            <template v-else-if="taxRows.length">
-              <table class="qw-quotation-items" style="margin-top: 18px;">
-                <thead>
-                  <tr>
-                    <th>Charge</th>
-                    <th>Rate</th>
-                    <th>On</th>
-                    <th>Amount ₹</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in taxRows" :key="row.key">
-                    <td>{{ row.label }}</td>
-                    <td>{{ row.rate }} %</td>
-                    <td>{{ row.basis }}</td>
-                    <td>{{ money(row.amount) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <p class="qw-step-lede" style="margin-top: 14px;">
-                Charges compute on the taxable value — item amount less discount (set in Address & Delivery).
-              </p>
+            <template v-else>
+              <template v-if="taxRows.length">
+                <table class="qw-quotation-items" style="margin-top: 18px;">
+                  <thead>
+                    <tr>
+                      <th>Charge</th>
+                      <th>Rate</th>
+                      <th>On</th>
+                      <th>Amount ₹</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in taxRows" :key="row.key">
+                      <td>{{ row.label }}</td>
+                      <td>{{ row.rate }} %</td>
+                      <td>{{ row.basis }}</td>
+                      <td>{{ money(row.amount) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p class="qw-step-lede" style="margin-top: 14px;">
+                  Charges compute on the taxable value — item amount less discount (set in Address & Delivery).
+                </p>
+              </template>
+              <div class="qw-totals-grid" style="margin-top: 18px;">
+                <div class="qw-totals-box">
+                  <span class="qw-totals-box__k">Total Taxes and Charges (INR)</span>
+                  <span class="qw-totals-box__v">{{ money(taxTotalRaw) }}</span>
+                </div>
+                <div class="qw-totals-box">
+                  <span class="qw-totals-box__k">Grand Total (INR)</span>
+                  <span class="qw-totals-box__v">{{ money(grandTotalRaw) }}</span>
+                </div>
+                <div v-if="!disableRoundedTotal" class="qw-totals-box">
+                  <span class="qw-totals-box__k">Rounding Adjustment (INR)</span>
+                  <span class="qw-totals-box__v">{{ money(roundingAdjustmentRaw) }}</span>
+                </div>
+                <div class="qw-totals-box">
+                  <span class="qw-totals-box__k">Rounded Total (INR)</span>
+                  <span class="qw-totals-box__v">{{ money(roundedTotalRaw) }}</span>
+                </div>
+              </div>
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="['disable_rounded_total']"
+                read-only-filter="exclude"
+                style="margin-top: 12px;"
+              />
+              <p class="qw-step-lede" style="margin-top: 10px;"><strong>In Words:</strong> {{ totalsInWords }}</p>
             </template>
             <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
               <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
@@ -1291,9 +1408,20 @@ watch(() => props.quotation, load)
               <button type="button" class="qw-review-card__edit" @click="activePageStep = sec.key">Edit section</button>
             </div>
             <div class="qw-review-card__rows">
-              <div v-for="row in sec.rows" :key="row.label" class="qw-review-card__row">
+              <div
+                v-for="row in sec.rows"
+                :key="row.label"
+                class="qw-review-card__row"
+                :class="{ 'qw-review-card__row--full': row.list }"
+              >
                 <span class="qw-review-card__k">{{ row.label }}</span>
-                <span class="qw-review-card__v">{{ row.value }}</span>
+                <span v-if="!row.list" class="qw-review-card__v">{{ row.value }}</span>
+                <ul v-else class="qw-review-terms-list">
+                  <li v-for="(text, i) in row.list" :key="i" class="qw-review-terms-list__item">
+                    <LucideIcon name="check" />
+                    <span>{{ text }}</span>
+                  </li>
+                </ul>
               </div>
             </div>
           </div>
@@ -1372,23 +1500,22 @@ watch(() => props.quotation, load)
 </template>
 
 <style scoped>
-/* Quotation-Wizard visual design (Nunito / IBM Plex Mono, green-on-cream
-   palette), scoped to this page only — the rest of the app keeps its
-   Manrope/Raleway / green theme, using its own tokens below. See index.html
-   for the font links and frappe-form.css for the SDK-control tokens re-tinted
-   below. */
+/* Hi-Tech Radiators brandbook (Raleway / IBM Plex Mono, navy-on-canvas
+   palette), scoped to this page only — see src/assets/brand.css for the
+   shared tokens this mirrors, and frappe-form.css for the SDK-control
+   tokens re-tinted the same way. */
 .qw-wizard {
-  --qw-primary: #16A34A;
-  --qw-primary-dark: #15803D;
-  --qw-primary-hover: #15803D;
-  --qw-primary-tint: #DCFCE7;
-  --qw-border: #e4dcd6;
-  --qw-row-border: #f2ede9;
-  --qw-text: #1c1714;
-  --qw-body: #3a322d;
-  --qw-muted: #6e635b;
-  --qw-faint: #a79c94;
-  font-family: 'Nunito', system-ui, sans-serif;
+  --qw-primary: #0B3465;
+  --qw-primary-dark: #0B3465;
+  --qw-primary-hover: #0E4079;
+  --qw-primary-tint: #E9EFF7;
+  --qw-border: #D7DEE8;
+  --qw-row-border: #EDF1F6;
+  --qw-text: #0E1B2B;
+  --qw-body: #33414F;
+  --qw-muted: #5E6B7A;
+  --qw-faint: #94A0AE;
+  font-family: 'Raleway', system-ui, sans-serif;
   color: var(--qw-body);
   padding: 30px 36px 80px;
   margin: 0 auto;
@@ -1420,7 +1547,7 @@ watch(() => props.quotation, load)
 
 .qw-heading {
   margin: 0 0 22px;
-  font: 900 32px/1.15 'Nunito', system-ui, sans-serif;
+  font: 900 32px/1.15 'Raleway', system-ui, sans-serif;
   letter-spacing: -0.02em;
   color: var(--qw-text);
 }
@@ -1429,9 +1556,9 @@ watch(() => props.quotation, load)
   display: flex;
   align-items: center;
   gap: 14px;
-  background: #F0FDF4;
+  background: var(--qw-primary-tint);
   border: 1px solid var(--qw-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 15px 18px;
   margin-bottom: 18px;
   font-size: 13px;
@@ -1444,7 +1571,7 @@ watch(() => props.quotation, load)
   gap: 12px;
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 15px 18px;
   margin-bottom: 18px;
 }
@@ -1471,7 +1598,7 @@ watch(() => props.quotation, load)
 .qw-loading {
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 48px;
   text-align: center;
   color: var(--qw-faint);
@@ -1492,7 +1619,7 @@ watch(() => props.quotation, load)
 
 .qw-save-pill {
   flex: none;
-  font: 700 11px/1 'Nunito', system-ui, sans-serif;
+  font: 700 11px/1 'Raleway', system-ui, sans-serif;
   color: var(--qw-muted);
   background: var(--qw-row-border);
   border-radius: 999px;
@@ -1525,7 +1652,7 @@ watch(() => props.quotation, load)
   min-width: 0;
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 24px;
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
   margin-top: 22px;
@@ -1533,7 +1660,7 @@ watch(() => props.quotation, load)
 
 .qw-step-lede {
   margin: 0 0 18px;
-  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
+  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
   color: var(--qw-muted);
   max-width: 64ch;
 }
@@ -1542,7 +1669,7 @@ watch(() => props.quotation, load)
   min-width: 0;
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 18px 20px;
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
   margin-top: 14px;
@@ -1565,7 +1692,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-review-card__title {
-  font: 800 20px/1.2 'Nunito', system-ui, sans-serif;
+  font: 800 20px/1.2 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -1575,7 +1702,7 @@ watch(() => props.quotation, load)
   border: none;
   padding: 6px 10px;
   border-radius: 8px;
-  font: 700 13px/1 'Nunito', system-ui, sans-serif;
+  font: 700 13px/1 'Raleway', system-ui, sans-serif;
   color: var(--qw-primary-dark);
   cursor: pointer;
 }
@@ -1607,21 +1734,53 @@ watch(() => props.quotation, load)
 }
 
 .qw-review-card__k {
-  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
+  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
   color: var(--qw-faint);
 }
 
 .qw-review-card__v {
-  font: 400 15px/20px 'Nunito', system-ui, sans-serif;
+  font: 400 15px/20px 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
   overflow-wrap: anywhere;
+}
+
+/* The selected-terms checklist needs the full card width, not the 1/3 column
+   every other fact-row gets — a run of 20 items crammed into one column reads
+   worse than the flattened semicolon-joined string it replaced. */
+.qw-review-card__row--full {
+  grid-column: 1 / -1;
+}
+
+.qw-review-terms-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px 22px;
+}
+
+.qw-review-terms-list__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font: 400 14px/1.5 'Raleway', system-ui, sans-serif;
+  color: var(--qw-text);
+}
+
+.qw-review-terms-list__item :deep(.lucide) {
+  flex: none;
+  margin-top: 3px;
+  width: 14px;
+  height: 14px;
+  color: var(--qw-primary);
 }
 
 .qw-quotation-items {
   width: 100%;
   border-collapse: collapse;
   margin-top: 16px;
-  font: 400 13.5px/1.4 'Nunito', system-ui, sans-serif;
+  font: 400 13.5px/1.4 'Raleway', system-ui, sans-serif;
 }
 
 .qw-quotation-items th {
@@ -1656,7 +1815,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-totals-box__k {
-  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
+  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
   color: var(--qw-faint);
 }
 
@@ -1672,7 +1831,7 @@ watch(() => props.quotation, load)
 .qw-inline-input {
   width: 100%;
   min-width: 120px;
-  font: 400 13.5px/1.4 'Nunito', system-ui, sans-serif;
+  font: 400 13.5px/1.4 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
   background: #fff;
   border: 1px solid var(--qw-border);
@@ -1709,7 +1868,7 @@ watch(() => props.quotation, load)
   padding: 9px 0;
   border-bottom: 1px solid var(--qw-row-border);
   cursor: pointer;
-  font: 400 14px/1.4 'Nunito', system-ui, sans-serif;
+  font: 400 14px/1.4 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -1738,12 +1897,12 @@ watch(() => props.quotation, load)
 
 .qw-terms-notes__title {
   margin: 0 0 12px;
-  font: 700 15px/1.2 'Nunito', system-ui, sans-serif;
+  font: 700 15px/1.2 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
 .qw-submit-badge {
-  font: 700 11px/1 'Nunito', system-ui, sans-serif;
+  font: 700 11px/1 'Raleway', system-ui, sans-serif;
   border-radius: 999px;
   padding: 5px 9px;
   text-transform: capitalize;
@@ -1785,7 +1944,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-item-tabs__eyebrow {
-  font: 700 11px/1 'Nunito', system-ui, sans-serif;
+  font: 700 11px/1 'Raleway', system-ui, sans-serif;
   color: var(--qw-faint);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1793,7 +1952,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-item-tab {
-  font: 700 13px/1 'Nunito', system-ui, sans-serif;
+  font: 700 13px/1 'Raleway', system-ui, sans-serif;
   border-radius: 8px;
   padding: 9px 14px;
   cursor: pointer;
@@ -1825,7 +1984,7 @@ watch(() => props.quotation, load)
   align-items: baseline;
   gap: 10px;
   margin: 0 0 18px;
-  font: 800 20px/1.2 'Nunito', system-ui, sans-serif;
+  font: 800 20px/1.2 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -1839,7 +1998,7 @@ watch(() => props.quotation, load)
   min-width: 0;
   background: #fff;
   border: 1px solid var(--qw-border);
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
   margin-top: 22px;
@@ -1852,7 +2011,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-derived__hint {
-  font: 400 12px/17px 'Nunito', system-ui, sans-serif;
+  font: 400 12px/17px 'Raleway', system-ui, sans-serif;
   color: var(--qw-faint);
   margin: 5px 0 14px;
 }
@@ -1870,7 +2029,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-derived__k {
-  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
+  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
   color: var(--qw-muted);
 }
 
@@ -1881,6 +2040,20 @@ watch(() => props.quotation, load)
   border: 1px solid var(--qw-border);
   border-radius: 8px;
   padding: 10px 11px;
+}
+
+/* Pure Margin % below the required minimum — mirrors the backend's own
+   submit-time floor (see MIN_PURE_MARGIN_PERCENT in costingWorksheetWizard.js
+   and costing_worksheet.py's _validate_before_submit). */
+.qw-derived__row--low .qw-derived__v {
+  background: rgba(230, 57, 70, .08);
+  border-color: #E63946;
+  color: #E63946;
+}
+
+.qw-derived__warning {
+  font: 600 11.5px/1.4 'Raleway', system-ui, sans-serif;
+  color: #E63946;
 }
 
 .qw-step-actions {
@@ -1895,7 +2068,7 @@ watch(() => props.quotation, load)
   border: 1px solid var(--qw-border);
   padding: 9px 15px;
   border-radius: 10px;
-  font: 600 13.5px/1 'Nunito', system-ui, sans-serif;
+  font: 600 13.5px/1 'Raleway', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -1936,7 +2109,7 @@ watch(() => props.quotation, load)
   border: 2px solid var(--qw-primary);
   padding: 11px 20px;
   border-radius: 10px;
-  font: 700 14px/1 'Nunito', system-ui, sans-serif;
+  font: 700 14px/1 'Raleway', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -1955,9 +2128,9 @@ watch(() => props.quotation, load)
   border: none;
   padding: 11px 22px;
   border-radius: 10px;
-  font: 700 14px/1 'Nunito', system-ui, sans-serif;
+  font: 700 14px/1 'Raleway', system-ui, sans-serif;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+  box-shadow: 0 4px 12px rgba(11, 52, 101, 0.22);
 }
 
 .qw-next-btn:hover:not(:disabled) {
@@ -1974,16 +2147,16 @@ watch(() => props.quotation, load)
    because these inputs are rendered deep inside child/SDK components, not in
    this component's own template. */
 .qw-wizard :deep(.frappe-form) {
-  --fv-primary: #16A34A;
-  --fv-border: #e4dcd6;
-  --fv-radius: 8px;
+  --fv-primary: #0B3465;
+  --fv-border: #D7DEE8;
+  --fv-radius: 5px;
   --app-input-h: 44px;
-  --app-label: #3a322d;
-  --app-muted: #6e635b;
-  --app-faint: #a79c94;
-  --app-card-border: #e4dcd6;
-  --app-row-border: #f2ede9;
-  --app-head-bg: #f2ede9;
+  --app-label: #33414F;
+  --app-muted: #5E6B7A;
+  --app-faint: #94A0AE;
+  --app-card-border: #D7DEE8;
+  --app-row-border: #EDF1F6;
+  --app-head-bg: #F4F6F9;
 }
 
 .qw-wizard :deep(.control input:disabled),

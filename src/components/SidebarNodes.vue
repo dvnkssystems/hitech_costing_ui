@@ -69,7 +69,7 @@ watch(
 const headerStyle = {
   fontSize: '11px',
   fontWeight: '700',
-  color: '#94A3B8',
+  color: '#94A0AE',
   letterSpacing: '.08em',
   padding: '14px 10px 8px'
 }
@@ -87,8 +87,8 @@ function itemStyle(node) {
     borderRadius: '10px',
     fontSize: '13px',
     fontWeight: on ? '700' : '500',
-    color: on ? '#C2410C' : '#64748B',
-    background: on ? '#F0FDF4' : 'transparent',
+    color: on ? '#0B3465' : '#64748B',
+    background: on ? '#E9EFF7' : 'transparent',
     cursor: 'pointer'
   }
 }
@@ -122,7 +122,7 @@ function itemStyle(node) {
         <span style="font-size:19px;"><LucideIcon :name="node.icon || 'circle'" /></span>
         <span style="flex:1;">{{ node.item_label }}</span>
         <span
-          :style="`font-size:15px; color:#94A3B8; display:inline-flex; transition:transform .15s; transform:rotate(${isOpen(node) ? 90 : 0}deg);`"
+          :style="`font-size:15px; color:#94A0AE; display:inline-flex; transition:transform .15s; transform:rotate(${isOpen(node) ? 90 : 0}deg);`"
         >
           <LucideIcon name="chevron-right" />
         </span>
