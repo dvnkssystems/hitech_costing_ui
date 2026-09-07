@@ -63,7 +63,7 @@ import {
   installWorkflowActions
 } from '@/lib/frmCompat'
 import { installDeskApis, installAmend, takePendingDoc } from '@/lib/mappedDoc'
-import { money, decimal, formatDate } from '@/utils/format'
+import { money, decimal, formatDate, timeAgo } from '@/utils/format'
 
 const DOCTYPE = 'Costing Worksheet'
 const HEADER_DOCTYPE = 'Quotation'
@@ -113,6 +113,17 @@ const submitPhase = ref('idle') // 'idle' | 'running' | 'done' | 'partial-failur
 const submitAllError = ref('')
 
 const SHARED_FIELDNAMES = SHARED_STEP.fields
+
+/** `hitech_port_of_discharge` lives on the Quotation frm while `region` lives
+ *  on the Costing Worksheet frm (`orderFrm`), so `depends_on` can't hide one
+ *  off the other -- they're different docs. Filtered here instead, wherever
+ *  ADDRESS_FIELDS would otherwise render it, for a Domestic order (only an
+ *  Export shipment has a port of discharge). */
+const visibleAddressFields = computed(() =>
+  orderFrm.value?.doc?.region === 'Domestic'
+    ? ADDRESS_FIELDS.filter((f) => f !== 'hitech_port_of_discharge')
+    : ADDRESS_FIELDS
+)
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -237,7 +248,7 @@ const reviewSections = computed(() => [
       ...sectionRows(orderFrm.value, SHARED_STEP.fields)
     ]
   },
-  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, ADDRESS_FIELDS) },
+  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
   { key: 'terms', n: '03', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
 
@@ -266,6 +277,23 @@ const itemsPricingRows = computed(() =>
     const doc = item.frm.doc
     const quantity = normalizedQuantity(item)
     const finalAmount = Number(doc.total_deal_value || 0) * quantity
+    // Client-side preview of Containers Required, ahead of the real figure
+    // (see costing_worksheet.py's `_calculate_container_fit`) -- that one
+    // only fills in once this item is a submitted Quotation Item with a real
+    // qty in the database, which happens after this page. This page already
+    // has both `units_per_container` (computed on the Dimensions step,
+    // Export-only) and the quantity being typed in right here, so the same
+    // qty ÷ units-per-container ÷ rounded-up math can be shown immediately,
+    // no submit needed. `null` means "not applicable" (Domestic, no
+    // Container Type chosen yet) vs. `0` meaning "doesn't fit this
+    // container" -- the template tells those apart.
+    const isExportWithContainer = doc.region === 'Export' && Boolean(doc.container_type)
+    const unitsPerContainer = Number(doc.units_per_container || 0)
+    const containersRequiredPreview = isExportWithContainer
+      ? unitsPerContainer > 0
+        ? Math.ceil(quantity / unitsPerContainer)
+        : 0
+      : null
     return {
       key: item.key,
       item,
@@ -278,9 +306,18 @@ const itemsPricingRows = computed(() =>
       quantity,
       finalAmountRaw: finalAmount,
       finalAmount: money(finalAmount),
-      submitState: item.submitState
+      submitState: item.submitState,
+      unitsPerContainer,
+      containersRequiredPreview
     }
   })
+)
+
+/** Whether to render the Containers Required column at all -- only worth a
+ *  column when at least one item is actually Export with a Container Type
+ *  picked; a fully-Domestic quotation shouldn't show an empty column. */
+const showContainersRequiredColumn = computed(() =>
+  itemsPricingRows.value.some((row) => row.containersRequiredPreview !== null)
 )
 
 /** Quotation-style grand totals for the Items & Pricing step — the same
@@ -294,7 +331,28 @@ const itemsPricingRows = computed(() =>
 const itemsSummary = computed(() => {
   const totalQuantity = itemsPricingRows.value.reduce((sum, row) => sum + row.quantity, 0)
   const total = itemsPricingRows.value.reduce((sum, row) => sum + row.finalAmountRaw, 0)
-  return { totalQuantity, total: money(total), netTotal: money(total), totalRaw: total }
+
+  // Grand total alongside Total Quantity, same idea: how many containers does
+  // the WHOLE order need, not just this one line. Rows with no preview
+  // (Domestic, no Container Type) don't count either way. A row that doesn't
+  // fit its container (preview === 0) makes the grand total meaningless --
+  // flagged via `hasNonFitting` rather than silently under-counting, same
+  // spirit as the per-row "Doesn't fit this container" warning.
+  const containerRows = itemsPricingRows.value.filter((row) => row.containersRequiredPreview !== null)
+  const hasNonFitting = containerRows.some((row) => row.containersRequiredPreview === 0)
+  const totalContainersRequired = hasNonFitting
+    ? null
+    : containerRows.reduce((sum, row) => sum + row.containersRequiredPreview, 0)
+
+  return {
+    totalQuantity,
+    total: money(total),
+    netTotal: money(total),
+    totalRaw: total,
+    showContainers: containerRows.length > 0,
+    totalContainersRequired,
+    hasNonFitting
+  }
 })
 
 /* ── Terms & Conditions step ─────────────────────────────────────────────── */
@@ -374,11 +432,25 @@ async function saveQuotationHeader() {
   }
 }
 
+/** Pure Margin (INR/kg) and Pure Margin % moved out of the Commercials step's
+ *  Calculated rail and into its main card instead (on request) — they sit
+ *  right next to Deal Price - FG now, since that's the one input that
+ *  actually moves them, rather than one figure among several in a side
+ *  panel. `derivedFieldnames` below excludes them from the rail so they
+ *  don't also render there; `commercialsMarginRows` (near
+ *  `activeItemDerivedRows`) renders them in the main card in the same
+ *  formatted-row style the rail uses. */
+const COMMERCIALS_MAIN_CARD_FIELDS = new Set(['pure_margin_inr_kg', 'pure_margin_percent'])
+
 /** Whether any field in `step` is read-only for `frm` — i.e. worth its own
  *  calculated-values rail. */
 function derivedFieldnames(step, frm) {
   if (!frm) return []
-  return step.fields.filter((fieldname) => frm.fields_dict?.[fieldname]?.df?.read_only)
+  return step.fields.filter(
+    (fieldname) =>
+      frm.fields_dict?.[fieldname]?.df?.read_only &&
+      !(step.key === 'commercials' && COMMERCIALS_MAIN_CARD_FIELDS.has(fieldname))
+  )
 }
 function hasDerivedFields(step, frm) {
   return derivedFieldnames(step, frm).length > 0
@@ -410,14 +482,14 @@ const activeItemLocked = computed(() => Boolean(quotationName.value) && quotatio
  * float divisions, e.g. Commercials' totals, would otherwise show something
  * like "233.91004000000004" instead of "₹233.91").
  *
- * Deliberately skips `sectionRows`'s `fieldState(...).visible` check rather
- * than reusing it outright: every field `derivedFieldnames` selects is
- * `read_only` with no `depends_on` anywhere in the DocType (verified against
- * the JSON — none of Commercials/Summary's derived fields are ever
- * conditionally hidden), so that check can only ever ADD risk here, not
- * value — `fieldState` throwing on a field mid-recalculation (or any other
- * transient SDK hiccup) would otherwise silently drop an otherwise-always-
- * visible row instead of just showing its current value.
+ * Used to skip `sectionRows`'s `fieldState(...).visible` check outright: every
+ * field `derivedFieldnames` selected was `read_only` with no `depends_on`
+ * anywhere in the DocType. That's no longer true now that the container-
+ * load-fit fields (`units_per_container`, `containers_required`,
+ * `container_utilization_percent`) carry an Export-only `depends_on`, same
+ * as the freight fields conceptually should — so this now checks visibility
+ * the same safe way `sectionRows` does (catch-and-hide on any SDK hiccup,
+ * rather than let a throw crash the rail).
  */
 function derivedRows(frm, fieldnames) {
   if (!frm) return []
@@ -425,14 +497,43 @@ function derivedRows(frm, fieldnames) {
     .map((fieldname) => {
       const df = frm.fields_dict?.[fieldname]?.df
       if (!df) return null
-      const low = fieldname === 'pure_margin_percent' && Number(frm.doc?.[fieldname] ?? 0) < MIN_PURE_MARGIN_PERCENT
-      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]), low }
+      try {
+        if (!fieldState(frm, df).visible) return null
+      } catch {
+        return null
+      }
+      let low = false
+      let warning = ''
+      if (fieldname === 'pure_margin_percent' && Number(frm.doc?.[fieldname] ?? 0) < MIN_PURE_MARGIN_PERCENT) {
+        low = true
+        warning = `Below the ${MIN_PURE_MARGIN_PERCENT}% minimum`
+      } else if (
+        // A Container Type is picked but nothing fits (0 either way it's
+        // oriented, see costing_worksheet.py's _calculate_container_fit) --
+        // flag it the same way a below-minimum margin is flagged, so 0 reads
+        // as "doesn't fit" rather than "not calculated yet".
+        fieldname === 'units_per_container' &&
+        frm.doc?.container_type &&
+        !Number(frm.doc?.[fieldname] ?? 0)
+      ) {
+        low = true
+        warning = "Doesn't fit this container"
+      }
+      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]), low, warning }
     })
     .filter(Boolean)
 }
 const activeItemDerivedRows = computed(() =>
   activeItem.value && activeItemStep.value
     ? derivedRows(activeItem.value.frm, derivedFieldnames(activeItemStep.value, activeItem.value.frm))
+    : []
+)
+
+/** Pure Margin (INR/kg) / Pure Margin % rows for the Commercials main card —
+ *  see `COMMERCIALS_MAIN_CARD_FIELDS`'s doc comment above. */
+const commercialsMarginRows = computed(() =>
+  activeItem.value && activeItemStep.value?.key === 'commercials'
+    ? derivedRows(activeItem.value.frm, [...COMMERCIALS_MAIN_CARD_FIELDS])
     : []
 )
 
@@ -448,15 +549,39 @@ watch(wizardEl, (el) => {
   teardownEnhancements?.()
   teardownEnhancements = el ? installFormEnhancements(el, () => currentFrm.value) : null
 })
-onBeforeUnmount(() => teardownEnhancements?.())
+onBeforeUnmount(() => {
+  teardownEnhancements?.()
+  // Skips the debounce -- navigating away is exactly the moment a pending
+  // write would otherwise be lost.
+  flushDraftSave()
+})
 
 /** Filters `customer_address`/`shipping_address_name` on the throwaway
  *  Quotation frm to the wizard's own customer — same `frm.set_query` idiom
- *  the real Costing Worksheet client script already uses for `tank_type`. */
+ *  the real Costing Worksheet client script already uses for `tank_type`.
+ *
+ *  `link_doctype`/`link_name` aren't fields on Address itself — they live on
+ *  its child `Dynamic Link` table, so filtering them needs the child-table
+ *  array form (`[["Dynamic Link", "link_doctype", "=", ...], ...]`), not a
+ *  flat `{field: value}` dict (which `frappe.desk.search.search_link` reads
+ *  as direct Address fields and rejects with a permission/invalid-field
+ *  error). That error was thrown on every search regardless of whether a
+ *  customer was set — confirmed directly against the backend. `useLinkSearch`
+ *  (the SDK's Link control) treats any search error as "never break the
+ *  control": it drops the results and silently closes the dropdown rather
+ *  than surfacing the error, so the dropdown never visibly opened at all.
+ *
+ *  Also skips the filter entirely (every Address, unscoped) before a
+ *  customer is picked, rather than filtering to a blank `link_name`. */
 function addressQueryScript(frappe) {
   frappe.ui.form.on(HEADER_DOCTYPE, {
     setup(frm) {
-      const filters = () => ({ filters: { link_doctype: 'Customer', link_name: orderFrm.value?.doc?.customer } })
+      const filters = () => {
+        const customer = orderFrm.value?.doc?.customer
+        return customer
+          ? { filters: [['Dynamic Link', 'link_doctype', '=', 'Customer'], ['Dynamic Link', 'link_name', '=', customer]] }
+          : {}
+      }
       frm.set_query('customer_address', filters)
       frm.set_query('shipping_address_name', filters)
     }
@@ -677,6 +802,255 @@ function removeItem(key) {
   })
 }
 
+/**
+ * Local autosave/restore for a brand-new "New Quotation" session only (no
+ * `props.name`/`props.quotation` -- see `load()`'s innermost `else` branch).
+ * Nothing here saves before that item's own Commercials step, and the header
+ * frm never saves at all before `submitAll()` succeeds -- see this file's own
+ * top-of-file doc comment -- so navigating away mid-way (e.g. to the sidebar)
+ * lost every field typed so far. This mirrors the fields that flow into
+ * `submitAll()`'s own `header` object plus `SHARED_STEP`, into
+ * `localStorage`, and offers to restore them the next time `/quotation/new`
+ * boots with the exact same (still-unsaved) shape found.
+ *
+ * A single fixed key, not one per draft: the app only ever has one
+ * "in-progress, not-yet-saved-anywhere" New Quotation session open at a time
+ * (there's no way to have two `/quotation/new` tabs mid-flow both wanting to
+ * be resumed independently -- and if there were, the second would just
+ * overwrite the first's autosave, same as it would overwrite the first's own
+ * unsaved browser state today).
+ */
+const DRAFT_STORAGE_KEY = 'hitech-costing:quotation-draft'
+const DRAFT_HEADER_FIELDS = [...TYPE_FIELDS, ...TAX_FIELDS, ...ADDRESS_FIELDS, ...TERMS_FIELDS, TAX_TABLE_FIELD, TERMS_TABLE_FIELD]
+// Table fields (`volumes`, `complexity_ratings`) are deliberately excluded --
+// restoring a Table field means rebuilding its rows one at a time via
+// `add_child` (see the Terms checklist watcher above), and an item that's
+// still on an early step this early in its life rarely has rows worth that
+// extra risk. Everything else on the per-item steps is a plain scalar,
+// same as `SHARED_FIELDNAMES` below.
+const DRAFT_ITEM_FIELDS = [...new Set(ITEM_STEPS.flatMap((step) => step.fields))]
+
+/** Which draft (if any) the current session autosaves/restores:
+ *   - 'new' — the brand-new `/quotation/new` path, unchanged from before.
+ *   - 'resume' — reopening a single existing, not-yet-submitted worksheet by
+ *     name (see `load()`'s `singleItemMode` branch). Originally skipped on
+ *     the theory that a resumed worksheet's fields are already backed by a
+ *     real record, so "there's nothing at risk" -- true for whatever was
+ *     last *saved*, but not for edits made *after* reopening it and before
+ *     the next "Save item": those live only in this tab's `frm.doc`, same as
+ *     a brand-new item's fields, and vanish just as silently on an
+ *     accidental navigate-away or refresh. Keyed per-worksheet (see
+ *     `currentDraftKey()`) rather than sharing 'new' mode's single fixed
+ *     key, since unlike "one new quotation in flight", several different
+ *     existing worksheets can each have their own stale unsaved edits
+ *     waiting across different visits. */
+const draftMode = ref(null) // null | 'new' | 'resume'
+
+function readDraft(key) {
+  if (!key) return null
+  try {
+    const raw = globalThis.localStorage?.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+function writeDraft(key, snapshot) {
+  if (!key) return
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(snapshot))
+  } catch {
+    // Private mode or storage disabled -- the wizard still works for this
+    // session, it just won't survive a navigate-away-and-back.
+  }
+}
+function clearDraft(key) {
+  if (!key) return
+  try {
+    globalThis.localStorage?.removeItem(key)
+  } catch {
+    // ditto
+  }
+}
+/** The storage key for whichever draft `draftMode` currently points at, or
+ *  `null` when neither applies (nothing to autosave/restore). 'resume' is
+ *  keyed by the worksheet's own name so reopening a DIFFERENT worksheet
+ *  later never offers to restore the wrong one's leftover draft. */
+function currentDraftKey() {
+  if (draftMode.value === 'new') return DRAFT_STORAGE_KEY
+  if (draftMode.value === 'resume' && props.name) return `${DRAFT_STORAGE_KEY}:worksheet:${props.name}`
+  return null
+}
+
+/** One-shot signal set by `QuotationNewView.vue`'s "Resume" button on the
+ *  draft banner there — when present, the user already explicitly chose to
+ *  restore, so skip asking again via `confirmAsync()` below. Read-once (the
+ *  flag is removed as soon as it's checked) so a later brand-new session
+ *  reached some other way still gets the normal prompt. */
+const DRAFT_RESUME_FLAG = 'hitech-costing:quotation-draft-resume'
+function takeDraftResumeFlag() {
+  try {
+    const flagged = globalThis.sessionStorage?.getItem(DRAFT_RESUME_FLAG) === '1'
+    globalThis.sessionStorage?.removeItem(DRAFT_RESUME_FLAG)
+    return flagged
+  } catch {
+    return false
+  }
+}
+
+/** `confirm()` is callback-based (Yes/No), not a Promise -- wrap it once so
+ *  `load()` can just `await` the user's choice like everything else here. */
+function confirmAsync(message) {
+  return new Promise((resolve) => confirm(message, () => resolve(true), () => resolve(false)))
+}
+
+/** Non-Table fields only -- see `DRAFT_ITEM_FIELDS`'s comment. */
+function itemDraftFields(frm) {
+  const out = {}
+  for (const fieldname of DRAFT_ITEM_FIELDS) {
+    if (frm.fields_dict?.[fieldname]?.df?.fieldtype === 'Table') continue
+    out[fieldname] = frm.doc?.[fieldname]
+  }
+  return out
+}
+
+function buildDraftSnapshot() {
+  return {
+    savedAt: new Date().toISOString(),
+    order: orderFrm.value ? pick(orderFrm.value.doc, SHARED_FIELDNAMES) : null,
+    header: quotationHeaderFrm.value ? pick(quotationHeaderFrm.value.doc, DRAFT_HEADER_FIELDS) : null,
+    // Only items never yet saved to the server -- once an item reaches its
+    // own Commercials "Save item", the real Costing Worksheet record is the
+    // source of truth for it, same as everywhere else in this file.
+    items: items.value
+      .filter((item) => item.frm.is_new())
+      .map((item) => ({
+        fields: itemDraftFields(item.frm),
+        quantity: item.quantity,
+        description: item.description,
+        activeStepIndex: item.activeStepIndex
+      }))
+  }
+}
+
+/** 'resume' mode's own field list -- `DRAFT_ITEM_FIELDS` alone misses
+ *  `SHARED_STEP.fields` (customer/rating/region), which a resumed worksheet
+ *  edits through this SAME frm (`orderFrm === item.frm` in `singleItemMode`,
+ *  see `load()`'s doc comment there) just as unsaved as anything on the
+ *  per-item steps. */
+const RESUME_DRAFT_FIELDS = [...new Set([...SHARED_STEP.fields, ...DRAFT_ITEM_FIELDS])]
+function resumeItemDraftFields(frm) {
+  const out = {}
+  for (const fieldname of RESUME_DRAFT_FIELDS) {
+    if (frm.fields_dict?.[fieldname]?.df?.fieldtype === 'Table') continue
+    out[fieldname] = frm.doc?.[fieldname]
+  }
+  return out
+}
+/** 'resume' mode only ever has the one worksheet `load()` opened by name --
+ *  no order/header capture needed (Address & Delivery / Terms save through
+ *  their own explicit "Save Changes" button, not this autosave). */
+function buildResumeDraftSnapshot() {
+  const item = items.value[0]
+  if (!item) return null
+  return {
+    savedAt: new Date().toISOString(),
+    resumeName: props.name,
+    fields: resumeItemDraftFields(item.frm),
+    quantity: item.quantity,
+    description: item.description,
+    activeStepIndex: item.activeStepIndex
+  }
+}
+function currentDraftSnapshot() {
+  return draftMode.value === 'resume' ? buildResumeDraftSnapshot() : buildDraftSnapshot()
+}
+
+let draftSaveTimer = null
+/** Whether a write should actually happen right now -- checked both when
+ *  scheduling (skip arming a timer at all when there's nothing to autosave)
+ *  and again inside the timer callback itself: `submitAll()` can flip
+ *  `quotationName`/`draftMode` mid-debounce (the real Quotation now exists,
+ *  `clearDraft()` already ran) -- without re-checking at fire time, a timer
+ *  armed just before submit would silently resurrect the draft it just
+ *  cleared a few hundred ms later. 'resume' has no equivalent "session is
+ *  now done" signal the way 'new' mode's `quotationName` is -- explicit
+ *  `clearDraft()` calls right after a real save (see `itemNext()`,
+ *  `submitAll()`) keep it from going stale instead.*/
+function shouldPersistDraft() {
+  if (draftMode.value === 'new') return !quotationName.value
+  return draftMode.value === 'resume'
+}
+/** Debounced so a fast typist doesn't hit `localStorage.setItem` on every
+ *  keystroke -- 400ms of quiet is plenty for data this size. */
+function scheduleDraftSave() {
+  if (!shouldPersistDraft()) return
+  clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => {
+    if (shouldPersistDraft()) writeDraft(currentDraftKey(), currentDraftSnapshot())
+  }, 400)
+}
+/** Skips the debounce -- used right before the draft matters most (unmount). */
+function flushDraftSave() {
+  clearTimeout(draftSaveTimer)
+  if (shouldPersistDraft()) writeDraft(currentDraftKey(), currentDraftSnapshot())
+}
+
+/** Applies a restored draft onto the frms `load()` just booted for a brand-new
+ *  session -- `set_value` throughout, not a plain object merge, for the same
+ *  reason `addItem()`'s own `seedDoc` loop does (see its comment): a merge
+ *  lands the raw value but skips the field's change trigger, leaving derived
+ *  fields (Facility/Labour Rate off Tank Type, address display text, etc.)
+ *  blank until the estimator re-touches the field by hand. `items[0]` already
+ *  exists (this runs after `addItem(seed)`); any further draft items create
+ *  their own tab first. */
+async function applyDraftToFrms(draft) {
+  for (const [fieldname, value] of Object.entries(draft.order ?? {})) {
+    if (value === undefined) continue
+    await orderFrm.value.set_value(fieldname, value)
+  }
+  for (const [fieldname, value] of Object.entries(draft.header ?? {})) {
+    if (value === undefined) continue
+    await quotationHeaderFrm.value.set_value(fieldname, value)
+  }
+  const draftItems = draft.items ?? []
+  for (let i = 0; i < draftItems.length; i++) {
+    const target = i === 0 ? items.value[0] : await addItem()
+    if (!target) continue
+    const { fields = {}, quantity, description, activeStepIndex } = draftItems[i]
+    for (const [fieldname, value] of Object.entries(fields)) {
+      if (value === undefined) continue
+      await target.frm.set_value(fieldname, value)
+    }
+    if (typeof quantity === 'number') target.quantity = quantity
+    if (typeof description === 'string') target.description = description
+    if (typeof activeStepIndex === 'number') {
+      target.unlockedSteps = initialUnlockedSteps(target.frm)
+      target.unlockedSteps.add(activeStepIndex)
+      target.activeStepIndex = activeStepIndex
+    }
+  }
+}
+
+/** 'resume' mode's counterpart to `applyDraftToFrms` -- only ever one item,
+ *  already loaded from the server by `load()`'s `singleItemMode` branch
+ *  before this runs, so no `addItem()` needed. */
+async function applyResumeDraft(draft) {
+  const item = items.value[0]
+  if (!item) return
+  for (const [fieldname, value] of Object.entries(draft.fields ?? {})) {
+    if (value === undefined) continue
+    await item.frm.set_value(fieldname, value)
+  }
+  if (typeof draft.quantity === 'number') item.quantity = draft.quantity
+  if (typeof draft.description === 'string') item.description = draft.description
+  if (typeof draft.activeStepIndex === 'number') {
+    item.unlockedSteps = initialUnlockedSteps(item.frm)
+    item.unlockedSteps.add(draft.activeStepIndex)
+    item.activeStepIndex = draft.activeStepIndex
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -688,6 +1062,7 @@ async function load() {
   quotationDocstatus.value = 0
   submitPhase.value = 'idle'
   submitAllError.value = ''
+  draftMode.value = null
 
   if (!live.value) {
     error.value = 'No Frappe backend configured. Set VITE_FRAPPE_URL in .env to use the wizard.'
@@ -754,6 +1129,24 @@ async function load() {
           ? (await db.get_value('Quotation', quotationName.value, 'docstatus'))?.docstatus ?? 0
           : 0
         activePageStep.value = 'items'
+
+        // See `draftMode`'s doc comment: reopening this worksheet doesn't
+        // mean nothing's at risk -- edits made after this point and before
+        // the next "Save item" are exactly as unsaved as a brand-new item's.
+        // Skipped once the linked Quotation is actually submitted (the form
+        // locks anyway, see `activeItemLocked`) -- nothing to restore into.
+        if (quotationDocstatus.value !== 1) {
+          draftMode.value = 'resume'
+          const key = currentDraftKey()
+          const draft = readDraft(key)
+          if (draft) {
+            const wantsRestore = await confirmAsync(
+              `You have unsaved changes to this Costing Worksheet from ${timeAgo(draft.savedAt) || 'earlier'}. Restore them?`
+            )
+            if (wantsRestore) await applyResumeDraft(draft)
+            else clearDraft(key)
+          }
+        }
       } else {
         // Set by `/quotation/new` when the user picked a Tank Type there — see
         // mappedDoc.js's `seedPendingDoc` / `takePendingDoc`. Belongs on the
@@ -768,6 +1161,20 @@ async function load() {
         })
         await addItem(seed)
         activePageStep.value = 'customer'
+
+        // Brand-new session — the 'new' draft mode (see `draftMode`'s doc
+        // comment above).
+        draftMode.value = 'new'
+        const draft = readDraft(DRAFT_STORAGE_KEY)
+        if (draft) {
+          const wantsRestore = takeDraftResumeFlag()
+            ? true
+            : await confirmAsync(
+                `You have an unsaved quotation draft from ${timeAgo(draft.savedAt) || 'earlier'}. Restore it and continue where you left off?`
+              )
+          if (wantsRestore) await applyDraftToFrms(draft)
+          else clearDraft(DRAFT_STORAGE_KEY)
+        }
       }
     }
   } catch (e) {
@@ -790,6 +1197,25 @@ watch(
       }
     }
   },
+  { deep: true }
+)
+
+/** Autosaves the brand-new session's in-progress fields to `localStorage` --
+ *  see `scheduleDraftSave()`'s doc comment. Three separate watchers (order,
+ *  header, items) rather than one combined getter, so a change to any one
+ *  doesn't need to re-walk the other two just to notice it did. */
+watch(() => (orderFrm.value ? pick(orderFrm.value.doc, SHARED_FIELDNAMES) : null), scheduleDraftSave, { deep: true })
+watch(
+  () => (quotationHeaderFrm.value ? pick(quotationHeaderFrm.value.doc, DRAFT_HEADER_FIELDS) : null),
+  scheduleDraftSave,
+  { deep: true }
+)
+watch(
+  () =>
+    items.value
+      .filter((item) => item.frm.is_new())
+      .map((item) => ({ fields: itemDraftFields(item.frm), quantity: item.quantity, description: item.description })),
+  scheduleDraftSave,
   { deep: true }
 )
 
@@ -894,6 +1320,21 @@ async function itemNext() {
     try {
       await item.frm.save()
       markSaved(item.frm)
+      // The server now has exactly what's on screen -- a 'resume' draft
+      // from before this save would only ever replay stale values over it
+      // on a future reopen. Turning `draftMode` off (not just clearing the
+      // key) matters here: `save()`'s own `_writeBack` mutates `frm.doc`
+      // with the freshly recalculated fields, which the deep watcher above
+      // sees as another change and re-arms `scheduleDraftSave()`'s debounce
+      // -- without this, that timer fires ~400ms later, sees `shouldPersist
+      // Draft()` still true, and silently resurrects the very draft just
+      // cleared (same race `shouldPersistDraft()`'s doc comment describes
+      // for 'new' mode, just with no `quotationName`-style signal to guard
+      // it in 'resume' mode otherwise).
+      if (draftMode.value === 'resume') {
+        clearDraft(currentDraftKey())
+        draftMode.value = null
+      }
     } catch (e) {
       item.stepError = e?.message ?? String(e)
       item.saving = false
@@ -991,6 +1432,30 @@ async function submitAll() {
       await item.frm.trigger?.('after_save')
       await item.frm.trigger?.('refresh')
       await item.frm.trigger?.('on_submit')
+
+      // `submit_and_map`'s own `self.save()` runs `calculate()` (via
+      // `validate()`) BEFORE its `on_update` hook sets `self.quotation` and
+      // creates the real Quotation Item row -- so the container-fit fields it
+      // just saved were computed with no quotation/qty yet, same as the
+      // Dimensions step's 0 the whole time up to now (see
+      // `_calculate_container_fit`, "Order quantity has no field of its own
+      // on Costing Worksheet"). A real `frm.save()` here (not just
+      // `frm.call('calculate')`, which only refreshes the client's copy)
+      // re-runs `calculate()` now that the real qty exists AND persists the
+      // result -- `_guard_against_edit_after_submit` only blocks a save once
+      // the *Quotation* itself is submitted (still Draft at this point in the
+      // wizard), and `on_update`'s `_auto_create_quotation`/labour-override
+      // comment guards both no-op on a second save since nothing they check
+      // changed. Export-only, matching everywhere else this feature is
+      // gated; best-effort since it's purely informational and must never
+      // fail an otherwise-successful submit.
+      if (item.frm.doc?.region === 'Export' && item.frm.doc?.container_type) {
+        try {
+          await item.frm.save()
+        } catch (e) {
+          console.error('[hitech-costing-ui] post-submit container-fit recalculate failed:', e)
+        }
+      }
       item.submitState = 'succeeded'
     } catch (e) {
       item.submitState = 'failed'
@@ -1000,6 +1465,10 @@ async function submitAll() {
     }
   }
   submitPhase.value = 'done'
+  // The real Quotation now exists — a stale draft here would otherwise offer
+  // to "restore" this same data into a NEXT session by mistake.
+  clearDraft(currentDraftKey())
+  draftMode.value = null
 }
 
 function finishQuotation() {
@@ -1122,6 +1591,18 @@ watch(() => props.quotation, load)
                       </h2>
                       <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
                         <WizardStep :frm="activeItem.frm" :fields="step.fields" read-only-filter="exclude" />
+                        <div v-if="step.key === 'commercials'" class="qw-derived__rows" style="margin-top: 16px;">
+                          <div
+                            v-for="row in commercialsMarginRows"
+                            :key="row.label"
+                            class="qw-derived__row"
+                            :class="{ 'qw-derived__row--low': row.low }"
+                          >
+                            <span class="qw-derived__k">{{ row.label }}</span>
+                            <span class="qw-derived__v">{{ row.value }}</span>
+                            <span v-if="row.warning" class="qw-derived__warning">{{ row.warning }}</span>
+                          </div>
+                        </div>
                         <div v-if="step.key === 'complexity'" class="qw-step-actions">
                           <button type="button" @click="recalculate" class="qw-ghost-btn">Recalculate</button>
                         </div>
@@ -1137,7 +1618,7 @@ watch(() => props.quotation, load)
                     <div v-for="row in activeItemDerivedRows" :key="row.label" class="qw-derived__row" :class="{ 'qw-derived__row--low': row.low }">
                       <span class="qw-derived__k">{{ row.label }}</span>
                       <span class="qw-derived__v">{{ row.value }}</span>
-                      <span v-if="row.low" class="qw-derived__warning">Below the {{ MIN_PURE_MARGIN_PERCENT }}% minimum</span>
+                      <span v-if="row.warning" class="qw-derived__warning">{{ row.warning }}</span>
                     </div>
                   </div>
                 </aside>
@@ -1182,6 +1663,7 @@ watch(() => props.quotation, load)
                   <th>Description</th>
                   <th>Quantity</th>
                   <th>Final amount</th>
+                  <th v-if="showContainersRequiredColumn" title="Preview only, from this page's Quantity — not the saved Costing Worksheet figure">Containers Required (est.)</th>
                   <th></th>
                   <th></th>
                 </tr>
@@ -1214,6 +1696,11 @@ watch(() => props.quotation, load)
                     />
                   </td>
                   <td>{{ row.finalAmount }}</td>
+                  <td v-if="showContainersRequiredColumn">
+                    <span v-if="row.containersRequiredPreview === null">—</span>
+                    <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">Doesn't fit this container</span>
+                    <span v-else>{{ row.containersRequiredPreview }} (~{{ row.unitsPerContainer }}/container)</span>
+                  </td>
                   <td>
                     <button type="button" class="qw-review-card__edit" @click="goToItem(row.key)">Costing →</button>
                   </td>
@@ -1257,6 +1744,13 @@ watch(() => props.quotation, load)
                 <span class="qw-totals-box__k">Net Total</span>
                 <span class="qw-totals-box__v">{{ itemsSummary.netTotal }}</span>
               </div>
+              <div v-if="itemsSummary.showContainers" class="qw-totals-box">
+                <span class="qw-totals-box__k">Total Containers Required (est.)</span>
+                <span v-if="itemsSummary.hasNonFitting" class="qw-derived__warning">
+                  One or more items don't fit their container — see the row above
+                </span>
+                <span v-else class="qw-totals-box__v">{{ itemsSummary.totalContainersRequired }}</span>
+              </div>
             </div>
           </div>
           <div class="qw-footer">
@@ -1272,7 +1766,7 @@ watch(() => props.quotation, load)
             <p v-if="quotationName" class="qw-step-lede">
               Editing delivery details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <WizardStep :frm="quotationHeaderFrm" :fields="ADDRESS_FIELDS" read-only-filter="exclude" />
+            <WizardStep :frm="quotationHeaderFrm" :fields="visibleAddressFields" read-only-filter="exclude" />
             <!-- `address_display`/`shipping_address` are `read_only`, so the
                  "exclude" step above never renders them — same "only" split
                  the Complexity step's Calculated rail uses, just inline here

@@ -63,8 +63,27 @@ export const ITEM_STEPS = [
       'ext_length_mm',
       'ext_width_mm',
       'ext_height_mm',
+      // Manual selection of a Container Type master (Export only — the
+      // DocType's own `depends_on` on `region == "Export"` hides it for
+      // Domestic quotes, same as every other region-gated field here; see
+      // `WizardStep.vue`'s `isVisible`). Sits with the other inputs, ahead of
+      // the calculated surface areas below.
+      'container_type',
       'internal_surface_area_sqm',
-      'external_surface_area_sqm'
+      'external_surface_area_sqm',
+      // Container-load-fit numbers (Export only, same `depends_on` gating as
+      // `container_type` above) — informational only, they don't feed into
+      // Sea Freight Rate/Total Freight or any other cost figure. Shown right
+      // here rather than off in Commercials since Container Type itself is
+      // picked on this step — seeing the fit result next to the pick it came
+      // from beats hunting for it four steps later. `containers_required`
+      // may not exist on the backend (no reliable order-quantity field at
+      // worksheet level to divide by); harmless to list here even if absent,
+      // since `WizardStep`/`derivedRows` both skip fieldnames missing from
+      // the frm's own `fields_dict`.
+      'units_per_container',
+      'containers_required',
+      'container_utilization_percent'
     ]
   },
   {
@@ -125,10 +144,14 @@ export const ITEM_STEPS = [
     title: 'Commercials',
     fields: [
       'deal_price_fg_inr_per_kg',
-      'payment_terms_days',
-      'transport_rate_inr_per_kg',
+      // 'payment_terms_days' and 'transport_rate_inr_per_kg' hidden on
+      // request — not needed for this workflow. Left as real fields on the
+      // DocType (and still contribute to Total Freight if ever set via the
+      // desk form directly); just not shown in this step.
       'sea_freight_rate_inr_per_kg',
       'total_freight_inr_kg',
+      // Container-load-fit numbers moved to the Dimensions step (see
+      // ITEM_STEPS[1] above) — that's where Container Type itself is picked.
       'financial_cost_inr_kg',
       // The item's final built-up cost and margin — this is the last per-item
       // step, so its calculated-values rail is where "what does this item's
