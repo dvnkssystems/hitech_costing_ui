@@ -33,7 +33,12 @@
 export const SHARED_STEP = {
   key: 'customer',
   title: 'Customer & Order',
-  fields: ['customer', 'opportunity', 'company', 'rating_mva', 'rating_kv', 'region']
+  // 'opportunity' and 'company' dropped: 'opportunity' isn't a real field on
+  // Costing Worksheet (was rendering as a dead fallback text box), and
+  // 'company' is auto-defaulted by the backend from Global Defaults when
+  // left unset (see costing_worksheet.py's on-save default), so it doesn't
+  // need a wizard input.
+  fields: ['customer', 'rating_mva', 'rating_kv', 'region']
 }
 
 export const ITEM_STEPS = [
@@ -149,10 +154,31 @@ export const ITEM_STEPS = [
  *  block) but won't carry into the Quotation the first item creates —
  *  it only actually persists once resuming/editing a Quotation that
  *  already exists, via the Taxes step's own Save Changes. */
+/** `custom_type` (Tank/Radiator) on Quotation — chosen on the "What type of
+ *  quotation?" screen (QuotationNewView.vue) before the wizard even opens,
+ *  since there's no per-item reason to ask twice. Both values run this same
+ *  wizard (Radiator is just a different Tank Type record, e.g. "Radiator
+ *  Line"), and the choice rides through to `quotationHeaderFrm`'s initial
+ *  doc via `takePendingDoc('Quotation')` (see CostingWorksheetWizard.vue,
+ *  falling back to "Tank" if the wizard is opened without going through that
+ *  screen) — this list exists so that value actually gets picked up and sent
+ *  as part of `quotation_header` on submit, same as every other real header
+ *  field below. */
+export const TYPE_FIELDS = ['custom_type']
 export const TAX_FIELDS = ['taxes_and_charges', 'disable_rounded_total']
 export const ADDRESS_FIELDS = [
   'customer_address',
+  // Real, read-only core Quotation field — the formatted address text the
+  // real desk form shows under "Customer Address" on its own Address &
+  // Contact tab. CostingWorksheetWizard.vue keeps it filled in the same way
+  // core Frappe does (`frappe.utils.get_address_display`): re-fetched
+  // whenever `customer_address` changes.
+  'address_display',
   'shipping_address_name',
+  // Same pairing for the shipping side — core fieldname is `shipping_address`
+  // (not `shipping_address_name_display` or similar), despite sharing a label
+  // with the Link field above it.
+  'shipping_address',
   'incoterm',
   'named_place',
   'hitech_port_of_discharge',

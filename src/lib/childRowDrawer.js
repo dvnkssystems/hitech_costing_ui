@@ -68,8 +68,18 @@ const DRAWER_HIDDEN_FIELDS = {
  * Result) — fetch them so the drawer can show the picker with its meaning
  * attached instead. Cached per question id: the same question is reused
  * across every item's costing sheet in one wizard session.
+ *
+ * `unit` rides along too rather than trusting the row's own copy of it:
+ * `load_complexity_questions()` (costing_worksheet.py) only ever stamps
+ * `unit` onto a row the moment it's first added, and never backfills it for
+ * rows a worksheet already had — so any Costing Worksheet whose questions
+ * were loaded before a question's `unit` was set (or before this field
+ * existed at all) carries a permanently blank `row.unit`, which reads as
+ * neither `'text'` nor a numeric unit and silently falls back to a bare
+ * number box with none of this module's behaviour. The master's own `unit`
+ * is never stale that way, so prefer it wherever a row's `unit` is read.
  */
-const RATING_LABEL_FIELDS = ['rating_1_label', 'rating_2_label', 'rating_3_label']
+const RATING_LABEL_FIELDS = ['rating_1_label', 'rating_2_label', 'rating_3_label', 'unit']
 const ratingLabelCache = new Map()
 
 export function fetchRatingLabels(frm, questionId) {
@@ -94,6 +104,15 @@ export function fetchRatingLabels(frm, questionId) {
  *  `"%"` and `"no"` (see the DocType JSON). The numeric-band ones, grouped
  *  for the two places below that treat them alike. */
 export const NUMERIC_UNITS = ['%', 'no']
+
+/** The unit that actually decides a row's Actual Value control: the fetched
+ *  master's own `unit` when it's known, falling back to the row's own copy
+ *  only when the master hasn't resolved yet (e.g. no network) — see
+ *  `RATING_LABEL_FIELDS`'s doc comment for why the master, not the row, is
+ *  the one to trust. */
+export function resolveUnit(row, labels) {
+  return labels?.unit || row?.unit || ''
+}
 
 /**
  * Parse a `rating_N_label` into a numeric band, for the `%`/`no` unit
@@ -324,9 +343,10 @@ export function installActualValueSync(root, getFrm) {
     if (doctype !== 'Costing Worksheet Complexity Rating') return
 
     const row = frm.doc?.[fieldname]?.[indexOfRow(tr)]
-    if (!row || !NUMERIC_UNITS.includes(row.unit)) return
+    if (!row) return
 
     const labels = await fetchRatingLabels(frm, row.question)
+    if (!NUMERIC_UNITS.includes(resolveUnit(row, labels))) return
     const matched = matchRatingScore(row.actual_value, labels)
     if (matched && String(row.rating) !== matched) {
       rowFrmFor(frm, fieldname, row).set_value('rating', matched)
@@ -392,11 +412,19 @@ export function installActualValueUnitControl(root, getFrm) {
     const input = label.querySelector('input')
     if (!row || !input) return
 
-    if (row.unit !== 'text') {
+    // Fetched before branching on unit, not after: `resolveUnit` prefers the
+    // master's own `unit` over the row's copy (see its doc comment), and
+    // that copy is exactly what's missing on a worksheet whose questions
+    // were loaded before `unit` existed — branching on `row.unit` alone
+    // silently drops those rows to a bare number box forever.
+    const labels = await fetchRatingLabels(frm, row.question)
+    const unit = resolveUnit(row, labels)
+
+    if (unit !== 'text') {
       label.querySelector(`select[${UNIT_SELECT_ATTR}]`)?.remove()
       input.style.display = ''
-      label.classList.toggle(UNIT_PERCENT_CLASS, row.unit === '%')
-      if (row.unit === '%') {
+      label.classList.toggle(UNIT_PERCENT_CLASS, unit === '%')
+      if (unit === '%') {
         input.min = '0'
         input.max = '100'
       }
@@ -404,7 +432,6 @@ export function installActualValueUnitControl(root, getFrm) {
     }
 
     label.classList.remove(UNIT_PERCENT_CLASS)
-    const labels = await fetchRatingLabels(frm, row.question)
     const options = [1, 2, 3]
       .map((n) => ({ n, text: labels?.[`rating_${n}_label`] }))
       .filter((o) => o.text)

@@ -25,7 +25,8 @@ import {
   fetchRatingLabels,
   parseRatingRange,
   matchRatingScore,
-  NUMERIC_UNITS
+  NUMERIC_UNITS,
+  resolveUnit
 } from '@/lib/childRowDrawer'
 
 const props = defineProps({
@@ -83,8 +84,8 @@ watch(
  */
 const canProbeValue = computed(
   () =>
-    NUMERIC_UNITS.includes(row.value?.unit) &&
     Boolean(ratingLabels.value) &&
+    NUMERIC_UNITS.includes(resolveUnit(row.value, ratingLabels.value)) &&
     [1, 2, 3].some((n) => parseRatingRange(ratingLabels.value[`rating_${n}_label`]))
 )
 /** Seeded from the row's own stored `actual_value` whenever the open row
@@ -217,7 +218,7 @@ onBeforeUnmount(() => {
                   type="number"
                   v-model="probeValue"
                   @input="onProbeInput"
-                  :placeholder="row.unit === '%' ? 'Enter the actual %' : 'Enter the actual count'"
+                  :placeholder="resolveUnit(row, ratingLabels) === '%' ? 'Enter the actual %' : 'Enter the actual count'"
                 />
                 <span class="child-drawer__rating-probe-hint">Picks the matching band below</span>
               </div>

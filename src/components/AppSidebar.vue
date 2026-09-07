@@ -22,18 +22,27 @@ import httLogo from '@/assets/brand/htt-logo.png'
  * without a role check. Move this to the backend list the day someone can
  * add those records; `MASTER_NAV` and `MastersView.vue`'s `MASTERS` would
  * then both want trimming to whichever one place keeps the list.
+ *
+ * Tank Type / Costing Department / Paint Make / Paint System Rate / DFT
+ * Range, and the "Costing Masters" group header itself, were removed from
+ * this nav on request — they still exist as DocTypes/routes, just not
+ * linked from the sidebar.
  */
 const MASTER_NAV = [
-  { doctype: 'Tank Type', label: 'Tank Types', icon: 'container' },
-  { doctype: 'Costing Department', label: 'Costing Departments', icon: 'building-2' },
-  { doctype: 'Material Rate', label: 'Material Rates', icon: 'coins' },
-  { doctype: 'Paint Make', label: 'Paint Makes', icon: 'paintbrush' },
-  { doctype: 'Paint System Rate', label: 'Paint System Rates', icon: 'palette' },
-  { doctype: 'DFT Range', label: 'DFT Ranges', icon: 'layers' },
   { doctype: 'Order Complexity Question', label: 'Complexity Questions', icon: 'list-checks' },
-  { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' }
+  { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' },
+  { doctype: 'Item Price Master', label: 'Item Price Master', icon: 'tag' }
 ].map((m) => ({ ...m, route: `/list/${m.doctype}` }))
 const SETTINGS_NAV = { label: 'Costing Settings', icon: 'settings', route: '/form/Costing Settings/Costing Settings' }
+// Same header treatment SidebarNodes.vue uses for a server-driven "Section"
+// group (e.g. MAIN) — kept in sync by eye since this one's hardcoded.
+const setupHeaderStyle = {
+  fontSize: '11px',
+  fontWeight: '700',
+  color: '#94A0AE',
+  letterSpacing: '.08em',
+  padding: '14px 10px 8px'
+}
 
 const route = useRoute()
 const { userName } = storeToRefs(useAppStore())
@@ -67,13 +76,6 @@ watch(() => session.user, loadSidebar)
 // Only the profile card still needs this; entries own their own highlight.
 const activeNav = computed(() => route.meta.nav)
 
-const masterHeaderStyle = {
-  fontSize: '11px',
-  fontWeight: '700',
-  color: '#94A0AE',
-  letterSpacing: '.08em',
-  padding: '14px 10px 8px'
-}
 // `route.path` comes back percent-encoded ("/list/Tank%20Type"); every
 // doctype name here has a space, so this needs decoding to ever match —
 // see `SidebarNodes.vue`'s own note on the same issue for report names.
@@ -162,7 +164,7 @@ const initials = computed(() =>
       </div>
       <SidebarNodes :nodes="items" />
 
-      <div :style="masterHeaderStyle">Costing Masters</div>
+      <div :style="setupHeaderStyle">Setup</div>
       <div style="display:flex; flex-direction:column; gap:3px;">
         <RouterLink
           v-for="m in MASTER_NAV"

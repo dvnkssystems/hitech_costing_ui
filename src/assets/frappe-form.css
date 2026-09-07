@@ -632,12 +632,17 @@
   box-shadow: 0 0 0 3px rgba(11, 52, 101, 0.12);
 }
 
-/* Read-only cells shouldn't advertise themselves as editable. */
+/* Read-only cells shouldn't advertise themselves as editable — but they still
+   need to be read, so text stays dark rather than fading to --app-muted.
+   !important: a more general rule earlier in this same file
+   (`.frappe-form .control input:disabled`, the non-grid read-only style)
+   was winning over this one despite being less specific on paper — forcing
+   it here rather than chasing the exact cause. */
 .frappe-form .frappe-child-table .control input:disabled,
 .frappe-form .frappe-child-table .control select:disabled {
-  border-color: transparent;
-  background: transparent;
-  color: var(--app-muted);
+  border-color: transparent !important;
+  background: transparent !important;
+  color: #1e293b !important;
 }
 
 /* Numbers line up on the right, like any spreadsheet or ledger. */

@@ -1,20 +1,30 @@
 <script setup>
 /**
- * "What kind of quotation?" — front door in front of the Costing Worksheet
+ * "What type of quotation?" — front door in front of the Costing Worksheet
  * wizard, styled after the Quotation Wizard design.
  *
- * The three cards are `Quotation`'s real `order_type` Select options (Sales /
- * Maintenance / Shopping Cart — see erpnext's quotation.json), not invented
- * ones. Only Sales is clickable: `Costing Worksheet.create_quotation()` (the
- * only thing in this app that ever creates a `Quotation`) hardcodes
- * `order_type = "Sales"`, and there is no Maintenance or Shopping Cart flow
- * anywhere in hitech_costing, so this screen doesn't pretend they work.
+ * The cards are `Quotation`'s real `custom_type` Select options (Tank /
+ * Radiator — see hitech_costing's `costing_worksheet.py`
+ * `QUOTATION_HEADER_FIELDS`). Both are clickable and run the exact same
+ * eight-step costing wizard — a real Tank Type record named "Radiator Line"
+ * already exists, so Radiator isn't a different set of fields, just a
+ * different label on the resulting Quotation. `custom_type` carries that
+ * label through; nothing about the wizard itself branches on it.
+ *
+ * This screen used to ask about `order_type` (Sales / Maintenance / Shopping
+ * Cart) instead — that field is real too, but `Costing Worksheet.
+ * create_quotation()` (the only thing in this app that ever creates a
+ * `Quotation`) hardcodes `order_type = "Sales"` regardless, so asking about
+ * it here was a dead choice. `custom_type` (Tank/Radiator) is the question
+ * that actually matters to this app, so it replaces `order_type` here.
  *
  * Picking a Tank Type here pre-seeds it onto the wizard through
  * `seedPendingDoc`, the same "park a new document for the target route"
  * channel `frappe.new_doc` and mapped-doc creation already use —
  * `CostingWorksheetWizard.vue` picks it up via
  * `takePendingDoc('Costing Worksheet')` as `useFrmRemote`'s `initialDoc`.
+ * The chosen `custom_type` rides the same channel, keyed by `'Quotation'`
+ * instead, and lands on `quotationHeaderFrm`'s initial doc there.
  */
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -27,26 +37,21 @@ import LucideIcon from '@/components/LucideIcon.vue'
 const router = useRouter()
 const live = computed(() => hasBackend)
 
-/** Quotation's real `order_type` Select options — only Sales has a flow behind it. */
-const ORDER_TYPES = [
+/** Quotation's real `custom_type` Select options — both run the same wizard. */
+const PRODUCT_TYPES = [
   {
-    key: 'Sales',
+    key: 'Tank',
     desc: 'Costed product quote. Runs the eight-step wizard and lands on a costing worksheet.',
     enabled: true
   },
   {
-    key: 'Maintenance',
-    desc: 'A real Quotation order type — no costing flow built for it in this app yet.',
-    enabled: false
-  },
-  {
-    key: 'Shopping Cart',
-    desc: "Set by the customer portal's own checkout, not chosen here.",
-    enabled: false
+    key: 'Radiator',
+    desc: 'Costed product quote, same wizard — pick a radiator Tank Type (e.g. "Radiator Line") below.',
+    enabled: true
   }
 ]
 
-const type = ref(null) // null | 'Sales'
+const type = ref(null) // null | 'Tank' | 'Radiator'
 const tankTypes = ref([])
 const loading = ref(false)
 const error = ref('')
@@ -68,9 +73,9 @@ async function loadTankTypes() {
   }
 }
 
-function pickType(orderType) {
-  if (!orderType.enabled) return
-  type.value = orderType.key
+function pickType(productType) {
+  if (!productType.enabled) return
+  type.value = productType.key
   if (!tankTypes.value.length && !loading.value) loadTankTypes()
 }
 
@@ -78,11 +83,12 @@ function startWizard(tankTypeName) {
   if (tankTypeName) {
     seedPendingDoc('Costing Worksheet', { doctype: 'Costing Worksheet', tank_type: tankTypeName })
   }
+  seedPendingDoc('Quotation', { doctype: 'Quotation', custom_type: type.value })
   router.push('/wizard/costing-worksheet')
 }
 
 onMounted(() => {
-  if (type.value === 'Sales') loadTankTypes()
+  if (type.value) loadTankTypes()
 })
 </script>
 
@@ -96,30 +102,30 @@ onMounted(() => {
       <span class="qw-crumbtrail__current">New quote</span>
     </div>
 
-    <h1 class="qw-heading">What kind of quotation?</h1>
+    <h1 class="qw-heading">What type of quotation?</h1>
     <p class="qw-lede">
-      These are Quotation's real Order Type values. Only Sales has a flow behind it in this app — it runs
-      the costing wizard and creates the Quotation from an approved worksheet.
+      These are Quotation's real Type values. Both run the same costing wizard and create the
+      Quotation from an approved worksheet — Type just labels which one this quote is.
     </p>
 
     <div class="qw-type-grid">
       <button
-        v-for="(ot, i) in ORDER_TYPES"
-        :key="ot.key"
+        v-for="(pt, i) in PRODUCT_TYPES"
+        :key="pt.key"
         type="button"
         class="qw-type-card"
-        :class="{ 'is-active': type === ot.key, 'is-disabled': !ot.enabled }"
-        :disabled="!ot.enabled"
-        :title="ot.enabled ? '' : 'No flow built for this order type yet'"
-        @click="pickType(ot)"
+        :class="{ 'is-active': type === pt.key, 'is-disabled': !pt.enabled }"
+        :disabled="!pt.enabled"
+        :title="pt.enabled ? '' : 'No flow built for this type yet'"
+        @click="pickType(pt)"
       >
-        <div class="qw-type-card__eyebrow">ORDER TYPE {{ String(i + 1).padStart(2, '0') }}</div>
-        <div class="qw-type-card__name">{{ ot.key }}</div>
-        <div class="qw-type-card__desc">{{ ot.desc }}</div>
+        <div class="qw-type-card__eyebrow">TYPE {{ String(i + 1).padStart(2, '0') }}</div>
+        <div class="qw-type-card__name">{{ pt.key }}</div>
+        <div class="qw-type-card__desc">{{ pt.desc }}</div>
       </button>
     </div>
 
-    <div v-if="type === 'Sales'" class="qw-tank-section">
+    <div v-if="type" class="qw-tank-section">
       <h2 class="qw-section-title">Tank type</h2>
       <p class="qw-lede">
         Optional — pre-fills step 2's Tank type field from a real

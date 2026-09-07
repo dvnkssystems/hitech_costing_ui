@@ -37,6 +37,7 @@ import LucideIcon from '@/components/LucideIcon.vue'
 import {
   SHARED_STEP,
   ITEM_STEPS,
+  TYPE_FIELDS,
   TAX_FIELDS,
   ADDRESS_FIELDS,
   TERMS_FIELDS,
@@ -47,9 +48,7 @@ import {
   stepIsComplete,
   volumesSplitError,
   pureMarginError,
-  MIN_PURE_MARGIN_PERCENT,
-  taxBasisLabel,
-  computeTaxRow
+  MIN_PURE_MARGIN_PERCENT
 } from '@/lib/costingWorksheetWizard'
 import { call, metaFetcher, hasBackend } from '@/lib/frappe'
 import { db } from '@/lib/frappeDb'
@@ -64,7 +63,7 @@ import {
   installWorkflowActions
 } from '@/lib/frmCompat'
 import { installDeskApis, installAmend, takePendingDoc } from '@/lib/mappedDoc'
-import { money, decimal, formatDate, moneyInWords } from '@/utils/format'
+import { money, decimal, formatDate } from '@/utils/format'
 
 const DOCTYPE = 'Costing Worksheet'
 const HEADER_DOCTYPE = 'Quotation'
@@ -73,7 +72,6 @@ const PAGE_STEPS = [
   { key: 'customer', title: 'Customer & Order' },
   { key: 'items', title: 'Costing Sheet' },
   { key: 'pricing', title: 'Items & Pricing' },
-  { key: 'taxes', title: 'Taxes & Charges' },
   { key: 'address', title: 'Address & Delivery' },
   { key: 'terms', title: 'Terms & Conditions' },
   { key: 'review', title: 'Review & Submit' }
@@ -127,7 +125,6 @@ const unlockedPageIndexes = computed(() => {
       idx.add(3)
       idx.add(4)
       idx.add(5)
-      idx.add(6)
     }
   }
   return idx
@@ -216,11 +213,6 @@ function sectionRows(frm, fields) {
     .filter(Boolean)
 }
 
-const taxReviewRows = computed(() => {
-  const rows = sectionRows(quotationHeaderFrm.value, TAX_FIELDS)
-  if (taxRows.value.length) rows.push({ label: 'Estimated tax total', value: money(taxTotalRaw.value) })
-  return rows
-})
 const termsReviewRows = computed(() => {
   const selectedTexts = termChecklist.value.filter((t) => t.row?.selected).map((t) => t.text)
   const rows = [{ label: 'Terms selected', value: `${selectedTexts.length} of ${termChecklist.value.length}` }]
@@ -233,10 +225,20 @@ const termsReviewRows = computed(() => {
 })
 
 const reviewSections = computed(() => [
-  { key: 'customer', n: '01', title: 'Customer & Order', rows: sectionRows(orderFrm.value, SHARED_STEP.fields) },
-  { key: 'taxes', n: '02', title: 'Taxes & Charges', rows: taxReviewRows.value },
-  { key: 'address', n: '03', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, ADDRESS_FIELDS) },
-  { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
+  {
+    key: 'customer',
+    n: '01',
+    title: 'Customer & Order',
+    // 'Type' isn't a Costing Worksheet field (it lives on the Quotation
+    // header, see TYPE_FIELDS) so it can't come from sectionRows(orderFrm,
+    // ...) like the rest of this section — added manually instead.
+    rows: [
+      { label: 'Type', value: quotationHeaderFrm.value?.doc?.custom_type },
+      ...sectionRows(orderFrm.value, SHARED_STEP.fields)
+    ]
+  },
+  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, ADDRESS_FIELDS) },
+  { key: 'terms', n: '03', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
 
 function itemLabel(item, i) {
@@ -294,81 +296,6 @@ const itemsSummary = computed(() => {
   const total = itemsPricingRows.value.reduce((sum, row) => sum + row.finalAmountRaw, 0)
   return { totalQuantity, total: money(total), netTotal: money(total), totalRaw: total }
 })
-
-/* ── Taxes & Charges step ────────────────────────────────────────────────── */
-
-const taxTemplateRows = ref([])
-const taxTemplateLoading = ref(false)
-const taxTemplateError = ref('')
-
-/** Taxable value the Taxes step previews against — items total less the
- *  Address & Delivery step's discount. Reactive to both even though discount
- *  is entered on a LATER step: the design's own footnote calls this out, and
- *  Vue's reactivity doesn't care about wizard step order either way. */
-const discountAmount = computed(() => {
-  const percent = Number(quotationHeaderFrm.value?.doc?.additional_discount_percentage) || 0
-  return (itemsSummary.value.totalRaw * percent) / 100
-})
-const taxableValue = computed(() => Math.max(0, itemsSummary.value.totalRaw - discountAmount.value))
-
-/** Re-fetches the chosen template's raw rows and stages them onto the
- *  throwaway header frm's real `taxes` table whenever the template changes —
- *  see `TAX_TABLE_FIELD`'s doc comment for why staging real rows (not just
- *  the template name) is what makes the eventual Quotation actually charge
- *  tax. */
-watch(
-  () => quotationHeaderFrm.value?.doc?.taxes_and_charges,
-  async (templateName) => {
-    const frm = quotationHeaderFrm.value
-    if (!frm) return
-    frm.clear_table(TAX_TABLE_FIELD)
-    taxTemplateRows.value = []
-    taxTemplateError.value = ''
-    if (!templateName) return
-    taxTemplateLoading.value = true
-    try {
-      const rows = await call('erpnext.controllers.accounts_controller.get_taxes_and_charges', {
-        master_doctype: 'Sales Taxes and Charges Template',
-        master_name: templateName
-      })
-      // `get_taxes_and_charges` strips `idx` along with every other
-      // house-keeping field — reconstruct it (1-based) from list order, the
-      // same order the source template's own child table iterated in, since
-      // `computeTaxRow`'s "previous row" charge types chase `row_id` against
-      // it.
-      const list = (Array.isArray(rows) ? rows : []).map((row, i) => ({ ...row, idx: i + 1 }))
-      for (const row of list) frm.add_child(TAX_TABLE_FIELD, row)
-      taxTemplateRows.value = list
-    } catch (e) {
-      taxTemplateError.value = e?.message ?? String(e)
-    } finally {
-      taxTemplateLoading.value = false
-    }
-  }
-)
-
-const taxRows = computed(() =>
-  taxTemplateRows.value.map((row, i) => ({
-    key: row.name || row.idx || i,
-    label: row.description || row.account_head || row.charge_type,
-    rate: decimal(row.rate),
-    basis: taxBasisLabel(row.charge_type),
-    amount: computeTaxRow(row, taxTemplateRows.value, taxableValue.value)
-  }))
-)
-const taxTotalRaw = computed(() => taxRows.value.reduce((sum, r) => sum + r.amount, 0))
-
-/** Client-side preview of the real Quotation's own Grand Total / Rounding /
- *  In Words fields — no real Quotation exists yet at this point for a
- *  brand-new wizard run, so these mirror ERPNext's own math (grand total =
- *  net total + taxes; rounded total = nearest rupee unless disabled; rounding
- *  adjustment = the difference) against the client-side `taxRows` above,
- *  rather than reading server-computed fields. */
-const grandTotalRaw = computed(() => taxableValue.value + taxTotalRaw.value)
-const disableRoundedTotal = computed(() => Boolean(quotationHeaderFrm.value?.doc?.disable_rounded_total))
-const roundedTotalRaw = computed(() => (disableRoundedTotal.value ? grandTotalRaw.value : Math.round(grandTotalRaw.value)))
-const roundingAdjustmentRaw = computed(() => roundedTotalRaw.value - grandTotalRaw.value)
-const totalsInWords = computed(() => moneyInWords(roundedTotalRaw.value))
 
 /* ── Terms & Conditions step ─────────────────────────────────────────────── */
 
@@ -514,7 +441,7 @@ let teardownEnhancements = null
 const currentFrm = computed(() => {
   if (activePageStep.value === 'customer') return orderFrm.value
   if (activePageStep.value === 'items') return activeItem.value?.frm ?? null
-  if (['taxes', 'address', 'terms'].includes(activePageStep.value)) return quotationHeaderFrm.value
+  if (['address', 'terms'].includes(activePageStep.value)) return quotationHeaderFrm.value
   return null
 })
 watch(wizardEl, (el) => {
@@ -535,6 +462,68 @@ function addressQueryScript(frappe) {
     }
   })
 }
+
+/** Auto-fills the Address & Delivery step's two address fields from the
+ *  customer's own default addresses — mirrors what picking a Customer does
+ *  on the real Quotation form (`erpnext.utils.get_party_details`). That real
+ *  endpoint also wants a Company/Posting Date this throwaway header frm
+ *  doesn't carry, so this queries `Address` directly for the same "default
+ *  billing / default shipping" flags instead of reusing it.
+ *
+ *  Only fills a field that's still empty — a resumed Quotation that already
+ *  has its own (possibly non-default) address saved is left alone; this is
+ *  purely for a brand-new wizard run where the fields start blank. */
+watch(
+  () => orderFrm.value?.doc?.customer,
+  async (customer) => {
+    const frm = quotationHeaderFrm.value
+    if (!customer || !frm) return
+    if (frm.doc.customer_address && frm.doc.shipping_address_name) return
+    try {
+      const addresses = await db.get_list('Address', {
+        filters: [
+          ['Dynamic Link', 'link_doctype', '=', 'Customer'],
+          ['Dynamic Link', 'link_name', '=', customer]
+        ],
+        fields: ['name', 'is_primary_address', 'is_shipping_address'],
+        limit_page_length: 0
+      })
+      const billing = addresses.find((a) => a.is_primary_address) ?? addresses[0]
+      const shipping = addresses.find((a) => a.is_shipping_address) ?? billing
+      if (billing && !frm.doc.customer_address) await frm.set_value('customer_address', billing.name)
+      if (shipping && !frm.doc.shipping_address_name) await frm.set_value('shipping_address_name', shipping.name)
+    } catch {
+      // Best-effort default — the step still lets the user pick manually.
+    }
+  }
+)
+
+/** Keeps `address_display`/`shipping_address` (the real Quotation's own
+ *  read-only formatted-address text fields, shown right under the Link
+ *  picker on the real desk form's Address & Contact tab) in sync with
+ *  whichever address is picked — same helper core Frappe forms use
+ *  (`frappe.utils.get_address_display` in address_and_contact.js), just
+ *  called directly since this throwaway frm has no such built-in trigger. */
+function watchAddressDisplay(linkField, displayField) {
+  watch(
+    () => quotationHeaderFrm.value?.doc?.[linkField],
+    async (addressName) => {
+      const frm = quotationHeaderFrm.value
+      if (!frm) return
+      if (!addressName) return void frm.set_value(displayField, '')
+      try {
+        const display = await call('frappe.contacts.doctype.address.address.get_address_display', {
+          address_dict: addressName
+        })
+        await frm.set_value(displayField, display ?? '')
+      } catch {
+        // Leave the display field as-is — the Link value itself is still correct.
+      }
+    }
+  )
+}
+watchAddressDisplay('customer_address', 'address_display')
+watchAddressDisplay('shipping_address_name', 'shipping_address')
 
 /** Deliberately omits `lockOnSubmit`: a Costing Worksheet's own docstatus
  *  does NOT lock its fields here — see `activeItemLocked` above for why
@@ -737,8 +726,14 @@ async function load() {
       // an existing Quotation always has 'review' unlocked by this point.
       activePageStep.value = 'review'
     } else {
+      // Set by `/quotation/new`'s Type cards (Tank/Radiator) via
+      // seedPendingDoc('Quotation', ...) — see QuotationNewView.vue. Falls
+      // back to "Tank" when the wizard is opened some other way (e.g.
+      // directly via URL), since that's still the only real flow either
+      // Type runs through (see TYPE_FIELDS in costingWorksheetWizard.js).
+      const headerSeed = takePendingDoc(HEADER_DOCTYPE)
       quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
-        initialDoc: { doctype: HEADER_DOCTYPE },
+        initialDoc: { doctype: HEADER_DOCTYPE, custom_type: 'Tank', ...headerSeed },
         scripts: [addressQueryScript]
       })
 
@@ -964,6 +959,7 @@ async function submitAll() {
 
   const header = quotationHeaderFrm.value
     ? pick(quotationHeaderFrm.value.doc, [
+        ...TYPE_FIELDS,
         ...TAX_FIELDS,
         TAX_TABLE_FIELD,
         ...ADDRESS_FIELDS,
@@ -1269,87 +1265,25 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 04 · Taxes & charges (shared, once) -->
-        <section v-else-if="activePageStep === 'taxes'">
-          <div class="qw-step-card">
-            <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Taxes & Charges</h2>
-            <p v-if="quotationName" class="qw-step-lede">
-              Editing taxes on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
-            </p>
-            <WizardStep :frm="quotationHeaderFrm" :fields="['taxes_and_charges']" read-only-filter="exclude" />
-            <div v-if="taxTemplateError" class="qw-step-error">{{ taxTemplateError }}</div>
-            <p v-else-if="taxTemplateLoading" class="qw-step-lede" style="margin-top: 18px;">Loading tax template…</p>
-            <template v-else>
-              <template v-if="taxRows.length">
-                <table class="qw-quotation-items" style="margin-top: 18px;">
-                  <thead>
-                    <tr>
-                      <th>Charge</th>
-                      <th>Rate</th>
-                      <th>On</th>
-                      <th>Amount ₹</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="row in taxRows" :key="row.key">
-                      <td>{{ row.label }}</td>
-                      <td>{{ row.rate }} %</td>
-                      <td>{{ row.basis }}</td>
-                      <td>{{ money(row.amount) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p class="qw-step-lede" style="margin-top: 14px;">
-                  Charges compute on the taxable value — item amount less discount (set in Address & Delivery).
-                </p>
-              </template>
-              <div class="qw-totals-grid" style="margin-top: 18px;">
-                <div class="qw-totals-box">
-                  <span class="qw-totals-box__k">Total Taxes and Charges (INR)</span>
-                  <span class="qw-totals-box__v">{{ money(taxTotalRaw) }}</span>
-                </div>
-                <div class="qw-totals-box">
-                  <span class="qw-totals-box__k">Grand Total (INR)</span>
-                  <span class="qw-totals-box__v">{{ money(grandTotalRaw) }}</span>
-                </div>
-                <div v-if="!disableRoundedTotal" class="qw-totals-box">
-                  <span class="qw-totals-box__k">Rounding Adjustment (INR)</span>
-                  <span class="qw-totals-box__v">{{ money(roundingAdjustmentRaw) }}</span>
-                </div>
-                <div class="qw-totals-box">
-                  <span class="qw-totals-box__k">Rounded Total (INR)</span>
-                  <span class="qw-totals-box__v">{{ money(roundedTotalRaw) }}</span>
-                </div>
-              </div>
-              <WizardStep
-                :frm="quotationHeaderFrm"
-                :fields="['disable_rounded_total']"
-                read-only-filter="exclude"
-                style="margin-top: 12px;"
-              />
-              <p class="qw-step-lede" style="margin-top: 10px;"><strong>In Words:</strong> {{ totalsInWords }}</p>
-            </template>
-            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
-              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
-                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
-              </button>
-              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
-            </div>
-          </div>
-          <div class="qw-footer">
-            <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
-          </div>
-        </section>
-
-        <!-- 05 · Address & delivery (shared, once) -->
+        <!-- 04 · Address & delivery (shared, once) -->
         <section v-else-if="activePageStep === 'address'">
           <div class="qw-step-card">
-            <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Address & Delivery</h2>
+            <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Address & Delivery</h2>
             <p v-if="quotationName" class="qw-step-lede">
               Editing delivery details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
             <WizardStep :frm="quotationHeaderFrm" :fields="ADDRESS_FIELDS" read-only-filter="exclude" />
+            <!-- `address_display`/`shipping_address` are `read_only`, so the
+                 "exclude" step above never renders them — same "only" split
+                 the Complexity step's Calculated rail uses, just inline here
+                 rather than off to the side, since these read as a caption
+                 under each address picker, not a separate calculated panel. -->
+            <WizardStep
+              :frm="quotationHeaderFrm"
+              :fields="['address_display', 'shipping_address']"
+              read-only-filter="only"
+              style="margin-top: 14px;"
+            />
             <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
               <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
                 {{ headerSaving ? 'Saving…' : 'Save Changes' }}
@@ -1363,10 +1297,10 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 06 · Terms & conditions (shared, once) -->
+        <!-- 05 · Terms & conditions (shared, once) -->
         <section v-else-if="activePageStep === 'terms'">
           <div class="qw-step-card">
-            <h2 class="qw-step-title"><span class="qw-step-title__n">06</span>Terms & Conditions</h2>
+            <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Terms & Conditions</h2>
             <p v-if="quotationName" class="qw-step-lede">
               Editing terms on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
@@ -1399,7 +1333,7 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 07 · Review & submit -->
+        <!-- 06 · Review & submit -->
         <section v-else-if="activePageStep === 'review'">
           <div v-for="sec in reviewSections" :key="sec.key" class="qw-review-card">
             <div class="qw-review-card__head">
