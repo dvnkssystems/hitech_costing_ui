@@ -26,13 +26,85 @@
  * The chosen `custom_type` rides the same channel, keyed by `'Quotation'`
  * instead, and lands on `quotationHeaderFrm`'s initial doc there.
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { seedPendingDoc } from '@/lib/mappedDoc'
 import { listRouteFor } from '@/lib/frappeRouting'
+import { timeAgo } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
+
+/**
+ * In-progress wizard draft detection (read-only from here).
+ *
+ * `CostingWorksheetWizard.vue` autosaves a brand-new "New Quotation" session
+ * to `localStorage` under `DRAFT_STORAGE_KEY` (same value below) and offers
+ * to restore it itself when `/wizard/costing-worksheet` boots fresh — see
+ * that file's own doc comment above its `DRAFT_STORAGE_KEY`. This front door
+ * used to have no idea that draft existed: a user who navigated away mid-wizard
+ * and came back through here (rather than a direct URL/back-button) saw only
+ * the blank Tank/Radiator picker, and `startWizard()` would seed a brand-new
+ * session on top of it. This banner surfaces that draft here too, so "Resume"
+ * is possible from the front door as well as from a direct wizard re-visit.
+ */
+const DRAFT_STORAGE_KEY = 'hitech-costing:quotation-draft'
+/** One-shot signal for `CostingWorksheetWizard.vue`'s `load()`: when set, it
+ *  restores its own draft without asking again (the user already chose
+ *  "Resume" here) -- read once and cleared there. */
+const DRAFT_RESUME_FLAG = 'hitech-costing:quotation-draft-resume'
+
+function readInProgressDraft() {
+  try {
+    const raw = globalThis.localStorage?.getItem(DRAFT_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    // Minimal shape check against `buildDraftSnapshot()`'s real shape in
+    // CostingWorksheetWizard.vue -- anything that doesn't look like it came
+    // from there (stale pre-field format, corrupted write, etc.) is treated
+    // as "no draft" rather than risking a broken banner.
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.savedAt !== 'string') {
+      throw new Error('unrecognized draft shape')
+    }
+    return parsed
+  } catch {
+    try {
+      globalThis.localStorage?.removeItem(DRAFT_STORAGE_KEY)
+    } catch {
+      // Private mode or storage disabled -- nothing to clean up either way.
+    }
+    return null
+  }
+}
+
+/** Own key, separate from CostingWorksheetWizard.vue's `DRAFT_STORAGE_KEY`
+ *  (`hitech-costing:quotation-draft`) -- this is just the Tank/Radiator pick
+ *  on this front-door screen, not the wizard's own field draft. */
+const TYPE_STORAGE_KEY = 'hitech-costing:quotation-new-type'
+
+function readSavedType() {
+  try {
+    return globalThis.localStorage?.getItem(TYPE_STORAGE_KEY) || null
+  } catch {
+    return null
+  }
+}
+function writeSavedType(value) {
+  try {
+    if (value) globalThis.localStorage?.setItem(TYPE_STORAGE_KEY, value)
+    else globalThis.localStorage?.removeItem(TYPE_STORAGE_KEY)
+  } catch {
+    // Private mode or storage disabled -- the picker still works for this
+    // session, it just won't survive a navigate-away-and-back.
+  }
+}
+function clearSavedType() {
+  try {
+    globalThis.localStorage?.removeItem(TYPE_STORAGE_KEY)
+  } catch {
+    // ditto
+  }
+}
 
 const router = useRouter()
 const live = computed(() => hasBackend)
@@ -51,10 +123,35 @@ const PRODUCT_TYPES = [
   }
 ]
 
-const type = ref(null) // null | 'Tank' | 'Radiator'
+const type = ref(readSavedType()) // null | 'Tank' | 'Radiator'
 const tankTypes = ref([])
 const loading = ref(false)
 const error = ref('')
+
+const inProgressDraft = ref(readInProgressDraft())
+const draftCustomerLabel = computed(() => inProgressDraft.value?.order?.customer || null)
+const draftSavedAgo = computed(() => (inProgressDraft.value ? timeAgo(inProgressDraft.value.savedAt) || 'a moment ago' : ''))
+
+function resumeDraft() {
+  try {
+    globalThis.sessionStorage?.setItem(DRAFT_RESUME_FLAG, '1')
+  } catch {
+    // Private mode or storage disabled -- the wizard just falls back to its
+    // own "restore it?" prompt instead of skipping it, still not broken.
+  }
+  router.push('/wizard/costing-worksheet')
+}
+
+function discardDraft() {
+  try {
+    globalThis.localStorage?.removeItem(DRAFT_STORAGE_KEY)
+  } catch {
+    // ditto
+  }
+  inProgressDraft.value = null
+}
+
+watch(type, (value) => writeSavedType(value))
 
 async function loadTankTypes() {
   if (!live.value) return
@@ -84,6 +181,7 @@ function startWizard(tankTypeName) {
     seedPendingDoc('Costing Worksheet', { doctype: 'Costing Worksheet', tank_type: tankTypeName })
   }
   seedPendingDoc('Quotation', { doctype: 'Quotation', custom_type: type.value })
+  clearSavedType()
   router.push('/wizard/costing-worksheet')
 }
 
@@ -102,67 +200,85 @@ onMounted(() => {
       <span class="qw-crumbtrail__current">New quote</span>
     </div>
 
-    <h1 class="qw-heading">What type of quotation?</h1>
-    <p class="qw-lede">
-      These are Quotation's real Type values. Both run the same costing wizard and create the
-      Quotation from an approved worksheet — Type just labels which one this quote is.
-    </p>
-
-    <div class="qw-type-grid">
-      <button
-        v-for="(pt, i) in PRODUCT_TYPES"
-        :key="pt.key"
-        type="button"
-        class="qw-type-card"
-        :class="{ 'is-active': type === pt.key, 'is-disabled': !pt.enabled }"
-        :disabled="!pt.enabled"
-        :title="pt.enabled ? '' : 'No flow built for this type yet'"
-        @click="pickType(pt)"
-      >
-        <div class="qw-type-card__eyebrow">TYPE {{ String(i + 1).padStart(2, '0') }}</div>
-        <div class="qw-type-card__name">{{ pt.key }}</div>
-        <div class="qw-type-card__desc">{{ pt.desc }}</div>
-      </button>
-    </div>
-
-    <div v-if="type" class="qw-tank-section">
-      <h2 class="qw-section-title">Tank type</h2>
-      <p class="qw-lede">
-        Optional — pre-fills step 2's Tank type field from a real
-        <RouterLink :to="listRouteFor('Tank Type')">Tank Type</RouterLink> record. You can change it in the
-        wizard either way.
-      </p>
-
-      <div v-if="!live" class="qw-notice">
-        Set <code>VITE_FRAPPE_URL</code> in <code>.env</code> to load Tank Type records.
-      </div>
-      <div v-else-if="error" class="qw-error-banner">
-        <span class="qw-error-banner__icon"><LucideIcon name="x" /></span>
-        <div style="min-width:0;">
-          <div class="qw-error-banner__title">Could not load Tank Type</div>
-          <div class="qw-error-banner__body">{{ error }}</div>
+    <div v-if="inProgressDraft" class="qw-draft-banner">
+      <div class="qw-draft-banner__icon"><LucideIcon name="clock" /></div>
+      <div class="qw-draft-banner__body">
+        <div class="qw-draft-banner__title">
+          You have an in-progress quotation from {{ draftSavedAgo }}<template v-if="draftCustomerLabel"> for {{ draftCustomerLabel }}</template>.
+        </div>
+        <div class="qw-draft-banner__desc">
+          It was never saved — pick up where you left off, or discard it and start a fresh quote below.
         </div>
       </div>
-      <div v-else-if="loading" class="qw-loading">Loading tank types…</div>
-      <div v-else-if="!tankTypes.length" class="qw-notice">
-        No Tank Type records yet — start blank and pick a tank type inside the wizard.
+      <div class="qw-draft-banner__actions">
+        <button type="button" class="qw-btn-primary" @click="resumeDraft">Resume</button>
+        <button type="button" class="qw-ghost-btn" @click="discardDraft">Discard &amp; start new</button>
       </div>
-      <div v-else class="qw-tank-grid">
+    </div>
+
+    <template v-else>
+      <h1 class="qw-heading">What type of quotation?</h1>
+      <p class="qw-lede">
+        These are Quotation's real Type values. Both run the same costing wizard and create the
+        Quotation from an approved worksheet — Type just labels which one this quote is.
+      </p>
+
+      <div class="qw-type-grid">
         <button
-          v-for="t in tankTypes"
-          :key="t.name"
+          v-for="(pt, i) in PRODUCT_TYPES"
+          :key="pt.key"
           type="button"
-          class="qw-tank-tile"
-          @click="startWizard(t.name)"
+          class="qw-type-card"
+          :class="{ 'is-active': type === pt.key, 'is-disabled': !pt.enabled }"
+          :disabled="!pt.enabled"
+          :title="pt.enabled ? '' : 'No flow built for this type yet'"
+          @click="pickType(pt)"
         >
-          {{ t.name }}
+          <div class="qw-type-card__eyebrow">TYPE {{ String(i + 1).padStart(2, '0') }}</div>
+          <div class="qw-type-card__name">{{ pt.key }}</div>
+          <div class="qw-type-card__desc">{{ pt.desc }}</div>
         </button>
       </div>
 
-      <button type="button" class="qw-ghost-btn" style="margin-top:16px;" @click="startWizard(null)">
-        Start blank →
-      </button>
-    </div>
+      <div v-if="type" class="qw-tank-section">
+        <h2 class="qw-section-title">Tank type</h2>
+        <p class="qw-lede">
+          Optional — pre-fills step 2's Tank type field from a real
+          <RouterLink :to="listRouteFor('Tank Type')">Tank Type</RouterLink> record. You can change it in the
+          wizard either way.
+        </p>
+
+        <div v-if="!live" class="qw-notice">
+          Set <code>VITE_FRAPPE_URL</code> in <code>.env</code> to load Tank Type records.
+        </div>
+        <div v-else-if="error" class="qw-error-banner">
+          <span class="qw-error-banner__icon"><LucideIcon name="x" /></span>
+          <div style="min-width:0;">
+            <div class="qw-error-banner__title">Could not load Tank Type</div>
+            <div class="qw-error-banner__body">{{ error }}</div>
+          </div>
+        </div>
+        <div v-else-if="loading" class="qw-loading">Loading tank types…</div>
+        <div v-else-if="!tankTypes.length" class="qw-notice">
+          No Tank Type records yet — start blank and pick a tank type inside the wizard.
+        </div>
+        <div v-else class="qw-tank-grid">
+          <button
+            v-for="t in tankTypes"
+            :key="t.name"
+            type="button"
+            class="qw-tank-tile"
+            @click="startWizard(t.name)"
+          >
+            {{ t.name }}
+          </button>
+        </div>
+
+        <button type="button" class="qw-ghost-btn" style="margin-top:16px;" @click="startWizard(null)">
+          Start blank →
+        </button>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -227,6 +343,62 @@ onMounted(() => {
 
 .qw-lede a {
   color: var(--qw-primary-dark);
+}
+
+.qw-draft-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: var(--qw-primary-tint);
+  border: 1px solid var(--qw-border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  margin-bottom: 26px;
+}
+
+.qw-draft-banner__icon {
+  flex: none;
+  color: var(--qw-primary-dark);
+  margin-top: 2px;
+}
+
+.qw-draft-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.qw-draft-banner__title {
+  font: 700 15.5px/1.4 'Raleway', system-ui, sans-serif;
+  color: var(--qw-text);
+}
+
+.qw-draft-banner__desc {
+  font: 400 13.5px/20px 'Raleway', system-ui, sans-serif;
+  color: var(--qw-muted);
+  margin-top: 4px;
+}
+
+.qw-draft-banner__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+
+.qw-btn-primary {
+  background: var(--qw-primary);
+  color: #fff;
+  border: 1px solid var(--qw-primary);
+  padding: 9px 18px;
+  border-radius: 10px;
+  font: 700 13.5px/1 'Raleway', system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qw-btn-primary:hover {
+  background: var(--qw-primary-hover);
+  border-color: var(--qw-primary-hover);
 }
 
 .qw-type-grid {
