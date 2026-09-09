@@ -2159,7 +2159,7 @@ watch(() => props.quotation, load)
                 <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
                   <WizardStep :frm="activeItem.frm" :fields="CONTAINER_LOGISTICS_FIELDS" read-only-filter="exclude" />
                 </fieldset>
-                <div v-if="containerLogisticsRows.length" class="qw-derived__rows" style="margin-top: 16px;">
+                <div v-if="containerLogisticsRows.length" class="qw-derived__rows qw-derived__rows--inline" style="margin-top: 16px;">
                   <div
                     v-for="row in containerLogisticsRows"
                     :key="row.label"
@@ -2997,6 +2997,19 @@ watch(() => props.quotation, load)
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+/* Container / Logistics' three load-fit numbers (Units per Container /
+   Containers Required / Container Utilization %) read better side by side
+   than stacked — the other `.qw-derived__rows` users (Pure Margin etc.)
+   keep the default vertical stack. */
+.qw-derived__rows--inline {
+  flex-direction: row;
+}
+
+.qw-derived__rows--inline .qw-derived__row {
+  flex: 1;
+  min-width: 0;
 }
 
 .qw-derived__k {
