@@ -104,10 +104,57 @@ const addressRows = computed(() => {
   const d = doc.value
   return [
     row('Billing address', d.customer_address),
-    row('Shipping address', d.shipping_address_name),
+    row('Shipping address', d.shipping_address_name)
+    // Incoterm/Named place/Port of discharge moved to `eximRows` below —
+    // they conceptually belong to Exim now that it exists as its own
+    // concept (same split the wizard's ADDRESS_FIELDS/EXIM_FIELDS made).
+  ].filter(Boolean)
+})
+
+/** Yes/No formatter for the two Check fields — mirrors `row()`'s own
+ *  "drop when empty" contract, but a Check field is `0`/`1` (never blank),
+ *  so this only ever returns 'Yes'/'No', never null. */
+function checkRow(label, value) {
+  return row(label, Number(value) ? 'Yes' : 'No')
+}
+
+/** Mirrors `addressRows` above, one `row()` per `EXIM_FIELDS` entry (see
+ *  `hitech_costing/setup/install.py`'s `EXIM_FIELDS`, which this must stay in
+ *  sync with) — this hand-built read-only view shares no code with the
+ *  wizard, so the field list/labels are duplicated here rather than
+ *  imported from `costingWorksheetWizard.js`. */
+const eximRows = computed(() => {
+  if (!doc.value) return []
+  const d = doc.value
+  return [
     row('Incoterm', d.incoterm),
     row('Named place', d.named_place),
-    row('Port of discharge', d.hitech_port_of_discharge)
+    row('Region', d.hitech_region),
+    row('Country of origin', d.hitech_country_of_origin),
+    row('Country of destination', d.hitech_country_of_destination),
+    row('Domestic destination', d.hitech_domestic_destination),
+    row('Mode of transport', d.hitech_mode_of_transport),
+    row('Vehicle type', d.hitech_vehicle_type),
+    row('Port of loading', d.hitech_port_of_loading),
+    row('Port of discharge', d.hitech_port_of_discharge),
+    row('Pre-carriage by', d.hitech_pre_carriage_by),
+    row('Place of pre-carrier', d.hitech_place_of_pre_carrier),
+    row('Insurance %', d.hitech_insurance_percent ? `${decimal(d.hitech_insurance_percent)} %` : null),
+    row('Insurance value', d.hitech_insurance_value ? money(d.hitech_insurance_value) : null),
+    row('Insurance cost', d.hitech_insurance_cost ? money(d.hitech_insurance_cost) : null),
+    row('Destination inland cost', d.hitech_destination_inland_cost ? money(d.hitech_destination_inland_cost) : null),
+    row('Unloading cost at destination', d.hitech_unloading_cost_at_destination ? money(d.hitech_unloading_cost_at_destination) : null),
+    row('Import duty / tax', d.hitech_import_duty_tax ? money(d.hitech_import_duty_tax) : null),
+    row('Total gross weight (kg)', d.hitech_total_gross_weight_kg ? decimal(d.hitech_total_gross_weight_kg) : null),
+    checkRow('Partial shipment', d.hitech_partial_shipment),
+    checkRow('Trans-shipment', d.hitech_trans_shipment),
+    row('Sector', d.hitech_sector),
+    row('Basic freight', d.hitech_basic_freight ? money(d.hitech_basic_freight) : null),
+    row('Freight rate source', d.hitech_freight_rate_source),
+    row('Total freight cost', d.hitech_total_freight_cost ? money(d.hitech_total_freight_cost) : null),
+    row('FOB cost (applied)', d.hitech_fob_cost_applied ? money(d.hitech_fob_cost_applied) : null),
+    row('Region margin (applied)', d.hitech_region_margin_applied ? money(d.hitech_region_margin_applied) : null),
+    row('Freight (INR/kg)', d.hitech_freight_inr_per_kg ? decimal(d.hitech_freight_inr_per_kg) : null)
   ].filter(Boolean)
 })
 
@@ -128,7 +175,8 @@ const sections = computed(() =>
     { key: 'order', n: '01', title: 'Customer & Order', rows: orderRows.value },
     { key: 'taxes', n: '02', title: 'Taxes & Charges', rows: [row('Template', doc.value?.taxes_and_charges), ...totalsRows.value.filter(Boolean)].filter(Boolean) },
     { key: 'address', n: '03', title: 'Address & Delivery', rows: addressRows.value },
-    { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsRows.value }
+    { key: 'exim', n: '04', title: 'Exim / Incoterms', rows: eximRows.value },
+    { key: 'terms', n: '05', title: 'Terms & Conditions', rows: termsRows.value }
   ].filter((s) => s.rows.length)
 )
 

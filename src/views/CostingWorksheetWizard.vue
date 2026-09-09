@@ -40,6 +40,7 @@ import {
   TYPE_FIELDS,
   TAX_FIELDS,
   ADDRESS_FIELDS,
+  EXIM_FIELDS,
   TERMS_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
@@ -73,6 +74,7 @@ const PAGE_STEPS = [
   { key: 'items', title: 'Costing Sheet' },
   { key: 'pricing', title: 'Items & Pricing' },
   { key: 'address', title: 'Address & Delivery' },
+  { key: 'exim', title: 'Exim / Incoterms' },
   { key: 'terms', title: 'Terms & Conditions' },
   { key: 'review', title: 'Review & Submit' }
 ]
@@ -114,16 +116,23 @@ const submitAllError = ref('')
 
 const SHARED_FIELDNAMES = SHARED_STEP.fields
 
-/** `hitech_port_of_discharge` lives on the Quotation frm while `region` lives
- *  on the Costing Worksheet frm (`orderFrm`), so `depends_on` can't hide one
- *  off the other -- they're different docs. Filtered here instead, wherever
- *  ADDRESS_FIELDS would otherwise render it, for a Domestic order (only an
- *  Export shipment has a port of discharge). */
-const visibleAddressFields = computed(() =>
-  orderFrm.value?.doc?.region === 'Domestic'
-    ? ADDRESS_FIELDS.filter((f) => f !== 'hitech_port_of_discharge')
-    : ADDRESS_FIELDS
-)
+/** Pure address entry now — `incoterm`/`named_place`/`hitech_port_of_discharge`
+ *  moved to `EXIM_FIELDS`/the new `exim` step, so there's no region-based
+ *  filtering left to do here. Kept as a computed (rather than inlined) in
+ *  case address-side filtering is ever needed again. */
+const visibleAddressFields = computed(() => ADDRESS_FIELDS)
+
+/** Used to cross-filter `hitech_vehicle_type`/`hitech_domestic_destination`/
+ *  `hitech_sector`/`hitech_basic_freight` off the Costing Worksheet frm's
+ *  `region` (`orderFrm`), since `depends_on` can't reach across docs. Now
+ *  that `hitech_region` lives directly on the Quotation header frm
+ *  (`quotationHeaderFrm`) — the SAME frm as these four fields and everything
+ *  else in `EXIM_FIELDS` — their real native `depends_on` on `hitech_region`
+ *  is honoured for free by `WizardStep`'s own `isVisible`/`sectionRows`'
+ *  `fieldState` check. No client-side filtering left to do here; kept as a
+ *  computed (rather than inlined) for the same reason `visibleAddressFields`
+ *  above is, in case cross-frm filtering is ever needed again. */
+const visibleEximFields = computed(() => EXIM_FIELDS)
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -136,6 +145,7 @@ const unlockedPageIndexes = computed(() => {
       idx.add(3)
       idx.add(4)
       idx.add(5)
+      idx.add(6)
     }
   }
   return idx
@@ -189,7 +199,27 @@ function pick(obj, keys) {
   return out
 }
 
-function reviewDisplayValue(df, raw) {
+/** `address_display`/`shipping_address` are core Frappe read-only fields
+ *  whose value is `get_address_display()`'s own HTML — each address line
+ *  joined with a literal `<br>` — not this app's doing. Interpolating that
+ *  straight into text (`{{ value }}`) shows the raw tags instead of line
+ *  breaks. Deliberately not `v-html` here (an editable Address doctype's
+ *  content, however unlikely to carry markup, shouldn't be rendered as
+ *  HTML) — instead the tags are converted to real newlines and the row's
+ *  value span gets `white-space: pre-line` so they render as line breaks
+ *  as plain text. Scoped to just these two fieldnames so a field that
+ *  legitimately contained the literal text "<br>" wouldn't get mangled. */
+const BR_JOINED_FIELDS = new Set(['address_display', 'shipping_address'])
+
+function brJoinedToLines(raw) {
+  return String(raw)
+    .split(/<br\s*\/?>/gi)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+function reviewDisplayValue(df, raw, fieldname) {
   if (!df || raw === undefined || raw === null || raw === '') return '—'
   switch (df.fieldtype) {
     case 'Currency':
@@ -204,7 +234,7 @@ function reviewDisplayValue(df, raw) {
     case 'Date':
       return formatDate(raw)
     default:
-      return String(raw)
+      return BR_JOINED_FIELDS.has(fieldname) ? brJoinedToLines(raw) : String(raw)
   }
 }
 
@@ -219,7 +249,7 @@ function sectionRows(frm, fields) {
       } catch {
         return null
       }
-      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]) }
+      return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname], fieldname) }
     })
     .filter(Boolean)
 }
@@ -249,7 +279,8 @@ const reviewSections = computed(() => [
     ]
   },
   { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
-  { key: 'terms', n: '03', title: 'Terms & Conditions', rows: termsReviewRows.value }
+  { key: 'exim', n: '03', title: 'Exim / Incoterms', rows: sectionRows(quotationHeaderFrm.value, visibleEximFields.value) },
+  { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
 
 function itemLabel(item, i) {
@@ -281,15 +312,21 @@ const itemsPricingRows = computed(() =>
     // (see costing_worksheet.py's `_calculate_container_fit`) -- that one
     // only fills in once this item is a submitted Quotation Item with a real
     // qty in the database, which happens after this page. This page already
-    // has both `units_per_container` (computed on the Dimensions step,
-    // Export-only) and the quantity being typed in right here, so the same
+    // has both `units_per_container` (computed on this same Items & Pricing
+    // step's own Container / Logistics sub-section, Sea-only) and the
+    // quantity being typed in right here, so the same
     // qty ÷ units-per-container ÷ rounded-up math can be shown immediately,
-    // no submit needed. `null` means "not applicable" (Domestic, no
-    // Container Type chosen yet) vs. `0` meaning "doesn't fit this
-    // container" -- the template tells those apart.
-    const isExportWithContainer = doc.region === 'Export' && Boolean(doc.container_type)
+    // no submit needed. `null` means "not applicable" (mode of transport
+    // isn't Sea, or no Container Type chosen yet) vs. `0` meaning "doesn't
+    // fit this container" -- the template tells those apart.
+    //
+    // Was gated on `region === 'Export'` -- the backend's own `depends_on`
+    // for `container_type`/`units_per_container`/`containers_required`/
+    // `container_utilization_percent` switched to `mode_of_transport ==
+    // "Sea"`, so this client-side preview follows suit.
+    const isSeaWithContainer = doc.mode_of_transport === 'Sea' && Boolean(doc.container_type)
     const unitsPerContainer = Number(doc.units_per_container || 0)
-    const containersRequiredPreview = isExportWithContainer
+    const containersRequiredPreview = isSeaWithContainer
       ? unitsPerContainer > 0
         ? Math.ceil(quantity / unitsPerContainer)
         : 0
@@ -432,6 +469,151 @@ async function saveQuotationHeader() {
   }
 }
 
+/**
+ * Live freight preview for the Exim / Incoterms step — `exim.preview_freight`
+ * runs the exact same `calculate_freight()` engine a real save would, against
+ * a throwaway in-memory Quotation, and touches nothing server-side. This is
+ * what lets the Freight Summary fields (Total Freight Cost, Freight Rate
+ * Source, …) update as the estimator types, well before there's any
+ * Quotation to save at all — see this step's own "Save Changes" button above,
+ * which only exists once `quotationName` is set; a brand-new quotation has
+ * nothing to save until the whole wizard is submitted, so without this the
+ * Calculated rail would stay blank the entire time.
+ *
+ * `FREIGHT_PREVIEW_HEADER_FIELDS` mirrors the backend's own `HEADER_FIELDS`
+ * in `exim.py` — kept in sync by hand, same as `EXIM_FIELDS` above already
+ * says it must be. `customer` is in that backend list too (it biases which
+ * Freight Master row wins when several match), but it deliberately isn't
+ * read from `quotationHeaderFrm` like the rest: this wizard never puts a
+ * `customer` field on the Quotation header frm at all — it's collected once,
+ * on `orderFrm` (the Costing Worksheet's own Customer & Order step, see
+ * `SHARED_STEP.fields`) — so it's read from there instead.
+ */
+const FREIGHT_PREVIEW_HEADER_FIELDS = [
+  'incoterm',
+  'hitech_region',
+  'hitech_domestic_destination',
+  'hitech_vehicle_type',
+  'hitech_port_of_loading',
+  'hitech_port_of_discharge',
+  'hitech_mode_of_transport',
+  'hitech_sector',
+  'hitech_basic_freight',
+  'hitech_insurance_percent',
+  'hitech_insurance_value',
+  'hitech_destination_inland_cost',
+  'hitech_unloading_cost_at_destination',
+  'hitech_import_duty_tax'
+]
+/** What `preview_freight` hands back — applied onto `quotationHeaderFrm.doc`
+ *  via `set_value` (same idiom every other computed value in this file
+ *  applies through), so the Exim step's read-only "Calculated" rail
+ *  (the second `WizardStep read-only-filter="only"` pass) reflects it right
+ *  away, exactly as if a real save had just come back from the server. None
+ *  of these overlap `FREIGHT_PREVIEW_HEADER_FIELDS` above, so applying them
+ *  can't re-trigger this same preview in a loop. */
+const FREIGHT_PREVIEW_RESULT_FIELDS = [
+  'hitech_freight_rate_source',
+  'hitech_total_freight_cost',
+  'hitech_freight_inr_per_kg',
+  'hitech_total_gross_weight_kg',
+  'hitech_insurance_cost',
+  'hitech_fob_cost_applied',
+  'hitech_region_margin_applied'
+]
+
+const freightPreviewPending = ref(false)
+const freightPreviewError = ref('')
+/** Bumped on every `runFreightPreview()` call, and checked again once that
+ *  call resolves — a slow/older request finishing after a newer one already
+ *  applied its own result must never overwrite it with stale data. Simpler
+ *  than snapshot-comparing the header (the header can legitimately return to
+ *  an earlier value, e.g. the user undoes a change), and needs no extra
+ *  state beyond a counter. */
+let freightPreviewToken = 0
+let freightPreviewDebounce = null
+
+/** Rebuilt fresh at call time (not captured from whatever triggered the
+ *  watcher) so a debounced call always fires against the LATEST state, not a
+ *  half-second-stale snapshot from the moment typing paused. */
+function buildFreightPreviewHeader() {
+  const header = pick(quotationHeaderFrm.value?.doc, FREIGHT_PREVIEW_HEADER_FIELDS)
+  header.customer = orderFrm.value?.doc?.customer ?? null
+  return header
+}
+/** `costing_worksheet` names that don't resolve to a real saved record yet
+ *  (every not-yet-saved item) are tolerated gracefully by the backend — see
+ *  `preview_freight`'s own doc comment — so there's no need to filter down to
+ *  only-saved items here. Quantity comes from `itemsPricingRows`, the exact
+ *  same client-side source the Items & Pricing step's own "Containers
+ *  Required (est.)" preview already reads (`normalizedQuantity(item)` under
+ *  the hood) — not `item.quantity` directly, which can be blank/0/negative
+ *  mid-edit (see `normalizedQuantity`'s own doc comment). */
+function buildFreightPreviewItems() {
+  return itemsPricingRows.value.map((row) => ({ costing_worksheet: row.item.frm.doc?.name, qty: row.quantity }))
+}
+
+async function runFreightPreview() {
+  if (!quotationHeaderFrm.value) return
+  const token = ++freightPreviewToken
+  freightPreviewPending.value = true
+  try {
+    const result = await call('hitech_costing.hitech_costing.exim.preview_freight', {
+      header: buildFreightPreviewHeader(),
+      items: buildFreightPreviewItems()
+    })
+    // A newer preview may have started (or even already applied) while this
+    // one was in flight — never let an older response clobber newer input.
+    if (token !== freightPreviewToken) return
+    const frm = quotationHeaderFrm.value
+    if (!frm || !result) return
+    for (const fieldname of FREIGHT_PREVIEW_RESULT_FIELDS) {
+      if (fieldname in result) await frm.set_value(fieldname, result[fieldname])
+    }
+    freightPreviewError.value = ''
+  } catch (e) {
+    // This fires automatically as a side effect of typing — never surface a
+    // hard error to the user, just a quiet inline note (see the Exim step's
+    // template). The Calculated rail simply keeps showing whatever it last
+    // had.
+    if (token === freightPreviewToken) freightPreviewError.value = e?.message ?? String(e)
+  } finally {
+    if (token === freightPreviewToken) freightPreviewPending.value = false
+  }
+}
+
+/** 400ms of quiet before firing — the same debounce window (and reasoning)
+ *  `scheduleDraftSave()` above uses. */
+function scheduleFreightPreview() {
+  clearTimeout(freightPreviewDebounce)
+  freightPreviewDebounce = setTimeout(runFreightPreview, 400)
+}
+
+// Deliberately NOT gated on `activePageStep === 'exim'` or `quotationName` —
+// item quantities are edited on the Items & Pricing step, and this needs to
+// have already run by the time the estimator reaches Exim either way (a
+// brand-new quotation has no "Save Changes" button at all to fall back on,
+// see this function group's own doc comment above).
+//
+// One getter PER FIELD, passed to `watch()` as an array of sources, rather
+// than a single getter that builds one combined object via `pick()` (the
+// original approach here). Both read the same underlying reactive
+// `quotationHeaderFrm.value.doc` properties, but a multi-source array watch
+// is the same idiom `watchAddressDisplay()`/the Terms-checklist watcher above
+// already use successfully on this exact frm — each source is its own tiny
+// tracked getter, so there's no reliance on a `deep: true` traversal of a
+// freshly-allocated plain object (`pick()`'s `out = {}`) to rediscover
+// dependencies on every run. Keeps the failure mode this function group was
+// built to avoid (a silently-dead trigger) as unlikely as possible.
+watch(
+  FREIGHT_PREVIEW_HEADER_FIELDS.map((fieldname) => () => quotationHeaderFrm.value?.doc?.[fieldname]),
+  () => {
+    if (quotationHeaderFrm.value) scheduleFreightPreview()
+  }
+)
+watch(() => orderFrm.value?.doc?.customer, scheduleFreightPreview)
+watch(() => buildFreightPreviewItems(), scheduleFreightPreview, { deep: true })
+
 /** Pure Margin (INR/kg) and Pure Margin % moved out of the Commercials step's
  *  Calculated rail and into its main card instead (on request) — they sit
  *  right next to Deal Price - FG now, since that's the one input that
@@ -537,12 +719,197 @@ const commercialsMarginRows = computed(() =>
     : []
 )
 
+/**
+ * Mode of Transport / Container Type and their calculated container-load-fit
+ * fields, relocated off the per-item Dimensions step onto this page-level
+ * Items & Pricing step's own "Container / Logistics" sub-section (rendered
+ * per active item, one at a time, below the items table — see the
+ * `activePageStep === 'pricing'` template branch). Split the same
+ * editable/calculated way every ITEM_STEPS step is: `CONTAINER_LOGISTICS_FIELDS`
+ * feeds a `WizardStep` `exclude` pass, `CONTAINER_LOGISTICS_CALCULATED_FIELDS`
+ * an `only` pass rendered through `derivedRows` below (same helper the
+ * Calculated rail elsewhere in this file uses, so the "Doesn't fit this
+ * container" warning still fires here).
+ */
+const CONTAINER_LOGISTICS_FIELDS = ['mode_of_transport', 'container_type']
+const CONTAINER_LOGISTICS_CALCULATED_FIELDS = [
+  'units_per_container',
+  'containers_required',
+  'container_utilization_percent'
+]
+const containerLogisticsRows = computed(() =>
+  activeItem.value ? derivedRows(activeItem.value.frm, CONTAINER_LOGISTICS_CALCULATED_FIELDS) : []
+)
+
+/**
+ * Live container-fit preview for the Container / Logistics sub-section above
+ * -- `costing_worksheet.preview_container_fit` runs the exact same
+ * `compute_container_fit()` a real save's `_calculate_container_fit()` would,
+ * against whatever the active item's frm currently holds, and touches no
+ * document at all. Without this, `units_per_container` /
+ * `container_utilization_percent` only ever reflect whatever was true the
+ * last time this item's Costing Worksheet was actually saved -- picking a
+ * new Container Type or nudging a dimension here would otherwise show
+ * nothing new until some unrelated save happened to run, same problem
+ * `runFreightPreview()` above solves for the Exim step's freight fields (see
+ * that function group's own doc comment, which this one otherwise mirrors
+ * closely, adapted for a PER-ITEM frm rather than one shared header frm).
+ *
+ * `containers_required` deliberately isn't part of this -- it needs a real
+ * order qty off a Quotation Item linked to a saved Costing Worksheet, which
+ * a not-yet-submitted item doesn't have (see `preview_container_fit`'s own
+ * doc comment); it keeps updating only on an actual save, same as today.
+ */
+const CONTAINER_FIT_PREVIEW_FIELDS = [
+  'mode_of_transport',
+  'container_type',
+  'ext_length_mm',
+  'ext_width_mm',
+  'ext_height_mm',
+  'total_weight_kg'
+]
+/** What `preview_container_fit` hands back -- applied onto the active item's
+ *  frm via `set_value`, same idiom `runFreightPreview()` uses. Neither
+ *  overlaps `CONTAINER_FIT_PREVIEW_FIELDS` above, so applying them can't
+ *  re-trigger this same preview in a loop. */
+const CONTAINER_FIT_PREVIEW_RESULT_FIELDS = ['units_per_container', 'container_utilization_percent']
+
+const containerFitPreviewPending = ref(false)
+const containerFitPreviewError = ref('')
+/** Bumped on every `runContainerFitPreview()` call, AND whenever the active
+ *  item itself changes (see the `activeItemKey` watcher below) -- a slow
+ *  response for whatever item was active when the call started must never
+ *  be applied once a different item is active, exactly the same failure
+ *  mode `freightPreviewToken` guards against for the (single, shared)
+ *  header frm, just also triggered by an item switch here since there are
+ *  several independent per-item frms in play instead of one. */
+let containerFitPreviewToken = 0
+let containerFitPreviewDebounce = null
+
+async function runContainerFitPreview() {
+  const frm = activeItem.value?.frm
+  if (!frm) return
+  const token = ++containerFitPreviewToken
+  containerFitPreviewPending.value = true
+  try {
+    // Read fresh off the frm at call time (not a stale snapshot from
+    // whatever triggered the watcher), same reasoning as
+    // `buildFreightPreviewHeader()`'s own doc comment.
+    const doc = frm.doc
+    // `call()` JSON-serializes this object, which silently DROPS any key
+    // whose value is `undefined` (unlike `null`, which still round-trips) --
+    // and every one of `preview_container_fit`'s five params is a required
+    // positional argument with no default, so an omitted key throws a
+    // TypeError server-side instead of degrading gracefully. `?? null`
+    // guarantees every key is always present, even before this item's
+    // Dimensions/Volumes & Weights steps have set anything -- the backend
+    // already treats a missing/falsy value as "doesn't fit yet" (see
+    // `compute_container_fit`'s own doc comment), which is exactly the
+    // graceful no-op this preview should degrade to in that case.
+    const result = await call(
+      'hitech_costing.hitech_costing.doctype.costing_worksheet.costing_worksheet.preview_container_fit',
+      {
+        container_type: doc?.container_type ?? null,
+        ext_length_mm: doc?.ext_length_mm ?? null,
+        ext_width_mm: doc?.ext_width_mm ?? null,
+        ext_height_mm: doc?.ext_height_mm ?? null,
+        total_weight_kg: doc?.total_weight_kg ?? null
+      }
+    )
+    // A newer preview may have started -- or the active item itself may
+    // have changed -- while this one was in flight; either way, never let
+    // a stale response land on whichever item is active now.
+    if (token !== containerFitPreviewToken || activeItem.value?.frm !== frm) return
+    if (!result) return
+    for (const fieldname of CONTAINER_FIT_PREVIEW_RESULT_FIELDS) {
+      if (fieldname in result) await frm.set_value(fieldname, result[fieldname])
+    }
+    // units_per_container may have just changed -- keep containers_required
+    // in step with it (see syncContainersRequiredPreview's own doc comment).
+    syncContainersRequiredPreview()
+    containerFitPreviewError.value = ''
+  } catch (e) {
+    // Fires automatically as a side effect of picking a Container Type /
+    // editing dimensions -- never surface a hard error, just a quiet inline
+    // note (see this section's own template). The Container / Logistics
+    // rows simply keep showing whatever they last had.
+    if (token === containerFitPreviewToken) containerFitPreviewError.value = e?.message ?? String(e)
+  } finally {
+    if (token === containerFitPreviewToken) containerFitPreviewPending.value = false
+  }
+}
+
+/** Same 400ms debounce window `scheduleFreightPreview()` uses. */
+function scheduleContainerFitPreview() {
+  clearTimeout(containerFitPreviewDebounce)
+  containerFitPreviewDebounce = setTimeout(runContainerFitPreview, 400)
+}
+
+/** Keeps the REAL `containers_required` field (shown read-only in the
+ *  Container / Logistics section above) live too, instead of only updating
+ *  on an actual save -- the backend's own version needs a real Quotation
+ *  Item's saved qty (see `_calculate_container_fit`'s doc comment), which a
+ *  not-yet-submitted item doesn't have, but this page already has everything
+ *  needed to preview the SAME number purely client-side: the live
+ *  `units_per_container` (from `runContainerFitPreview` above) and the
+ *  Quantity being typed into the Items & Pricing table right now -- the
+ *  exact same math `itemsPricingRows`' "(est.)" column already does. No
+ *  network round trip needed, so this runs directly off both watchers below
+ *  rather than through the debounced preview call. */
+function syncContainersRequiredPreview() {
+  const item = activeItem.value
+  if (!item) return
+  const doc = item.frm.doc
+  if (!(doc?.mode_of_transport === 'Sea' && doc?.container_type)) return
+  const unitsPerContainer = Number(doc.units_per_container || 0)
+  const value = unitsPerContainer > 0 ? Math.ceil(normalizedQuantity(item) / unitsPerContainer) : 0
+  if (Number(doc.containers_required || 0) !== value) item.frm.set_value('containers_required', value)
+}
+
+// One getter PER FIELD off the active item's frm, exactly the idiom
+// `runFreightPreview()`'s own watcher uses (and its doc comment explains why
+// this beats a single `pick()`-built object under `deep: true`) -- except
+// here every getter reads through `activeItem.value` first, so the SAME
+// watcher naturally re-evaluates against whichever item is currently active
+// without needing a second watcher keyed off `activeItemKey` to rebuild it.
+watch(
+  CONTAINER_FIT_PREVIEW_FIELDS.map((fieldname) => () => activeItem.value?.frm?.doc?.[fieldname]),
+  () => {
+    if (activeItem.value?.frm) scheduleContainerFitPreview()
+  }
+)
+// Quantity itself doesn't change `units_per_container`, so it skips the
+// debounced network round trip above entirely -- straight to
+// `syncContainersRequiredPreview()`, same as typing into the Items & Pricing
+// table's own Quantity column already does for its "(est.)" column.
+watch(
+  () => activeItem.value?.quantity,
+  () => syncContainersRequiredPreview()
+)
+// Switching the active item (via this section's own item tabs) must
+// invalidate any in-flight/pending preview for whichever item was active
+// before -- `runContainerFitPreview()`'s own token check above handles a
+// response arriving late, but a still-*pending* debounce timer or a
+// "Calculating…"/error message left over from the previous item needs
+// clearing here too, so this section never shows item A's status while item
+// B's fields are on screen.
+watch(activeItemKey, () => {
+  containerFitPreviewToken += 1
+  clearTimeout(containerFitPreviewDebounce)
+  containerFitPreviewPending.value = false
+  containerFitPreviewError.value = ''
+  // The newly active item's own containers_required may be stale (0, or
+  // some other item's last-synced number) until its next edit -- refresh it
+  // immediately off whatever units_per_container/quantity it already has.
+  syncContainersRequiredPreview()
+})
+
 const wizardEl = ref(null)
 let teardownEnhancements = null
 const currentFrm = computed(() => {
   if (activePageStep.value === 'customer') return orderFrm.value
   if (activePageStep.value === 'items') return activeItem.value?.frm ?? null
-  if (['address', 'terms'].includes(activePageStep.value)) return quotationHeaderFrm.value
+  if (['address', 'exim', 'terms'].includes(activePageStep.value)) return quotationHeaderFrm.value
   return null
 })
 watch(wizardEl, (el) => {
@@ -821,7 +1188,15 @@ function removeItem(key) {
  * unsaved browser state today).
  */
 const DRAFT_STORAGE_KEY = 'hitech-costing:quotation-draft'
-const DRAFT_HEADER_FIELDS = [...TYPE_FIELDS, ...TAX_FIELDS, ...ADDRESS_FIELDS, ...TERMS_FIELDS, TAX_TABLE_FIELD, TERMS_TABLE_FIELD]
+const DRAFT_HEADER_FIELDS = [
+  ...TYPE_FIELDS,
+  ...TAX_FIELDS,
+  ...ADDRESS_FIELDS,
+  ...EXIM_FIELDS,
+  ...TERMS_FIELDS,
+  TAX_TABLE_FIELD,
+  TERMS_TABLE_FIELD
+]
 // Table fields (`volumes`, `complexity_ratings`) are deliberately excluded --
 // restoring a Table field means rebuilding its rows one at a time via
 // `add_child` (see the Terms checklist watcher above), and an item that's
@@ -1404,6 +1779,7 @@ async function submitAll() {
         ...TAX_FIELDS,
         TAX_TABLE_FIELD,
         ...ADDRESS_FIELDS,
+        ...EXIM_FIELDS,
         ...TERMS_FIELDS,
         TERMS_TABLE_FIELD
       ])
@@ -1437,7 +1813,8 @@ async function submitAll() {
       // `validate()`) BEFORE its `on_update` hook sets `self.quotation` and
       // creates the real Quotation Item row -- so the container-fit fields it
       // just saved were computed with no quotation/qty yet, same as the
-      // Dimensions step's 0 the whole time up to now (see
+      // Items & Pricing step's Container / Logistics sub-section showing 0
+      // the whole time up to now (see
       // `_calculate_container_fit`, "Order quantity has no field of its own
       // on Costing Worksheet"). A real `frm.save()` here (not just
       // `frm.call('calculate')`, which only refreshes the client's copy)
@@ -1446,10 +1823,11 @@ async function submitAll() {
       // the *Quotation* itself is submitted (still Draft at this point in the
       // wizard), and `on_update`'s `_auto_create_quotation`/labour-override
       // comment guards both no-op on a second save since nothing they check
-      // changed. Export-only, matching everywhere else this feature is
-      // gated; best-effort since it's purely informational and must never
-      // fail an otherwise-successful submit.
-      if (item.frm.doc?.region === 'Export' && item.frm.doc?.container_type) {
+      // changed. Sea-only (was Export-only; the backend's own `depends_on`
+      // for this feature switched to `mode_of_transport == "Sea"`), matching
+      // everywhere else this feature is gated; best-effort since it's purely
+      // informational and must never fail an otherwise-successful submit.
+      if (item.frm.doc?.mode_of_transport === 'Sea' && item.frm.doc?.container_type) {
         try {
           await item.frm.save()
         } catch (e) {
@@ -1651,79 +2029,81 @@ watch(() => props.quotation, load)
               One line per item. Weight and built-up cost come from that item's own costing sheet. Add a description
               and quantity to price multiple units of the same design — final amount is total deal value × quantity.
             </p>
-            <table class="qw-quotation-items">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Weight (kg)</th>
-                  <th>Built-up cost</th>
-                  <th>Deal price</th>
-                  <th>Margin %</th>
-                  <th>Total deal value</th>
-                  <th>Description</th>
-                  <th>Quantity</th>
-                  <th>Final amount</th>
-                  <th v-if="showContainersRequiredColumn" title="Preview only, from this page's Quantity — not the saved Costing Worksheet figure">Containers Required (est.)</th>
-                  <th></th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in itemsPricingRows" :key="row.key">
-                  <td>{{ row.label }}</td>
-                  <td>{{ row.weight }}</td>
-                  <td>{{ row.builtUpCost }}</td>
-                  <td>{{ row.dealPrice }}</td>
-                  <td>{{ row.marginPercent }}</td>
-                  <td>{{ row.totalDealValue }}</td>
-                  <td>
-                    <input
-                      type="text"
-                      class="qw-inline-input"
-                      v-model="row.item.description"
-                      :disabled="row.item.frm.docstatus === 1"
-                      :placeholder="`${row.label} tank — as per Costing Worksheet`"
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      class="qw-inline-input qw-inline-input--qty"
-                      v-model.number="row.item.quantity"
-                      :disabled="row.item.frm.docstatus === 1"
-                    />
-                  </td>
-                  <td>{{ row.finalAmount }}</td>
-                  <td v-if="showContainersRequiredColumn">
-                    <span v-if="row.containersRequiredPreview === null">—</span>
-                    <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">Doesn't fit this container</span>
-                    <span v-else>{{ row.containersRequiredPreview }} (~{{ row.unitsPerContainer }}/container)</span>
-                  </td>
-                  <td>
-                    <button type="button" class="qw-review-card__edit" @click="goToItem(row.key)">Costing →</button>
-                  </td>
-                  <td>
-                    <button
-                      v-if="row.item.frm.docstatus !== 1"
-                      type="button"
-                      class="qw-review-card__edit qw-review-card__edit--danger"
-                      @click="removeItem(row.key)"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="qw-pricing-table-wrap">
+              <table class="qw-quotation-items qw-pricing-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Deal price</th>
+                    <th>Qty</th>
+                    <th>Weight (kg)</th>
+                    <th>Built-up cost</th>
+                    <th>Margin %</th>
+                    <th>Total deal value</th>
+                    <th>Final amount</th>
+                    <th>Description</th>
+                    <th v-if="showContainersRequiredColumn" title="Preview only, from this page's Quantity — not the saved Costing Worksheet figure">
+                      Containers (est.)
+                    </th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in itemsPricingRows" :key="row.key">
+                    <td class="qw-pricing-table__label">{{ row.label }}</td>
+                    <td class="qw-pricing-table__num">{{ row.dealPrice }}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        class="qw-inline-input qw-inline-input--qty"
+                        v-model.number="row.item.quantity"
+                        :disabled="row.item.frm.docstatus === 1"
+                      />
+                    </td>
+                    <td class="qw-pricing-table__num">{{ row.weight }}</td>
+                    <td class="qw-pricing-table__num">{{ row.builtUpCost }}</td>
+                    <td class="qw-pricing-table__num">{{ row.marginPercent }}</td>
+                    <td class="qw-pricing-table__num">{{ row.totalDealValue }}</td>
+                    <td class="qw-pricing-table__num qw-pricing-table__final">{{ row.finalAmount }}</td>
+                    <td>
+                      <input
+                        type="text"
+                        class="qw-inline-input"
+                        v-model="row.item.description"
+                        :disabled="row.item.frm.docstatus === 1"
+                        :placeholder="`${row.label} tank — as per Costing Worksheet`"
+                      />
+                    </td>
+                    <td v-if="showContainersRequiredColumn" class="qw-pricing-table__num">
+                      <span v-if="row.containersRequiredPreview === null">—</span>
+                      <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">Doesn't fit</span>
+                      <span v-else>{{ row.containersRequiredPreview }} (~{{ row.unitsPerContainer }}/ctr)</span>
+                    </td>
+                    <td class="qw-pricing-table__actions">
+                      <button type="button" class="qw-review-card__edit" @click="goToItem(row.key)">Costing →</button>
+                      <button
+                        v-if="row.item.frm.docstatus !== 1"
+                        type="button"
+                        class="qw-review-card__edit qw-review-card__edit--danger"
+                        @click="removeItem(row.key)"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <div class="qw-step-actions">
               <button type="button" class="qw-ghost-btn qw-ghost-btn--dashed" @click="addItem()">
                 + Add item — opens a new costing sheet
               </button>
             </div>
 
-            <div class="qw-totals-grid">
+            <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
+            <div class="qw-totals-grid qw-items-totals-grid">
               <div class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Quantity</span>
                 <span class="qw-totals-box__v">{{ itemsSummary.totalQuantity }}</span>
@@ -1751,6 +2131,58 @@ watch(() => props.quotation, load)
                 </span>
                 <span v-else class="qw-totals-box__v">{{ itemsSummary.totalContainersRequired }}</span>
               </div>
+            </div>
+
+            <!-- Container / Logistics — Mode of Transport, Container Type and
+                 the container-load-fit numbers, one item at a time (see
+                 `CONTAINER_LOGISTICS_FIELDS` above for why these moved off
+                 the per-item Dimensions step). Reuses the SAME
+                 `activeItem`/`activeItemKey` state as the "Costing Sheet"
+                 page step's own item tabs, just a smaller selector since
+                 add/remove already live in the table above. -->
+            <div v-if="items.length" class="qw-terms-notes">
+              <h3 class="qw-terms-notes__title">Container / Logistics</h3>
+              <div v-if="items.length > 1" class="qw-item-tabs" style="margin-bottom: 16px;">
+                <span class="qw-item-tabs__eyebrow">Item</span>
+                <button
+                  v-for="(item, i) in items"
+                  :key="item.key"
+                  type="button"
+                  class="qw-item-tab"
+                  :class="{ 'is-active': item.key === activeItemKey }"
+                  @click="activeItemKey = item.key"
+                >
+                  {{ itemLabel(item, i) }}
+                </button>
+              </div>
+              <template v-if="activeItem">
+                <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+                  <WizardStep :frm="activeItem.frm" :fields="CONTAINER_LOGISTICS_FIELDS" read-only-filter="exclude" />
+                </fieldset>
+                <div v-if="containerLogisticsRows.length" class="qw-derived__rows" style="margin-top: 16px;">
+                  <div
+                    v-for="row in containerLogisticsRows"
+                    :key="row.label"
+                    class="qw-derived__row"
+                    :class="{ 'qw-derived__row--low': row.low }"
+                  >
+                    <span class="qw-derived__k">{{ row.label }}</span>
+                    <span class="qw-derived__v">{{ row.value }}</span>
+                    <span v-if="row.warning" class="qw-derived__warning">{{ row.warning }}</span>
+                  </div>
+                </div>
+                <!-- Live container-fit preview status -- see
+                     `runContainerFitPreview()`. Quiet by design: this fires
+                     automatically as a side effect of picking a Container
+                     Type / editing dimensions, so neither state should read
+                     as an error or block the step. -->
+                <p v-if="containerFitPreviewPending" class="qw-step-lede" style="margin-top: 10px;">
+                  Calculating container fit…
+                </p>
+                <p v-else-if="containerFitPreviewError" class="qw-derived__warning" style="margin-top: 10px;">
+                  Container fit preview unavailable right now ({{ containerFitPreviewError }}) — figures above may be out of date.
+                </p>
+              </template>
             </div>
           </div>
           <div class="qw-footer">
@@ -1791,10 +2223,46 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 05 · Terms & conditions (shared, once) -->
+        <!-- 05 · Exim / Incoterms (shared, once) -->
+        <section v-else-if="activePageStep === 'exim'">
+          <div class="qw-step-card">
+            <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Exim / Incoterms</h2>
+            <p v-if="quotationName" class="qw-step-lede">
+              Editing freight &amp; Incoterm details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
+            </p>
+            <WizardStep :frm="quotationHeaderFrm" :fields="visibleEximFields" read-only-filter="exclude" />
+            <WizardStep
+              :frm="quotationHeaderFrm"
+              :fields="visibleEximFields"
+              read-only-filter="only"
+              style="margin-top: 14px;"
+            />
+            <!-- Live freight preview status -- see `runFreightPreview()`. Quiet
+                 by design: this fires automatically as a side effect of typing,
+                 so neither state should read as an error or block the step. -->
+            <p v-if="freightPreviewPending" class="qw-step-lede" style="margin-top: 10px;">
+              Calculating freight preview…
+            </p>
+            <p v-else-if="freightPreviewError" class="qw-derived__warning" style="margin-top: 10px;">
+              Freight preview unavailable right now ({{ freightPreviewError }}) — figures below may be out of date.
+            </p>
+            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
+                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
+              </button>
+              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
+            </div>
+          </div>
+          <div class="qw-footer">
+            <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
+            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+          </div>
+        </section>
+
+        <!-- 06 · Terms & conditions (shared, once) -->
         <section v-else-if="activePageStep === 'terms'">
           <div class="qw-step-card">
-            <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Terms & Conditions</h2>
+            <h2 class="qw-step-title"><span class="qw-step-title__n">06</span>Terms & Conditions</h2>
             <p v-if="quotationName" class="qw-step-lede">
               Editing terms on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
@@ -1827,7 +2295,7 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 06 · Review & submit -->
+        <!-- 07 · Review & submit -->
         <section v-else-if="activePageStep === 'review'">
           <div v-for="sec in reviewSections" :key="sec.key" class="qw-review-card">
             <div class="qw-review-card__head">
@@ -2170,6 +2638,10 @@ watch(() => props.quotation, load)
   font: 400 15px/20px 'Raleway', system-ui, sans-serif;
   color: var(--qw-text);
   overflow-wrap: anywhere;
+  /* Lets `address_display`/`shipping_address`'s <br>-to-newline conversion
+     (see `brJoinedToLines` above) actually render as line breaks — has no
+     effect on every other value here, none of which contain newlines. */
+  white-space: pre-line;
 }
 
 /* The selected-terms checklist needs the full card width, not the 1/3 column
@@ -2177,6 +2649,20 @@ watch(() => props.quotation, load)
    worse than the flattened semicolon-joined string it replaced. */
 .qw-review-card__row--full {
   grid-column: 1 / -1;
+}
+
+.qw-items-totals-heading {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--qw-border);
+}
+
+/* The divider now lives on the heading above, so the totals grid itself
+   doesn't need its own — avoids a doubled-up border/gap. */
+.qw-items-totals-grid {
+  margin-top: 10px;
+  padding-top: 0;
+  border-top: none;
 }
 
 .qw-review-terms-list {
@@ -2227,10 +2713,67 @@ watch(() => props.quotation, load)
   color: var(--qw-text);
 }
 
+/* Items & Pricing: one row per item, child-table style, instead of a card
+   per item — same shell as `.qw-quotation-items` (Review & Submit's own
+   read-only items table) but with inline-editable Qty/Description cells and
+   a per-row actions cell. */
+.qw-pricing-table-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+  border: 1px solid var(--qw-border);
+  border-radius: 8px;
+}
+
+.qw-pricing-table {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.qw-pricing-table th {
+  background: var(--qw-row-border);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.qw-pricing-table td {
+  vertical-align: middle;
+}
+
+.qw-pricing-table tbody tr:hover {
+  background: var(--qw-row-border);
+}
+
+.qw-pricing-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.qw-pricing-table__label {
+  font-weight: 600;
+}
+
+.qw-pricing-table__num {
+  font: 700 13px/1 'IBM Plex Mono', monospace;
+}
+
+.qw-pricing-table__final {
+  color: var(--qw-primary);
+}
+
+.qw-pricing-table td:has(> .qw-inline-input) {
+  min-width: 150px;
+}
+
+.qw-pricing-table__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 .qw-totals-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px 22px;
+  gap: 10px 18px;
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--qw-border);
@@ -2239,7 +2782,7 @@ watch(() => props.quotation, load)
 .qw-totals-box {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .qw-totals-box__k {
@@ -2248,12 +2791,12 @@ watch(() => props.quotation, load)
 }
 
 .qw-totals-box__v {
-  font: 700 15px/1 'IBM Plex Mono', monospace;
+  font: 700 14px/1 'IBM Plex Mono', monospace;
   color: var(--qw-text);
   background: var(--qw-row-border);
   border: 1px solid var(--qw-border);
-  border-radius: 8px;
-  padding: 11px 12px;
+  border-radius: 6px;
+  padding: 7px 10px;
 }
 
 .qw-inline-input {
@@ -2587,10 +3130,14 @@ watch(() => props.quotation, load)
   --app-head-bg: #F4F6F9;
 }
 
+/* Read-only "calculated" values (WizardStep read-only-filter="only", e.g.
+   the Exim step's rail and the Address step's caption fields) should read
+   as clearly as the .qw-derived__v rows do -- same near-black --qw-text,
+   not the near-invisible --qw-faint that's meant for placeholder-level hints. */
 .qw-wizard :deep(.control input:disabled),
 .qw-wizard :deep(.control select:disabled),
 .qw-wizard :deep(.control textarea:disabled) {
   background: var(--qw-row-border);
-  color: var(--qw-faint);
+  color: var(--qw-text);
 }
 </style>

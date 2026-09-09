@@ -63,27 +63,18 @@ export const ITEM_STEPS = [
       'ext_length_mm',
       'ext_width_mm',
       'ext_height_mm',
-      // Manual selection of a Container Type master (Export only — the
-      // DocType's own `depends_on` on `region == "Export"` hides it for
-      // Domestic quotes, same as every other region-gated field here; see
-      // `WizardStep.vue`'s `isVisible`). Sits with the other inputs, ahead of
-      // the calculated surface areas below.
-      'container_type',
       'internal_surface_area_sqm',
-      'external_surface_area_sqm',
-      // Container-load-fit numbers (Export only, same `depends_on` gating as
-      // `container_type` above) — informational only, they don't feed into
-      // Sea Freight Rate/Total Freight or any other cost figure. Shown right
-      // here rather than off in Commercials since Container Type itself is
-      // picked on this step — seeing the fit result next to the pick it came
-      // from beats hunting for it four steps later. `containers_required`
-      // may not exist on the backend (no reliable order-quantity field at
-      // worksheet level to divide by); harmless to list here even if absent,
-      // since `WizardStep`/`derivedRows` both skip fieldnames missing from
-      // the frm's own `fields_dict`.
-      'units_per_container',
-      'containers_required',
-      'container_utilization_percent'
+      'external_surface_area_sqm'
+      // Mode of Transport / Container Type and the container-load-fit
+      // numbers (`units_per_container`, `containers_required`,
+      // `container_utilization_percent`) used to live here too, but moved to
+      // a "Container / Logistics" sub-section on the page-level Items &
+      // Pricing step (see CostingWorksheetWizard.vue's `activePageStep ===
+      // 'pricing'` branch) — that's the page where an item's order Quantity
+      // actually gets typed in, so seeing container fit right there beats a
+      // step four pages earlier. Same fields, same DocType, same
+      // `mode_of_transport == "Sea"` `depends_on` gating on
+      // `container_type`/the three fit numbers; just relocated.
     ]
   },
   {
@@ -150,8 +141,10 @@ export const ITEM_STEPS = [
       // desk form directly); just not shown in this step.
       'sea_freight_rate_inr_per_kg',
       'total_freight_inr_kg',
-      // Container-load-fit numbers moved to the Dimensions step (see
-      // ITEM_STEPS[1] above) — that's where Container Type itself is picked.
+      // Container-load-fit numbers moved off ITEM_STEPS entirely, onto the
+      // page-level Items & Pricing step's "Container / Logistics"
+      // sub-section (see CostingWorksheetWizard.vue) — that's where
+      // Container Type itself is now picked.
       'financial_cost_inr_kg',
       // The item's final built-up cost and margin — this is the last per-item
       // step, so its calculated-values rail is where "what does this item's
@@ -202,10 +195,58 @@ export const ADDRESS_FIELDS = [
   // (not `shipping_address_name_display` or similar), despite sharing a label
   // with the Link field above it.
   'shipping_address',
+  'additional_discount_percentage'
+]
+/** The Exim / Incoterms step's fields — the freight-calc custom field set
+ *  added to Quotation/Sales Order by the backend's Phase 1
+ *  (`hitech_costing/setup/install.py`'s `EXIM_FIELDS`, which this must stay
+ *  in sync with, along with `QUOTATION_HEADER_FIELDS` in
+ *  `costing_worksheet.py`). `incoterm`/`named_place`/`hitech_port_of_discharge`
+ *  used to live in `ADDRESS_FIELDS` above; moved here now that Exim exists as
+ *  its own step/concept.
+ *
+ *  `hitech_region` (Domestic/Export) now lives directly on Quotation/Sales
+ *  Order too, right after `named_place` — the freight engine reads THIS
+ *  field, not the Costing Worksheet's own `region` (that field only ever
+ *  drove the wizard's Items & Pricing step Container Type gating, a
+ *  different doc entirely). `hitech_vehicle_type`/`hitech_domestic_destination`
+ *  (Domestic) and `hitech_sector`/`hitech_basic_freight` (Export) now carry
+ *  real native `depends_on` on `hitech_region`, same frm as everything else
+ *  here — so, like every Incoterm-gated field below (insurance, ports,
+ *  pre-carriage, destination costs), they need no client-side gating logic
+ *  at all (see `WizardStep.vue`'s `isVisible`). CostingWorksheetWizard.vue's
+ *  `visibleEximFields` used to cross-filter these off the Costing Worksheet
+ *  frm's `region` before `hitech_region` existed; simplified now that it
+ *  doesn't need to. */
+export const EXIM_FIELDS = [
   'incoterm',
   'named_place',
+  'hitech_region',
+  'hitech_country_of_origin',
+  'hitech_country_of_destination',
+  'hitech_domestic_destination',
+  'hitech_mode_of_transport',
+  'hitech_vehicle_type',
+  'hitech_port_of_loading',
   'hitech_port_of_discharge',
-  'additional_discount_percentage'
+  'hitech_pre_carriage_by',
+  'hitech_place_of_pre_carrier',
+  'hitech_insurance_percent',
+  'hitech_insurance_value',
+  'hitech_insurance_cost',
+  'hitech_destination_inland_cost',
+  'hitech_unloading_cost_at_destination',
+  'hitech_import_duty_tax',
+  'hitech_total_gross_weight_kg',
+  'hitech_partial_shipment',
+  'hitech_trans_shipment',
+  'hitech_sector',
+  'hitech_basic_freight',
+  'hitech_freight_rate_source',
+  'hitech_total_freight_cost',
+  'hitech_fob_cost_applied',
+  'hitech_region_margin_applied',
+  'hitech_freight_inr_per_kg'
 ]
 /** The Terms step's free-text box — a real custom field (`hitech_terms_notes`,
  *  see `costing_worksheet.py`'s `QUOTATION_HEADER_FIELDS` and the backend's
