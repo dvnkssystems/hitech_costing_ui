@@ -1,21 +1,26 @@
 <script setup>
 /**
- * 3D view of one shipping container with the active item's tanks packed
- * inside -- the visual answer to "why is utilization only 30% when all my
- * tanks fit?". Draws EXACTLY the arrangement the backend's
- * `compute_container_layout()` priced from (same orientation, per-axis
- * counts and 180mm gap -- see `preview_container_fit`'s `layout` key), so
- * what's on screen can never disagree with the Units per Container /
- * Container Utilization % figures shown next to the button that opens this.
+ * 3D view of the shipping containers an item's order needs, with the tanks
+ * packed inside -- the visual answer to "why is utilization only 26% when
+ * all my tanks fit?" and "why 2 containers?". Draws EXACTLY the arrangement
+ * the backend's `compute_container_layout()` priced from (same
+ * orientation, per-axis counts and 180mm gap -- see `preview_container_fit`'s
+ * `layout` key), so what's on screen can never disagree with the Units per
+ * Container / Container Utilization % figures next to the button that opens
+ * this.
  *
- * Nothing here recomputes fit: `layout` is taken as given. The only
+ * Nothing here recomputes *fit*: `layout` is taken as given. The only
  * client-side arithmetic is splitting the order Quantity across containers
  * (qty ÷ units_per_container, the same math the Items & Pricing table's
- * "(est.)" column already does) to decide how many of the container's slots
- * are filled in the container currently being looked at.
+ * "(est.)" column already does) and the resulting per-container /
+ * whole-shipment volume utilization -- which is deliberately NOT the stored
+ * `container_utilization_percent`: that field is the design's packing
+ * efficiency when a container is FULL (a property of tank + container type,
+ * identical for an order of 1 or 3), shown here as the secondary "when full"
+ * line. The headline is what's actually being shipped.
  *
  * Coordinate mapping: container length along X, height along Y (up), width
- * along Z; 1 scene unit = 1 metre.
+ * along Z; containers line up side by side along Z; 1 scene unit = 1 metre.
  */
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import * as THREE from 'three'
@@ -32,40 +37,73 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 
 const MM = 1 / 1000
+/** Past this many containers the scene stops being readable anyway; the
+ *  side panel still lists every one. */
+const MAX_DRAWN_CONTAINERS = 12
 
 const COLORS = {
   background: 0xf4f6fa,
   container: 0x0b3465,
-  floor: 0x0b3465,
   tank: 0x107830,
   tankEdge: 0x0a4d20,
-  ghost: 0x94a0ae
+  ghost: 0x94a0ae,
+  label: '#0b3465'
 }
 
 const panel = ref(null)
 const canvasHost = ref(null)
-const containerIndex = ref(0)
 
+const orderQty = computed(() => Math.max(Number(props.quantity) || 0, 1))
 const unitsPerContainer = computed(() => Number(props.layout?.units_per_container || 0))
 const containersRequired = computed(() =>
-  unitsPerContainer.value > 0 ? Math.ceil(Math.max(props.quantity, 1) / unitsPerContainer.value) : 0
+  unitsPerContainer.value > 0 ? Math.ceil(orderQty.value / unitsPerContainer.value) : 0
 )
-/** Tanks actually loaded into the container being looked at -- a full
- *  container for every one but the last, which gets the remainder. */
-const tanksInThisContainer = computed(() => {
+const drawnContainers = computed(() => Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS))
+
+/** Tanks loaded into container `index` (0-based) -- full for every
+ *  container but the last, which gets the remainder. */
+function tanksIn(index) {
   if (!unitsPerContainer.value) return 0
-  const remaining = Math.max(props.quantity, 1) - containerIndex.value * unitsPerContainer.value
+  const remaining = orderQty.value - index * unitsPerContainer.value
   return Math.max(0, Math.min(unitsPerContainer.value, remaining))
+}
+
+const tankVolume = computed(() => {
+  const t = props.layout?.tank
+  return t ? t.length_mm * t.width_mm * t.height_mm : 0
 })
-const freeSlots = computed(() => Math.max(0, unitsPerContainer.value - tanksInThisContainer.value))
-const utilization = computed(() => Number(props.layout?.container_utilization_percent || 0))
+const containerVolume = computed(() => {
+  const c = props.layout?.container
+  return c ? c.length_mm * c.width_mm * c.height_mm : 0
+})
+function utilizationFor(tankCount) {
+  return containerVolume.value ? (tankCount * tankVolume.value) / containerVolume.value * 100 : 0
+}
+/** Actual fill of everything being shipped, across all containers needed. */
+const shipmentUtilization = computed(() =>
+  containersRequired.value ? utilizationFor(orderQty.value) / containersRequired.value : 0
+)
+/** The stored field -- utilization when a container is full. */
+const fullUtilization = computed(() => Number(props.layout?.container_utilization_percent || 0))
+const containerRows = computed(() =>
+  Array.from({ length: containersRequired.value }, (_, i) => {
+    const loaded = tanksIn(i)
+    return { index: i, loaded, free: unitsPerContainer.value - loaded, utilization: utilizationFor(loaded) }
+  })
+)
 
 function mm(value) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
+function pct(value) {
+  return `${Number(value || 0).toFixed(1)}%`
+}
 function dims(box) {
   if (!box) return '—'
   return `${mm(box.length_mm)} × ${mm(box.width_mm)} × ${mm(box.height_mm)} mm`
+}
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
 // ----------------------------------------------------------------- three.js
@@ -73,7 +111,6 @@ let renderer = null
 let scene = null
 let camera = null
 let controls = null
-let tankGroup = null
 let frameId = 0
 let resizeObserver = null
 
@@ -81,7 +118,10 @@ function disposeObject(obj) {
   obj.traverse((node) => {
     node.geometry?.dispose?.()
     const materials = Array.isArray(node.material) ? node.material : node.material ? [node.material] : []
-    materials.forEach((m) => m.dispose?.())
+    materials.forEach((m) => {
+      m.map?.dispose?.()
+      m.dispose?.()
+    })
   })
 }
 
@@ -94,7 +134,6 @@ function teardown() {
   controls = null
   if (scene) disposeObject(scene)
   scene = null
-  tankGroup = null
   camera = null
   if (renderer) {
     renderer.dispose()
@@ -113,100 +152,75 @@ function fitCanvas() {
   camera.updateProjectionMatrix()
 }
 
-function buildScene() {
-  const layout = props.layout
-  const host = canvasHost.value
-  if (!layout || !host) return
-  teardown()
+/** A floating "1", "2", … above each container. */
+function makeLabel(text, size) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath()
+  ctx.arc(64, 64, 56, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.lineWidth = 6
+  ctx.strokeStyle = COLORS.label
+  ctx.stroke()
+  ctx.fillStyle = COLORS.label
+  ctx.font = 'bold 64px "IBM Plex Mono", monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, 64, 68)
+  const texture = new THREE.CanvasTexture(canvas)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }))
+  sprite.scale.set(size, size, 1)
+  return sprite
+}
 
+function buildContainer(group, layout, zOffset, index) {
   const L = layout.container.length_mm * MM
   const H = layout.container.height_mm * MM
   const W = layout.container.width_mm * MM
+  const centre = new THREE.Vector3(L / 2, H / 2, zOffset + W / 2)
 
-  renderer = new THREE.WebGLRenderer({ antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  renderer.setClearColor(COLORS.background, 1)
-  host.appendChild(renderer.domElement)
-
-  scene = new THREE.Scene()
-  camera = new THREE.PerspectiveCamera(40, 1, 0.05, 200)
-  const centre = new THREE.Vector3(L / 2, H / 2, W / 2)
-  const reach = Math.max(L, W, H) * 1.15
-  camera.position.set(centre.x + reach * 0.95, centre.y + reach * 0.75, centre.z + reach * 1.15)
-  camera.lookAt(centre)
-
-  controls = new OrbitControls(camera, renderer.domElement)
-  controls.target.copy(centre)
-  controls.enableDamping = true
-  controls.dampingFactor = 0.08
-  controls.minDistance = reach * 0.4
-  controls.maxDistance = reach * 4
-  controls.maxPolarAngle = Math.PI / 2 - 0.02
-  controls.update()
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c2cc, 1.1))
-  const sun = new THREE.DirectionalLight(0xffffff, 1.3)
-  sun.position.set(L, H * 2.2, W * 1.4)
-  scene.add(sun)
-
-  // Container: barely-there tinted walls seen from inside, crisp navy
-  // edges, and a slightly darker floor so stacking layers read as resting
-  // on something.
-  const containerGeometry = new THREE.BoxGeometry(L, H, W)
+  // Barely-there tinted walls seen from inside, crisp navy edges, a darker
+  // floor so stacked layers read as resting on something, and a door-end
+  // frame so length reads left→right the way a loading plan does.
+  const geometry = new THREE.BoxGeometry(L, H, W)
   const walls = new THREE.Mesh(
-    containerGeometry,
+    geometry,
     new THREE.MeshBasicMaterial({ color: COLORS.container, transparent: true, opacity: 0.05, side: THREE.BackSide })
   )
   walls.position.copy(centre)
-  scene.add(walls)
+  group.add(walls)
   const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(containerGeometry),
+    new THREE.EdgesGeometry(geometry),
     new THREE.LineBasicMaterial({ color: COLORS.container })
   )
   edges.position.copy(centre)
-  scene.add(edges)
+  group.add(edges)
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(L, W),
-    new THREE.MeshBasicMaterial({ color: COLORS.floor, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({ color: COLORS.container, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
   )
   floor.rotation.x = -Math.PI / 2
-  floor.position.set(L / 2, 0.001, W / 2)
-  scene.add(floor)
-
-  // Door-end marker so length reads left→right the way a loading plan does.
+  floor.position.set(L / 2, 0.001, zOffset + W / 2)
+  group.add(floor)
   const doorFrame = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.PlaneGeometry(W, H)),
     new THREE.LineBasicMaterial({ color: COLORS.container, transparent: true, opacity: 0.35 })
   )
   doorFrame.rotation.y = Math.PI / 2
-  doorFrame.position.set(L - 0.002, H / 2, W / 2)
-  scene.add(doorFrame)
+  doorFrame.position.set(L - 0.002, H / 2, zOffset + W / 2)
+  group.add(doorFrame)
 
-  fitCanvas()
-  resizeObserver = new ResizeObserver(fitCanvas)
-  resizeObserver.observe(host)
-
-  buildTanks()
-
-  const animate = () => {
-    frameId = requestAnimationFrame(animate)
-    controls.update()
-    renderer.render(scene, camera)
+  if (containersRequired.value > 1) {
+    const label = makeLabel(String(index + 1), Math.max(H, W) * 0.28)
+    label.position.set(L / 2, H + Math.max(H, W) * 0.22, zOffset + W / 2)
+    group.add(label)
   }
-  animate()
 }
 
-/** (Re)draws just the tank boxes -- the container stays put -- so paging
- *  between containers or editing Quantity behind the dialog is cheap. */
-function buildTanks() {
-  const layout = props.layout
-  if (!scene || !layout) return
-  if (tankGroup) {
-    scene.remove(tankGroup)
-    disposeObject(tankGroup)
-  }
-  tankGroup = new THREE.Group()
-
+function buildTanks(group, layout, zOffset, placed) {
   const gap = layout.gap_mm * MM
   const tl = layout.tank.length_mm * MM
   const tw = layout.tank.width_mm * MM
@@ -226,7 +240,6 @@ function buildTanks() {
     opacity: 0.8
   })
 
-  const placed = tanksInThisContainer.value
   const capacity = unitsPerContainer.value
   // Same fill order a loader would use: floor first, front-to-back along
   // the length, then across the width, then the next layer up. Slot
@@ -236,23 +249,81 @@ function buildTanks() {
   for (let iz = 0; iz < nH; iz += 1) {
     for (let iy = 0; iy < nW; iy += 1) {
       for (let ix = 0; ix < nL; ix += 1) {
-        if (slot >= capacity) break
+        if (slot >= capacity) return
         const x = gap + ix * (tl + gap) + tl / 2
-        const z = gap + iy * (tw + gap) + tw / 2
+        const z = zOffset + gap + iy * (tw + gap) + tw / 2
         const y = gap + iz * (th + gap) + th / 2
         const isLoaded = slot < placed
         const box = new THREE.Mesh(solidGeometry, isLoaded ? solidMaterial : ghostMaterial)
         box.position.set(x, y, z)
-        tankGroup.add(box)
+        group.add(box)
         const outline = new THREE.LineSegments(edgeGeometry, isLoaded ? solidEdgeMaterial : ghostEdgeMaterial)
         outline.position.set(x, y, z)
         if (!isLoaded) outline.computeLineDistances()
-        tankGroup.add(outline)
+        group.add(outline)
         slot += 1
       }
     }
   }
-  scene.add(tankGroup)
+}
+
+function buildScene() {
+  const layout = props.layout
+  const host = canvasHost.value
+  if (!layout || !host || !unitsPerContainer.value) return
+  teardown()
+
+  const L = layout.container.length_mm * MM
+  const H = layout.container.height_mm * MM
+  const W = layout.container.width_mm * MM
+  const count = drawnContainers.value
+  const spacing = W * 0.4
+  const totalDepth = count * W + (count - 1) * spacing
+
+  renderer = new THREE.WebGLRenderer({ antialias: true })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setClearColor(COLORS.background, 1)
+  host.appendChild(renderer.domElement)
+
+  scene = new THREE.Scene()
+  camera = new THREE.PerspectiveCamera(40, 1, 0.05, 500)
+  const centre = new THREE.Vector3(L / 2, H / 2, totalDepth / 2)
+  const reach = Math.max(L, totalDepth, H) * 1.15
+  camera.position.set(centre.x + reach * 0.95, centre.y + reach * 0.75, centre.z + reach * 1.15)
+  camera.lookAt(centre)
+
+  controls = new OrbitControls(camera, renderer.domElement)
+  controls.target.copy(centre)
+  controls.enableDamping = true
+  controls.dampingFactor = 0.08
+  controls.minDistance = reach * 0.3
+  controls.maxDistance = reach * 4
+  controls.maxPolarAngle = Math.PI / 2 - 0.02
+  controls.update()
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c2cc, 1.1))
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3)
+  sun.position.set(L, H * 2.2, totalDepth * 1.4)
+  scene.add(sun)
+
+  const group = new THREE.Group()
+  for (let i = 0; i < count; i += 1) {
+    const zOffset = i * (W + spacing)
+    buildContainer(group, layout, zOffset, i)
+    buildTanks(group, layout, zOffset, tanksIn(i))
+  }
+  scene.add(group)
+
+  fitCanvas()
+  resizeObserver = new ResizeObserver(fitCanvas)
+  resizeObserver.observe(host)
+
+  const animate = () => {
+    frameId = requestAnimationFrame(animate)
+    controls.update()
+    renderer.render(scene, camera)
+  }
+  animate()
 }
 
 // Escape closes from anywhere -- the panel itself may not hold focus (the
@@ -266,7 +337,7 @@ function onWindowKeydown(event) {
 }
 
 watch(
-  () => [props.open, props.layout],
+  () => [props.open, props.layout, props.quantity],
   async ([open]) => {
     window.removeEventListener('keydown', onWindowKeydown, true)
     if (!open) {
@@ -274,21 +345,12 @@ watch(
       return
     }
     window.addEventListener('keydown', onWindowKeydown, true)
-    containerIndex.value = 0
     await nextTick()
     buildScene()
     requestAnimationFrame(() => panel.value?.focus?.({ preventScroll: true }))
   },
   { immediate: true }
 )
-
-watch([containerIndex, () => props.quantity], () => {
-  // Quantity may have dropped below the container being viewed.
-  if (containerIndex.value > Math.max(containersRequired.value - 1, 0)) {
-    containerIndex.value = Math.max(containersRequired.value - 1, 0)
-  }
-  buildTanks()
-})
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown, true)
@@ -316,6 +378,7 @@ onBeforeUnmount(() => {
             <div class="cf3d__eyebrow">Container load · 3D</div>
             <div class="cf3d__title">
               {{ itemLabel || 'Tank' }} in {{ layout?.container?.name || 'container' }}
+              <span v-if="containersRequired > 1" class="cf3d__title-count">× {{ containersRequired }}</span>
             </div>
           </div>
           <button type="button" class="cf3d__close" title="Close" @click="emit('close')">✕</button>
@@ -332,44 +395,42 @@ onBeforeUnmount(() => {
               Container Type.
             </div>
             <div v-else ref="canvasHost" class="cf3d__canvas" />
-            <div v-if="layout && unitsPerContainer" class="cf3d__hint">Drag to rotate · scroll to zoom · right-drag to pan</div>
+            <div v-if="layout && unitsPerContainer" class="cf3d__hint">
+              Drag to rotate · scroll to zoom · right-drag to pan
+              <span v-if="containersRequired > drawnContainers">
+                · showing {{ drawnContainers }} of {{ containersRequired }} containers
+              </span>
+            </div>
           </div>
 
           <aside v-if="layout" class="cf3d__side">
-            <div v-if="containersRequired > 1" class="cf3d__pager">
-              <button type="button" class="cf3d__pager-btn" :disabled="containerIndex === 0" @click="containerIndex -= 1">←</button>
-              <span>Container {{ containerIndex + 1 }} of {{ containersRequired }}</span>
-              <button
-                type="button"
-                class="cf3d__pager-btn"
-                :disabled="containerIndex >= containersRequired - 1"
-                @click="containerIndex += 1"
-              >
-                →
-              </button>
+            <div class="cf3d__stat cf3d__stat--hero">
+              <span class="cf3d__k">Shipment utilization</span>
+              <span class="cf3d__v">{{ pct(shipmentUtilization) }}</span>
+              <div class="cf3d__bar"><div class="cf3d__bar-fill" :style="{ width: `${Math.min(shipmentUtilization, 100)}%` }" /></div>
+              <p class="cf3d__note">
+                Volume of the {{ plural(orderQty, 'tank') }} ordered ÷ volume of the
+                {{ plural(containersRequired, 'container') }} needed.
+                <strong>{{ pct(fullUtilization) }} when full</strong> ({{ unitsPerContainer }} per container) — the
+                rest is the {{ mm(layout.gap_mm) }} mm handling gap around every tank plus whatever is left once no
+                more whole tanks fit along each axis.
+              </p>
             </div>
 
-            <div class="cf3d__stat cf3d__stat--hero">
-              <span class="cf3d__k">Container utilization</span>
-              <span class="cf3d__v">{{ utilization.toFixed(1) }}%</span>
-              <div class="cf3d__bar"><div class="cf3d__bar-fill" :style="{ width: `${Math.min(utilization, 100)}%` }" /></div>
-              <p class="cf3d__note">
-                Tank volume ÷ container volume when the container is full. The empty space is the
-                {{ mm(layout.gap_mm) }} mm handling gap on every side of every tank, plus whatever is left over
-                once no more whole tanks fit along each axis.
-              </p>
+            <div v-if="containerRows.length" class="cf3d__containers">
+              <div v-for="row in containerRows" :key="row.index" class="cf3d__container-row">
+                <span class="cf3d__container-n">{{ row.index + 1 }}</span>
+                <span class="cf3d__container-load">
+                  <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ unitsPerContainer }}
+                  <span v-if="row.free" class="cf3d__muted">· <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free</span>
+                </span>
+                <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
+              </div>
             </div>
 
             <dl class="cf3d__facts">
               <div class="cf3d__fact">
-                <dt>Loaded in this container</dt>
-                <dd>
-                  <span class="cf3d__swatch cf3d__swatch--tank" />{{ tanksInThisContainer }} of {{ unitsPerContainer }}
-                  <span v-if="freeSlots" class="cf3d__muted">· <span class="cf3d__swatch cf3d__swatch--ghost" />{{ freeSlots }} free</span>
-                </dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Arrangement</dt>
+                <dt>Arrangement per container</dt>
                 <dd>
                   {{ layout.counts.along_length }} along × {{ layout.counts.along_width }} across ×
                   {{ layout.counts.along_height }} high
@@ -389,7 +450,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="cf3d__fact">
                 <dt>Order quantity</dt>
-                <dd>{{ Math.max(quantity, 1) }} tank{{ Math.max(quantity, 1) === 1 ? '' : 's' }} → {{ containersRequired }} container{{ containersRequired === 1 ? '' : 's' }}</dd>
+                <dd>{{ plural(orderQty, 'tank') }} → {{ plural(containersRequired, 'container') }}</dd>
               </div>
             </dl>
           </aside>
@@ -453,6 +514,12 @@ onBeforeUnmount(() => {
 .cf3d__title {
   margin-top: 6px;
   font: 700 18px/1.2 'Raleway', system-ui, sans-serif;
+}
+
+.cf3d__title-count {
+  margin-left: 6px;
+  font: 700 14px/1 'IBM Plex Mono', monospace;
+  color: var(--cf-muted);
 }
 
 .cf3d__close {
@@ -528,30 +595,6 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 
-.cf3d__pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font: 600 13px/1 'Raleway', system-ui, sans-serif;
-}
-
-.cf3d__pager-btn {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--cf-border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--cf-navy);
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.cf3d__pager-btn:disabled {
-  color: var(--cf-faint);
-  cursor: not-allowed;
-}
-
 .cf3d__stat {
   display: flex;
   flex-direction: column;
@@ -585,6 +628,55 @@ onBeforeUnmount(() => {
   margin: 4px 0 0;
   font: 400 12px/1.55 'Raleway', system-ui, sans-serif;
   color: var(--cf-muted);
+}
+
+.cf3d__note strong {
+  color: var(--cf-text);
+  font-weight: 700;
+}
+
+.cf3d__containers {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cf3d__container-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font: 600 12.5px/1.3 'IBM Plex Mono', monospace;
+}
+
+.cf3d__container-row + .cf3d__container-row {
+  border-top: 1px solid var(--cf-row);
+}
+
+.cf3d__container-n {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--cf-navy);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 700 11px/1 'IBM Plex Mono', monospace;
+  color: var(--cf-navy);
+}
+
+.cf3d__container-load {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cf3d__container-pct {
+  color: var(--cf-navy);
+  font-weight: 700;
 }
 
 .cf3d__facts {
