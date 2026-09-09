@@ -27,12 +27,15 @@
  * each onto the same Quotation via the backend's `submit_and_map` (first
  * item creates it, later ones target it) — see `submitAll()`.
  */
-import { ref, shallowRef, shallowReactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, shallowRef, shallowReactive, computed, onMounted, onBeforeUnmount, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { fieldState, useFrmRemote, confirm } from '@frappe-vue-sdk/vue'
 import ChildRowDrawer from '@/components/ChildRowDrawer.vue'
 import WizardStep from '@/components/wizard/WizardStep.vue'
 import WizardProgress from '@/components/wizard/WizardProgress.vue'
+// Lazy: pulls in three.js (~600KB) and nobody needs it until they click
+// "View container load in 3D", so keep it out of the wizard's own chunk.
+const ContainerFit3D = defineAsyncComponent(() => import('@/components/wizard/ContainerFit3D.vue'))
 import LucideIcon from '@/components/LucideIcon.vue'
 import {
   SHARED_STEP,
@@ -787,7 +790,8 @@ let containerFitPreviewToken = 0
 let containerFitPreviewDebounce = null
 
 async function runContainerFitPreview() {
-  const frm = activeItem.value?.frm
+  const item = activeItem.value
+  const frm = item?.frm
   if (!frm) return
   const token = ++containerFitPreviewToken
   containerFitPreviewPending.value = true
@@ -824,6 +828,7 @@ async function runContainerFitPreview() {
     for (const fieldname of CONTAINER_FIT_PREVIEW_RESULT_FIELDS) {
       if (fieldname in result) await frm.set_value(fieldname, result[fieldname])
     }
+    item.containerFitLayout = result.layout ?? null
     // units_per_container may have just changed -- keep containers_required
     // in step with it (see syncContainersRequiredPreview's own doc comment).
     syncContainersRequiredPreview()
@@ -837,6 +842,24 @@ async function runContainerFitPreview() {
   } finally {
     if (token === containerFitPreviewToken) containerFitPreviewPending.value = false
   }
+}
+
+/** "View in 3D" for the Container / Logistics sub-section -- only offered
+ *  once the fit is actually computable (Sea + a Container Type picked). A
+ *  resumed draft, or an item whose preview hasn't fired yet, has no layout
+ *  cached on it, so the click first runs the same preview the watcher would
+ *  and only then opens -- the dialog draws whatever landed. */
+const containerFit3DOpen = ref(false)
+const canViewContainerFit3D = computed(() => {
+  const doc = activeItem.value?.frm?.doc
+  return Boolean(doc?.mode_of_transport === 'Sea' && doc?.container_type)
+})
+async function openContainerFit3D() {
+  if (!activeItem.value?.containerFitLayout) {
+    clearTimeout(containerFitPreviewDebounce)
+    await runContainerFitPreview()
+  }
+  containerFit3DOpen.value = true
 }
 
 /** Same 400ms debounce window `scheduleFreightPreview()` uses. */
@@ -1101,7 +1124,10 @@ function makeItem(frm, key) {
     // lets one costed design price multiple units of the same job; Description
     // overrides the backend's auto-generated line text when set.
     quantity: 1,
-    description: ''
+    description: '',
+    // Last `preview_container_fit().layout` for this item -- what the
+    // "View in 3D" container dialog draws. Wizard-only, never persisted.
+    containerFitLayout: null
   })
 }
 
@@ -2182,6 +2208,11 @@ watch(() => props.quotation, load)
                 <p v-else-if="containerFitPreviewError" class="qw-derived__warning" style="margin-top: 10px;">
                   Container fit preview unavailable right now ({{ containerFitPreviewError }}) — figures above may be out of date.
                 </p>
+                <div v-if="canViewContainerFit3D" class="qw-step-actions">
+                  <button type="button" class="qw-ghost-btn" :disabled="containerFitPreviewPending" @click="openContainerFit3D">
+                    <LucideIcon name="box" /> View container load in 3D
+                  </button>
+                </div>
               </template>
             </div>
           </div>
@@ -2391,6 +2422,13 @@ watch(() => props.quotation, load)
       </div>
 
       <ChildRowDrawer :frm="activeItem?.frm ?? null" :root="wizardEl" :read-only="activeItemLocked" />
+      <ContainerFit3D
+        :open="containerFit3DOpen"
+        :layout="activeItem?.containerFitLayout ?? null"
+        :quantity="activeItem ? normalizedQuantity(activeItem) : 1"
+        :item-label="activeItem ? itemLabel(activeItem, items.indexOf(activeItem)) : ''"
+        @close="containerFit3DOpen = false"
+      />
     </template>
   </div>
 </template>
@@ -3058,6 +3096,23 @@ watch(() => props.quotation, load)
 
 .qw-ghost-btn:hover {
   background: var(--qw-row-border);
+}
+
+.qw-ghost-btn:disabled {
+  color: var(--qw-faint);
+  cursor: not-allowed;
+}
+
+.qw-ghost-btn:has(.lucide) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.qw-ghost-btn :deep(.lucide) {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 .qw-ghost-btn--dashed {
