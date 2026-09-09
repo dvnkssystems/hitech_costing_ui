@@ -740,9 +740,38 @@ const CONTAINER_LOGISTICS_CALCULATED_FIELDS = [
   'containers_required',
   'container_utilization_percent'
 ]
-const containerLogisticsRows = computed(() =>
-  activeItem.value ? derivedRows(activeItem.value.frm, CONTAINER_LOGISTICS_CALCULATED_FIELDS) : []
-)
+const containerLogisticsRows = computed(() => {
+  const item = activeItem.value
+  if (!item) return []
+  const rows = derivedRows(item.frm, CONTAINER_LOGISTICS_CALCULATED_FIELDS)
+  // The stored `container_utilization_percent` is the tank design's packing
+  // efficiency when the container is FULL -- identical for an order of 1
+  // or 3, which reads as "broken" next to a Quantity field. Label it as
+  // such, and add the figure people actually expect: the fill of the
+  // containers this order needs (order qty × tank volume ÷ containers ×
+  // container volume), off the same layout the 3D view draws from. Same
+  // arithmetic as ContainerFit3D's headline, so the two always agree.
+  const layout = item.containerFitLayout
+  const doc = item.frm.doc
+  if (!(layout && doc?.mode_of_transport === 'Sea' && doc?.container_type)) return rows
+  const whenFull = rows.find((row) => row.label === 'Container Utilization %')
+  if (whenFull) whenFull.label = 'Container Utilization % (when full)'
+  const units = Number(layout.units_per_container || 0)
+  if (!units) return rows
+  const { tank, container } = layout
+  const tankVolume = tank.length_mm * tank.width_mm * tank.height_mm
+  const containerVolume = container.length_mm * container.width_mm * container.height_mm
+  const qty = normalizedQuantity(item)
+  const containers = Math.ceil(qty / units)
+  const actual = containerVolume ? ((qty * tankVolume) / (containers * containerVolume)) * 100 : 0
+  rows.push({
+    label: 'Utilization (this order)',
+    value: `${actual.toFixed(2)}%`,
+    low: false,
+    warning: ''
+  })
+  return rows
+})
 
 /**
  * Live container-fit preview for the Container / Logistics sub-section above
