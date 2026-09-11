@@ -1974,7 +1974,7 @@ watch(() => props.quotation, load)
 
         <!-- 02 · Costing sheet (per item, tabbed) -->
         <section v-else-if="activePageStep === 'items'">
-          <div class="qw-item-tabs">
+          <div class="qw-item-tabs qw-item-tabs--switcher">
             <span class="qw-item-tabs__eyebrow">Items</span>
             <template v-if="!singleItemMode">
               <button
@@ -2979,6 +2979,12 @@ watch(() => props.quotation, load)
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Item switcher row on the Costing Sheet step: breathing room between the
+   wizard tabs above and the per-item sub-step tabs below. */
+.qw-item-tabs--switcher {
+  margin: 14px 0;
 }
 
 .qw-item-tabs__eyebrow {
