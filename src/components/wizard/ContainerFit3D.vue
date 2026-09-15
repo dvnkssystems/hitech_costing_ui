@@ -1,46 +1,69 @@
 <script setup>
 /**
- * 3D view of the shipping containers an item's order needs, with the tanks
- * packed inside -- the visual answer to "why is utilization only 26% when
- * all my tanks fit?" and "why 2 containers?". Draws EXACTLY the arrangement
- * the backend's `compute_container_layout()` priced from (same
- * orientation, per-axis counts, the Packing Settings gap along length/width
- * and the pallet under every tank -- see `preview_container_fit`'s `layout`
- * key: `gap_mm`, `pallet_thickness_mm`, `counts`), so what's on screen can
- * never disagree with the Units per Container / Container Utilization %
- * figures next to the button that opens this.
+ * 3D container load view AND per-item load plan editor.
  *
- * Height rule (mirrors the backend): no gap on the vertical axis at all --
- * every tank sits on a pallet, layer k occupies k × (pallet + tank height),
- * and stacking is capped at 2 layers; when there ARE 2 layers the stack is
- * pallet, tank, tank, pallet (a pallet on top of the upper tank as well).
+ * One plan per quotation item (= per Costing Worksheet), stored server-side
+ * as a `Container Fit Plan` -- see
+ * `hitech_costing/doctype/container_fit_plan/container_fit_plan.py`. The
+ * scene draws from that plan's payload, never from the automatic estimate's
+ * uniform-gap `layout`:
  *
- * Nothing here recomputes *fit*: `layout` is taken as given. The only
- * client-side arithmetic is splitting the order Quantity across containers
- * (qty ÷ units_per_container, the same math the Items & Pricing table's
- * "(est.)" column already does) and the resulting per-container /
- * whole-shipment volume utilization -- which is deliberately NOT the stored
- * `container_utilization_percent`: that field is the design's packing
- * efficiency when a container is FULL (a property of tank + container type,
- * identical for an order of 1 or 3), shown here as the secondary "when full"
- * line. The headline is what's actually being shipped.
+ *   - On open: the saved plan when there is one and it isn't stale; otherwise
+ *     an opening proposal (`preview_fit_plan` with `start_from_estimate`),
+ *     which picks the same orientation and counts the automatic estimate
+ *     priced from, so the dialog opens agreeing with Units per Container.
+ *   - While editing: every change re-runs `preview_fit_plan` (debounced,
+ *     request-token guarded) with the tank AS PLACED from the last payload,
+ *     so orientation never flips mid-edit. The payload is the only source of
+ *     every figure, verdict and drawn position -- nothing about fit is
+ *     recomputed here.
+ *   - Save / Reset persist or delete the plan, then emit `refresh` so the
+ *     wizard re-runs its container-fit preview and Units per Container /
+ *     Containers Required update straight away.
+ *
+ * Geometry (mirrors the backend): along the length the cursor starts at
+ * length gap 1, each tank takes its length and is followed by the next gap;
+ * same across the width. No vertical gap -- layer k sits at k × (pallet +
+ * tank height), a pallet under every tank, and when stacked 2 high a pallet
+ * on top of the upper tank too.
+ *
+ * The only client-side arithmetic is splitting the order Quantity across
+ * containers (qty ÷ units_per_container) and the resulting shipment volume
+ * utilization. `total_tanks` physical positions are drawn per container; the
+ * ones past `units_per_container` are ghosted as ruled out by weight.
  *
  * Coordinate mapping: container length along X, height along Y (up), width
  * along Z; containers line up side by side along Z; 1 scene unit = 1 metre.
  */
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onBeforeUnmount, nextTick, useId } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { call } from '@/lib/frappe.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  /** `preview_container_fit().layout` -- see compute_container_layout(). */
+  /** `preview_container_fit().layout` -- the automatic estimate. Only used
+   *  to seed the opening proposal's Stacked default. */
   layout: { type: Object, default: null },
   /** The item's order quantity on the Items & Pricing table. */
   quantity: { type: Number, default: 1 },
-  itemLabel: { type: String, default: '' }
+  itemLabel: { type: String, default: '' },
+  /** The item's SAVED Costing Worksheet name, or null while unsaved. */
+  costingWorksheet: { type: String, default: null },
+  containerType: { type: String, default: null },
+  extLengthMm: { type: [Number, String], default: 0 },
+  extWidthMm: { type: [Number, String], default: 0 },
+  extHeightMm: { type: [Number, String], default: 0 },
+  totalWeightKg: { type: [Number, String], default: 0 },
+  /** Quotation submitted -- the plan can be viewed and tried, not saved. */
+  locked: { type: Boolean, default: false }
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'refresh'])
+
+const FIT_PLAN_API = 'hitech_costing.hitech_costing.doctype.container_fit_plan.container_fit_plan'
+const PREVIEW_DEBOUNCE_MS = 300
+const STALE_NOTICE =
+  'The saved load plan was for a different container or tank size. This is a fresh proposal; save to replace it.'
 
 const MM = 1 / 1000
 /** Past this many containers the scene stops being readable anyway; the
@@ -58,50 +81,86 @@ const COLORS = {
   label: '#0b3465'
 }
 
+const uid = useId()
 const panel = ref(null)
 const canvasHost = ref(null)
 
+// ------------------------------------------------------------------ state
+/** Last plan payload from the backend -- what the scene and figures show. */
+const plan = shallowRef(null)
+const loading = ref(false)
+const previewing = ref(false)
+const saving = ref(false)
+const resetting = ref(false)
+const error = ref('')
+const notice = ref('')
+const flash = ref('')
+/** A Container Fit Plan exists server-side for this item (stale or not). */
+const savedPlanExists = ref(false)
+
+// Editor inputs -- the source of truth while editing. Gap values are kept as
+// the raw input strings so clearing a field to retype doesn't snap it to 0.
+const stacked = ref(0)
+const lengthGaps = ref([])
+const widthGaps = ref([])
+
+/** Bumped on every open / context change: nothing from an earlier session
+ *  may land on a later one. */
+let session = 0
+/** Bumped on every edit preview (and by save/reset/load, which supersede
+ *  any in-flight preview). */
+let previewToken = 0
+let previewTimer = null
+
+const busy = computed(() => loading.value || saving.value || resetting.value)
+
+// --------------------------------------------------------------- figures
 const orderQty = computed(() => Math.max(Number(props.quantity) || 0, 1))
-const unitsPerContainer = computed(() => Number(props.layout?.units_per_container || 0))
+const slotsPerContainer = computed(() => Math.max(0, Number(plan.value?.units_per_container || 0)))
+const physicalPositions = computed(() => Math.max(0, Number(plan.value?.total_tanks || 0)))
+const ruledOutByWeight = computed(() => Math.max(0, physicalPositions.value - slotsPerContainer.value))
 const containersRequired = computed(() =>
-  unitsPerContainer.value > 0 ? Math.ceil(orderQty.value / unitsPerContainer.value) : 0
+  slotsPerContainer.value > 0 ? Math.ceil(orderQty.value / slotsPerContainer.value) : 0
 )
-const drawnContainers = computed(() => Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS))
+const drawnContainers = computed(() => Math.max(1, Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS)))
 
 /** Tanks loaded into container `index` (0-based) -- full for every
  *  container but the last, which gets the remainder. */
 function tanksIn(index) {
-  if (!unitsPerContainer.value) return 0
-  const remaining = orderQty.value - index * unitsPerContainer.value
-  return Math.max(0, Math.min(unitsPerContainer.value, remaining))
+  if (!slotsPerContainer.value) return 0
+  const remaining = orderQty.value - index * slotsPerContainer.value
+  return Math.max(0, Math.min(slotsPerContainer.value, remaining))
 }
 
 const tankVolume = computed(() => {
-  const t = props.layout?.tank
+  const t = plan.value?.tank
   return t ? t.length_mm * t.width_mm * t.height_mm : 0
 })
 const containerVolume = computed(() => {
-  const c = props.layout?.container
+  const c = plan.value?.container
   return c ? c.length_mm * c.width_mm * c.height_mm : 0
 })
 function utilizationFor(tankCount) {
-  return containerVolume.value ? (tankCount * tankVolume.value) / containerVolume.value * 100 : 0
+  return containerVolume.value ? ((tankCount * tankVolume.value) / containerVolume.value) * 100 : 0
 }
 /** Actual fill of everything being shipped, across all containers needed. */
 const shipmentUtilization = computed(() =>
   containersRequired.value ? utilizationFor(orderQty.value) / containersRequired.value : 0
 )
-/** The stored field -- utilization when a container is full. */
-const fullUtilization = computed(() => Number(props.layout?.container_utilization_percent || 0))
+/** The plan's utilization when a container is full. */
+const fullUtilization = computed(() => Number(plan.value?.container_utilization_percent || 0))
 const containerRows = computed(() =>
   Array.from({ length: containersRequired.value }, (_, i) => {
     const loaded = tanksIn(i)
-    return { index: i, loaded, free: unitsPerContainer.value - loaded, utilization: utilizationFor(loaded) }
+    return { index: i, loaded, free: slotsPerContainer.value - loaded, utilization: utilizationFor(loaded) }
   })
 )
 
 function mm(value) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
+}
+function kg(value) {
+  return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })
 }
 function pct(value) {
   return `${Number(value || 0).toFixed(1)}%`
@@ -114,11 +173,291 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
+const verdict = computed(() => {
+  const p = plan.value
+  if (!p) return null
+  const notes = String(p.fit_notes || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!p.geometric_fit) return { tone: 'bad', text: 'Does not fit yet', notes }
+  if (p.exceeds_max_load) {
+    return { tone: 'warn', text: `Fits, but weight caps it at ${slotsPerContainer.value}`, notes }
+  }
+  return { tone: 'ok', text: `Fits: ${plural(slotsPerContainer.value, 'tank')} per container`, notes: [] }
+})
+
+function varianceRow(label, variance, used, available) {
+  const n = Number(variance || 0)
+  return {
+    label,
+    value: n < 0 ? `${mm(-n)} mm over` : `${mm(n)} mm spare`,
+    note: `${mm(used)} of ${mm(available)} mm used`,
+    tone: n < 0 ? 'bad' : ''
+  }
+}
+
+const figures = computed(() => {
+  const p = plan.value
+  if (!p) return []
+  const c = p.container || {}
+  const capped = slotsPerContainer.value < physicalPositions.value
+  return [
+    { label: 'Tanks per row', value: String(p.tanks_per_row ?? 0) },
+    { label: 'Tanks per column', value: String(p.tanks_per_column ?? 0) },
+    { label: 'Layers', value: String(p.layers ?? 0) },
+    { label: 'Total tanks', value: String(p.total_tanks ?? 0) },
+    {
+      label: 'Units per container',
+      value: String(slotsPerContainer.value),
+      note: capped
+        ? `capped by weight${p.max_units_by_weight != null ? ` (max ${p.max_units_by_weight} by load)` : ''}`
+        : '',
+      tone: capped ? 'warn' : ''
+    },
+    varianceRow('Length variance', p.length_variance_mm, p.total_length_used_mm, c.length_mm),
+    varianceRow('Width variance', p.width_variance_mm, p.total_width_used_mm, c.width_mm),
+    varianceRow('Height variance', p.height_variance_mm, p.height_used_mm, c.height_mm),
+    {
+      label: 'Total weight vs max load',
+      value: c.max_load_kg ? `${kg(p.total_weight_kg)} / ${kg(c.max_load_kg)} kg` : `${kg(p.total_weight_kg)} kg`,
+      note: c.max_load_kg ? '' : 'no max load set on this container type',
+      tone: p.exceeds_max_load ? 'bad' : ''
+    }
+  ]
+})
+
+const axes = computed(() => [
+  {
+    key: 'length',
+    title: 'Length axis gaps',
+    hint: 'Gap 1 is against the far wall; the last gap is at the doors.',
+    gaps: lengthGaps.value
+  },
+  {
+    key: 'width',
+    title: 'Width axis gaps',
+    hint: 'Gap 1 and the last gap sit against the side walls.',
+    gaps: widthGaps.value
+  }
+])
+
+const saveHelp = computed(() => {
+  if (!props.costingWorksheet) return 'Save the item first. The load plan is stored against its costing sheet.'
+  if (props.locked) return 'This quotation is submitted, so its load plan can no longer be changed.'
+  if (plan.value && !plan.value.geometric_fit) return 'Adjust the gaps or tank counts until the plan fits, then save.'
+  return ''
+})
+const canSave = computed(
+  () => Boolean(props.costingWorksheet && plan.value?.geometric_fit) && !props.locked && !busy.value
+)
+
+// ------------------------------------------------------------ plan calls
+function messageOf(e) {
+  return e?.message || String(e)
+}
+function gapValues(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => Number(row?.gap_mm ?? row) || 0)
+}
+function cleanGaps(list) {
+  return list.map((value) => Math.max(0, Number(value) || 0))
+}
+function gapList(key) {
+  return key === 'length' ? lengthGaps.value : widthGaps.value
+}
+
+function applyPlan(payload) {
+  plan.value = payload ?? null
+  stacked.value = payload?.stacked ? 1 : 0
+  const fallback = [String(Number(payload?.standard_gap_mm || 0))]
+  const lengths = gapValues(payload?.length_axis_gaps).map(String)
+  const widths = gapValues(payload?.width_axis_gaps).map(String)
+  lengthGaps.value = lengths.length ? lengths : fallback
+  widthGaps.value = widths.length ? widths : [...fallback]
+}
+
+function cancelPendingPreview() {
+  clearTimeout(previewTimer)
+  previewTimer = null
+  previewToken += 1
+  previewing.value = false
+}
+
+function openingProposalArgs() {
+  return {
+    plan: {
+      container_type: props.containerType ?? null,
+      ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
+      stacked: Number(props.layout?.counts?.along_height) === 2 ? 1 : 0,
+      tank_length_mm: Number(props.extLengthMm) || 0,
+      tank_width_mm: Number(props.extWidthMm) || 0,
+      tank_height_mm: Number(props.extHeightMm) || 0,
+      tank_weight_kg: Number(props.totalWeightKg) || 0,
+      start_from_estimate: 1
+    }
+  }
+}
+
+/** The tank AS PLACED from the last payload plus the current inputs. */
+function editedPlan(base) {
+  return {
+    container_type: base.container_type || props.containerType || null,
+    stacked: stacked.value ? 1 : 0,
+    tank_length_mm: Number(base.tank?.length_mm) || 0,
+    tank_width_mm: Number(base.tank?.width_mm) || 0,
+    tank_height_mm: Number(base.tank?.height_mm) || 0,
+    length_axis_gaps: cleanGaps(lengthGaps.value),
+    width_axis_gaps: cleanGaps(widthGaps.value)
+  }
+}
+
+async function load() {
+  const mine = ++session
+  cancelPendingPreview()
+  plan.value = null
+  error.value = ''
+  notice.value = ''
+  flash.value = ''
+  savedPlanExists.value = false
+  loading.value = true
+  try {
+    let saved = null
+    if (props.costingWorksheet) {
+      const res = await call(`${FIT_PLAN_API}.get_worksheet_fit_plan`, { costing_worksheet: props.costingWorksheet })
+      if (mine !== session) return
+      saved = res?.plan ?? null
+      savedPlanExists.value = Boolean(saved)
+    }
+    if (saved && !saved.stale) {
+      applyPlan(saved)
+      return
+    }
+    if (saved?.stale) notice.value = STALE_NOTICE
+    const proposal = await call(`${FIT_PLAN_API}.preview_fit_plan`, openingProposalArgs())
+    if (mine !== session) return
+    applyPlan(proposal)
+  } catch (e) {
+    if (mine === session) error.value = messageOf(e)
+  } finally {
+    if (mine === session) loading.value = false
+  }
+}
+
+async function runPreview() {
+  previewTimer = null
+  const base = plan.value
+  if (!base) {
+    previewing.value = false
+    return
+  }
+  const token = ++previewToken
+  const mine = session
+  try {
+    const res = await call(`${FIT_PLAN_API}.preview_fit_plan`, {
+      plan: {
+        ...editedPlan(base),
+        ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
+        tank_weight_kg: Number(base.tank?.weight_kg) || 0
+      }
+    })
+    if (token !== previewToken || mine !== session) return
+    // Figures and scene only -- the inputs stay as typed.
+    if (res) plan.value = res
+    error.value = ''
+  } catch (e) {
+    if (token === previewToken && mine === session) error.value = messageOf(e)
+  } finally {
+    if (token === previewToken && mine === session) previewing.value = false
+  }
+}
+
+function onEdit() {
+  if (!plan.value) return
+  flash.value = ''
+  clearTimeout(previewTimer)
+  previewing.value = true
+  previewTimer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS)
+}
+
+function setStacked(checked) {
+  stacked.value = checked ? 1 : 0
+  onEdit()
+}
+function setGap(key, index, value) {
+  gapList(key)[index] = value
+  onEdit()
+}
+function addTank(key) {
+  gapList(key).push(String(Number(plan.value?.standard_gap_mm || 0)))
+  onEdit()
+}
+function removeTank(key) {
+  const list = gapList(key)
+  if (list.length <= 1) return
+  list.pop()
+  onEdit()
+}
+
+async function save() {
+  const base = plan.value
+  if (!base || !props.costingWorksheet || saving.value) return
+  cancelPendingPreview()
+  const mine = session
+  saving.value = true
+  error.value = ''
+  flash.value = ''
+  try {
+    const res = await call(`${FIT_PLAN_API}.save_worksheet_fit_plan`, {
+      costing_worksheet: props.costingWorksheet,
+      plan: editedPlan(base)
+    })
+    if (mine !== session) return
+    if (res?.plan) applyPlan(res.plan)
+    savedPlanExists.value = true
+    notice.value = ''
+    flash.value = 'Load plan saved'
+    emit('refresh', res?.worksheet ?? null)
+  } catch (e) {
+    if (mine === session) error.value = messageOf(e)
+  } finally {
+    if (mine === session) saving.value = false
+  }
+}
+
+async function resetToAutomatic() {
+  if (!props.costingWorksheet || resetting.value) return
+  cancelPendingPreview()
+  const mine = session
+  resetting.value = true
+  error.value = ''
+  flash.value = ''
+  try {
+    const res = await call(`${FIT_PLAN_API}.delete_worksheet_fit_plan`, { costing_worksheet: props.costingWorksheet })
+    if (mine !== session) return
+    savedPlanExists.value = false
+    notice.value = ''
+    emit('refresh', res?.worksheet ?? null)
+    const proposal = await call(`${FIT_PLAN_API}.preview_fit_plan`, openingProposalArgs())
+    if (mine !== session) return
+    applyPlan(proposal)
+    flash.value = 'Reset to the automatic estimate'
+  } catch (e) {
+    if (mine === session) error.value = messageOf(e)
+  } finally {
+    if (mine === session) resetting.value = false
+  }
+}
+
 // ----------------------------------------------------------------- three.js
 let renderer = null
 let scene = null
 let camera = null
 let controls = null
+let sun = null
+let contentGroup = null
+/** Container size + drawn count the camera was last framed for -- edits
+ *  that don't change it keep whatever angle the user orbited to. */
+let framingKey = ''
 let frameId = 0
 let resizeObserver = null
 
@@ -143,6 +482,9 @@ function teardown() {
   if (scene) disposeObject(scene)
   scene = null
   camera = null
+  sun = null
+  contentGroup = null
+  framingKey = ''
   if (renderer) {
     renderer.dispose()
     renderer.domElement.remove()
@@ -158,6 +500,52 @@ function fitCanvas() {
   renderer.setSize(width, height, false)
   camera.aspect = width / height
   camera.updateProjectionMatrix()
+}
+
+/** Renderer, camera, controls and lights -- created once per canvas host and
+ *  reused across edits; only the content group is rebuilt. */
+function ensureRenderer(host) {
+  if (renderer && renderer.domElement.parentNode === host) return
+  teardown()
+
+  renderer = new THREE.WebGLRenderer({ antialias: true })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setClearColor(COLORS.background, 1)
+  host.appendChild(renderer.domElement)
+
+  scene = new THREE.Scene()
+  camera = new THREE.PerspectiveCamera(40, 1, 0.05, 500)
+  controls = new OrbitControls(camera, renderer.domElement)
+  controls.enableDamping = true
+  controls.dampingFactor = 0.08
+  controls.maxPolarAngle = Math.PI / 2 - 0.02
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c2cc, 1.1))
+  sun = new THREE.DirectionalLight(0xffffff, 1.3)
+  scene.add(sun)
+
+  fitCanvas()
+  resizeObserver = new ResizeObserver(fitCanvas)
+  resizeObserver.observe(host)
+
+  const animate = () => {
+    frameId = requestAnimationFrame(animate)
+    controls.update()
+    renderer.render(scene, camera)
+  }
+  animate()
+}
+
+function frameCamera(L, H, totalDepth) {
+  const centre = new THREE.Vector3(L / 2, H / 2, totalDepth / 2)
+  const reach = Math.max(L, totalDepth, H) * 1.15
+  camera.position.set(centre.x + reach * 0.95, centre.y + reach * 0.75, centre.z + reach * 1.15)
+  camera.lookAt(centre)
+  controls.target.copy(centre)
+  controls.minDistance = reach * 0.3
+  controls.maxDistance = reach * 4
+  controls.update()
+  sun.position.set(L, H * 2.2, totalDepth * 1.4)
 }
 
 /** A floating "1", "2", … above each container. */
@@ -184,10 +572,10 @@ function makeLabel(text, size) {
   return sprite
 }
 
-function buildContainer(group, layout, zOffset, index) {
-  const L = layout.container.length_mm * MM
-  const H = layout.container.height_mm * MM
-  const W = layout.container.width_mm * MM
+function buildContainer(group, container, zOffset, index) {
+  const L = container.length_mm * MM
+  const H = container.height_mm * MM
+  const W = container.width_mm * MM
   const centre = new THREE.Vector3(L / 2, H / 2, zOffset + W / 2)
 
   // Barely-there tinted walls seen from inside, crisp navy edges, a darker
@@ -228,13 +616,29 @@ function buildContainer(group, layout, zOffset, index) {
   }
 }
 
-function buildTanks(group, layout, zOffset, placed) {
-  const gap = layout.gap_mm * MM
-  const pallet = (layout.pallet_thickness_mm ?? 0) * MM
-  const tl = layout.tank.length_mm * MM
-  const tw = layout.tank.width_mm * MM
-  const th = layout.tank.height_mm * MM
-  const { along_length: nL, along_width: nW, along_height: nH } = layout.counts
+/** Tank centres (mm) along one axis: cursor starts at gap 1; each tank is
+ *  followed by the next gap. `gaps.length - 1` tanks. */
+function axisCentres(gaps, size) {
+  const centres = []
+  let cursor = gaps[0] ?? 0
+  for (let i = 0; i < gaps.length - 1; i += 1) {
+    centres.push(cursor + size / 2)
+    cursor += size + (gaps[i + 1] ?? 0)
+  }
+  return centres
+}
+
+function buildTanks(group, p, zOffset, placed) {
+  const pallet = Number(p.pallet_thickness_mm || 0) * MM
+  const tankL = Number(p.tank?.length_mm) || 0
+  const tankW = Number(p.tank?.width_mm) || 0
+  const th = (Number(p.tank?.height_mm) || 0) * MM
+  const xs = axisCentres(gapValues(p.length_axis_gaps), tankL)
+  const zs = axisCentres(gapValues(p.width_axis_gaps), tankW)
+  const nH = Math.max(0, Number(p.layers) || 0)
+  if (!xs.length || !zs.length || !nH || !tankL || !tankW || !th) return
+  const tl = tankL * MM
+  const tw = tankW * MM
 
   const solidGeometry = new THREE.BoxGeometry(tl, th, tw)
   const edgeGeometry = new THREE.EdgesGeometry(solidGeometry)
@@ -249,9 +653,8 @@ function buildTanks(group, layout, zOffset, placed) {
     opacity: 0.8
   })
   // Pallet slab: same footprint as the tank, `pallet_thickness_mm` tall, in
-  // a muted wood tone so it reads as dunnage rather than another tank. One
-  // under every tank; when stacked 2 high, one more on top of the upper
-  // tank (pallet, tank, tank, pallet -- see the file header).
+  // a muted wood tone. One under every tank; when stacked 2 high, one more on
+  // top of the upper tank (pallet, tank, tank, pallet).
   const palletGeometry = pallet > 0 ? new THREE.BoxGeometry(tl, pallet, tw) : null
   const palletEdgeGeometry = palletGeometry ? new THREE.EdgesGeometry(palletGeometry) : null
   const palletMaterial = new THREE.MeshStandardMaterial({ color: COLORS.pallet, roughness: 0.9, metalness: 0 })
@@ -268,23 +671,20 @@ function buildTanks(group, layout, zOffset, placed) {
     group.add(outline)
   }
 
-  const capacity = unitsPerContainer.value
-  // Same fill order a loader would use: floor first, front-to-back along
-  // the length, then across the width, then the next layer up. Slot
-  // indices past `capacity` are geometric positions the payload cap ruled
-  // out -- not drawn at all, so "what you see" is what can actually ship.
+  const slots = slotsPerContainer.value
+  // Loader's fill order: floor first, front-to-back along the length, then
+  // across the width, then the next layer up. Every physical position is
+  // drawn; slots past `placed` are free, positions past `slots` are ruled
+  // out by weight -- both ghosted.
   let slot = 0
   for (let iz = 0; iz < nH; iz += 1) {
-    for (let iy = 0; iy < nW; iy += 1) {
-      for (let ix = 0; ix < nL; ix += 1) {
-        if (slot >= capacity) return
-        const x = gap + ix * (tl + gap) + tl / 2
-        const z = zOffset + gap + iy * (tw + gap) + tw / 2
-        // No vertical gap: layer iz starts at iz × (pallet + tank height),
-        // then the tank's own pallet, then the tank itself.
+    for (let iy = 0; iy < zs.length; iy += 1) {
+      for (let ix = 0; ix < xs.length; ix += 1) {
+        const x = xs[ix] * MM
+        const z = zOffset + zs[iy] * MM
         const layerBase = iz * (pallet + th)
         const y = layerBase + pallet + th / 2
-        const isLoaded = slot < placed
+        const isLoaded = slot < slots && slot < placed
         addPallet(x, layerBase + pallet / 2, z, isLoaded)
         const box = new THREE.Mesh(solidGeometry, isLoaded ? solidMaterial : ghostMaterial)
         box.position.set(x, y, z)
@@ -293,7 +693,6 @@ function buildTanks(group, layout, zOffset, placed) {
         outline.position.set(x, y, z)
         if (!isLoaded) outline.computeLineDistances()
         group.add(outline)
-        // Top of a 2-high stack carries a pallet above the upper tank too.
         if (nH === 2 && iz === 1) addPallet(x, layerBase + pallet + th + pallet / 2, z, isLoaded)
         slot += 1
       }
@@ -301,65 +700,39 @@ function buildTanks(group, layout, zOffset, placed) {
   }
 }
 
-function buildScene() {
-  const layout = props.layout
+function draw() {
+  const p = plan.value
   const host = canvasHost.value
-  if (!layout || !host || !unitsPerContainer.value) return
-  teardown()
+  const c = p?.container
+  if (!props.open || !host || !c?.length_mm || !c?.width_mm || !c?.height_mm) return
+  ensureRenderer(host)
 
-  const L = layout.container.length_mm * MM
-  const H = layout.container.height_mm * MM
-  const W = layout.container.width_mm * MM
+  const L = c.length_mm * MM
+  const H = c.height_mm * MM
+  const W = c.width_mm * MM
   const count = drawnContainers.value
   const spacing = W * 0.4
   const totalDepth = count * W + (count - 1) * spacing
+  const key = `${c.length_mm}|${c.width_mm}|${c.height_mm}|${count}`
+  if (key !== framingKey) {
+    frameCamera(L, H, totalDepth)
+    framingKey = key
+  }
 
-  renderer = new THREE.WebGLRenderer({ antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  renderer.setClearColor(COLORS.background, 1)
-  host.appendChild(renderer.domElement)
-
-  scene = new THREE.Scene()
-  camera = new THREE.PerspectiveCamera(40, 1, 0.05, 500)
-  const centre = new THREE.Vector3(L / 2, H / 2, totalDepth / 2)
-  const reach = Math.max(L, totalDepth, H) * 1.15
-  camera.position.set(centre.x + reach * 0.95, centre.y + reach * 0.75, centre.z + reach * 1.15)
-  camera.lookAt(centre)
-
-  controls = new OrbitControls(camera, renderer.domElement)
-  controls.target.copy(centre)
-  controls.enableDamping = true
-  controls.dampingFactor = 0.08
-  controls.minDistance = reach * 0.3
-  controls.maxDistance = reach * 4
-  controls.maxPolarAngle = Math.PI / 2 - 0.02
-  controls.update()
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c2cc, 1.1))
-  const sun = new THREE.DirectionalLight(0xffffff, 1.3)
-  sun.position.set(L, H * 2.2, totalDepth * 1.4)
-  scene.add(sun)
-
-  const group = new THREE.Group()
+  if (contentGroup) {
+    scene.remove(contentGroup)
+    disposeObject(contentGroup)
+  }
+  contentGroup = new THREE.Group()
   for (let i = 0; i < count; i += 1) {
     const zOffset = i * (W + spacing)
-    buildContainer(group, layout, zOffset, i)
-    buildTanks(group, layout, zOffset, tanksIn(i))
+    buildContainer(contentGroup, c, zOffset, i)
+    buildTanks(contentGroup, p, zOffset, tanksIn(i))
   }
-  scene.add(group)
-
-  fitCanvas()
-  resizeObserver = new ResizeObserver(fitCanvas)
-  resizeObserver.observe(host)
-
-  const animate = () => {
-    frameId = requestAnimationFrame(animate)
-    controls.update()
-    renderer.render(scene, camera)
-  }
-  animate()
+  scene.add(contentGroup)
 }
 
+// ------------------------------------------------------------- lifecycle
 // Escape closes from anywhere -- the panel itself may not hold focus (the
 // canvas grabs pointer events, and focus() during the enter transition
 // isn't reliable), so a panel-scoped keydown alone misses most presses.
@@ -371,23 +744,44 @@ function onWindowKeydown(event) {
 }
 
 watch(
-  () => [props.open, props.layout, props.quantity],
-  async ([open]) => {
+  [
+    () => props.open,
+    () => props.costingWorksheet,
+    () => props.containerType,
+    () => props.extLengthMm,
+    () => props.extWidthMm,
+    () => props.extHeightMm,
+    () => props.totalWeightKg
+  ],
+  ([open], previous) => {
     window.removeEventListener('keydown', onWindowKeydown, true)
     if (!open) {
+      session += 1
+      cancelPendingPreview()
+      loading.value = false
+      saving.value = false
+      resetting.value = false
       teardown()
       return
     }
     window.addEventListener('keydown', onWindowKeydown, true)
-    await nextTick()
-    buildScene()
-    requestAnimationFrame(() => panel.value?.focus?.({ preventScroll: true }))
+    load()
+    if (!previous?.[0]) {
+      nextTick(() => requestAnimationFrame(() => panel.value?.focus?.({ preventScroll: true })))
+    }
   },
   { immediate: true }
 )
 
+watch([plan, () => props.quantity, () => props.open], async () => {
+  await nextTick()
+  if (props.open) draw()
+})
+
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown, true)
+  clearTimeout(previewTimer)
+  session += 1
   teardown()
 })
 </script>
@@ -404,32 +798,35 @@ onBeforeUnmount(() => {
         class="cf3d"
         role="dialog"
         aria-modal="true"
-        aria-label="Container load in 3D"
+        aria-label="Container load plan in 3D"
         tabindex="-1"
       >
         <header class="cf3d__head">
           <div>
-            <div class="cf3d__eyebrow">Container load · 3D</div>
+            <div class="cf3d__eyebrow">Container load plan · 3D</div>
             <div class="cf3d__title">
-              {{ itemLabel || 'Tank' }} in {{ layout?.container?.name || 'container' }}
+              {{ itemLabel || 'Tank' }} in {{ plan?.container?.name || containerType || 'container' }}
               <span v-if="containersRequired > 1" class="cf3d__title-count">× {{ containersRequired }}</span>
             </div>
           </div>
-          <button type="button" class="cf3d__close" title="Close" @click="emit('close')">✕</button>
+          <button type="button" class="cf3d__close" title="Close" aria-label="Close" @click="emit('close')">✕</button>
         </header>
 
         <div class="cf3d__body">
           <div class="cf3d__stage">
-            <div v-if="!layout" class="cf3d__empty">
-              Container fit hasn't been calculated yet — pick a Container Type and make sure this item's
-              external dimensions are filled in on its costing sheet.
+            <div ref="canvasHost" class="cf3d__canvas" />
+            <div v-if="!plan" class="cf3d__empty">
+              <template v-if="loading">Working out the load plan…</template>
+              <template v-else-if="error">No load plan to draw. See the message alongside.</template>
+              <template v-else>
+                Container fit hasn't been calculated yet. Pick a Container Type and make sure this item's external
+                dimensions are filled in on its costing sheet.
+              </template>
             </div>
-            <div v-else-if="!unitsPerContainer" class="cf3d__empty">
-              This tank doesn't fit in {{ layout.container.name }} at all — nothing to draw. Try a larger
-              Container Type.
+            <div v-else-if="!physicalPositions" class="cf3d__banner">
+              No tanks placed. Add at least one tank on both the length and width axes.
             </div>
-            <div v-else ref="canvasHost" class="cf3d__canvas" />
-            <div v-if="layout && unitsPerContainer" class="cf3d__hint">
+            <div v-if="plan && physicalPositions" class="cf3d__hint">
               Drag to rotate · scroll to zoom · right-drag to pan
               <span v-if="containersRequired > drawnContainers">
                 · showing {{ drawnContainers }} of {{ containersRequired }} containers
@@ -437,70 +834,187 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <aside v-if="layout" class="cf3d__side">
-            <div class="cf3d__stat cf3d__stat--hero">
-              <span class="cf3d__k">Shipment utilization</span>
-              <span class="cf3d__v">{{ pct(shipmentUtilization) }}</span>
-              <div class="cf3d__bar"><div class="cf3d__bar-fill" :style="{ width: `${Math.min(shipmentUtilization, 100)}%` }" /></div>
-              <p class="cf3d__note">
-                Volume of the {{ plural(orderQty, 'tank') }} ordered ÷ volume of the
-                {{ plural(containersRequired, 'container') }} needed.
-                <strong>{{ pct(fullUtilization) }} when full</strong> ({{ unitsPerContainer }} per container) — the
-                rest is the {{ mm(layout.gap_mm) }} mm handling gap around every tank along the length and width,
-                the {{ mm(layout.pallet_thickness_mm ?? 0) }} mm pallet under each tank<template v-if="layout.counts.along_height === 2"> (and above the top layer)</template>,
-                the two-layer stacking cap, plus whatever is left once no more whole tanks fit along each axis.
-              </p>
+          <aside class="cf3d__side" :aria-busy="busy || previewing">
+            <div class="cf3d__side-scroll">
+              <p v-if="loading" class="cf3d__alert" role="status">Working out the load plan…</p>
+              <p v-if="error" class="cf3d__alert cf3d__alert--error" role="alert">{{ error }}</p>
+              <p v-if="notice" class="cf3d__alert cf3d__alert--notice">{{ notice }}</p>
+              <p v-if="flash" class="cf3d__alert cf3d__alert--ok" role="status">{{ flash }}</p>
+
+              <template v-if="plan">
+                <div
+                  v-if="verdict"
+                  class="cf3d__verdict"
+                  :class="`cf3d__verdict--${verdict.tone}`"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span class="cf3d__verdict-text">{{ verdict.text }}</span>
+                  <ul v-if="verdict.notes.length" class="cf3d__verdict-notes">
+                    <li v-for="(line, i) in verdict.notes" :key="i">{{ line }}</li>
+                  </ul>
+                </div>
+
+                <section class="cf3d__section" :aria-labelledby="`${uid}-plan-title`">
+                  <div class="cf3d__section-head">
+                    <h3 :id="`${uid}-plan-title`" class="cf3d__section-title">Load plan</h3>
+                    <span v-if="previewing" class="cf3d__updating">Updating…</span>
+                  </div>
+
+                  <label class="cf3d__toggle" :for="`${uid}-stacked`">
+                    <input
+                      :id="`${uid}-stacked`"
+                      type="checkbox"
+                      :checked="stacked === 1"
+                      :disabled="busy"
+                      @change="setStacked($event.target.checked)"
+                    />
+                    <span>Stacked 2 high <span class="cf3d__muted">· pallet, tank, tank, pallet</span></span>
+                  </label>
+                  <p v-if="plan.rotated" class="cf3d__rotated">
+                    Rotated 90°: the tank's length runs across the container's width.
+                  </p>
+
+                  <fieldset v-for="axis in axes" :key="axis.key" class="cf3d__axis" :disabled="busy">
+                    <legend class="cf3d__axis-title">
+                      {{ axis.title }}
+                      <span class="cf3d__muted">· {{ plural(Math.max(axis.gaps.length - 1, 0), 'tank') }}</span>
+                    </legend>
+                    <p class="cf3d__axis-hint">{{ axis.hint }}</p>
+                    <ol class="cf3d__gaps">
+                      <li v-for="(gap, i) in axis.gaps" :key="i" class="cf3d__gap">
+                        <label :for="`${uid}-${axis.key}-gap-${i}`" class="cf3d__gap-label">
+                          Gap {{ i + 1 }}<span class="cf3d__sr"> on the {{ axis.key }} axis, in millimetres</span>
+                        </label>
+                        <span class="cf3d__gap-field">
+                          <input
+                            :id="`${uid}-${axis.key}-gap-${i}`"
+                            class="cf3d__gap-input"
+                            type="number"
+                            min="0"
+                            step="10"
+                            inputmode="numeric"
+                            :value="gap"
+                            @input="setGap(axis.key, i, $event.target.value)"
+                          />
+                          <span class="cf3d__gap-unit" aria-hidden="true">mm</span>
+                        </span>
+                      </li>
+                    </ol>
+                    <div class="cf3d__axis-actions">
+                      <button type="button" class="cf3d__btn cf3d__btn--small" @click="addTank(axis.key)">
+                        + Add tank
+                      </button>
+                      <button
+                        type="button"
+                        class="cf3d__btn cf3d__btn--small"
+                        :disabled="axis.gaps.length <= 1"
+                        @click="removeTank(axis.key)"
+                      >
+                        − Remove tank
+                      </button>
+                    </div>
+                  </fieldset>
+                </section>
+
+                <dl class="cf3d__figures">
+                  <div
+                    v-for="row in figures"
+                    :key="row.label"
+                    class="cf3d__figure"
+                    :class="row.tone ? `cf3d__figure--${row.tone}` : ''"
+                  >
+                    <dt>{{ row.label }}</dt>
+                    <dd>
+                      {{ row.value }}
+                      <span v-if="row.note" class="cf3d__figure-note">{{ row.note }}</span>
+                    </dd>
+                  </div>
+                </dl>
+
+                <div v-if="slotsPerContainer" class="cf3d__stat cf3d__stat--hero">
+                  <span class="cf3d__k">Shipment utilization</span>
+                  <span class="cf3d__v">{{ pct(shipmentUtilization) }}</span>
+                  <div class="cf3d__bar">
+                    <div class="cf3d__bar-fill" :style="{ width: `${Math.min(shipmentUtilization, 100)}%` }" />
+                  </div>
+                  <p class="cf3d__note">
+                    Volume of the {{ plural(orderQty, 'tank') }} ordered ÷ volume of the
+                    {{ plural(containersRequired, 'container') }} needed.
+                    <strong>{{ pct(fullUtilization) }} when full</strong> ({{ slotsPerContainer }} per container). The
+                    rest is the gaps set above, the {{ mm(plan.pallet_thickness_mm) }} mm pallet under each
+                    tank<template v-if="plan.layers === 2"> (and above the top layer)</template>, and whatever space
+                    is left along each axis.
+                  </p>
+                </div>
+
+                <div v-if="containerRows.length" class="cf3d__containers">
+                  <div v-for="row in containerRows" :key="row.index" class="cf3d__container-row">
+                    <span class="cf3d__container-n">{{ row.index + 1 }}</span>
+                    <span class="cf3d__container-load">
+                      <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ slotsPerContainer }}
+                      <span v-if="row.free" class="cf3d__muted">
+                        · <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free
+                      </span>
+                    </span>
+                    <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
+                  </div>
+                </div>
+                <p v-if="ruledOutByWeight" class="cf3d__note cf3d__note--warn">
+                  <span class="cf3d__swatch cf3d__swatch--ghost" />{{ plural(ruledOutByWeight, 'position') }} per
+                  container ruled out by weight: they fit by size, but the container's max load stops at
+                  {{ slotsPerContainer }}.
+                </p>
+
+                <dl class="cf3d__facts">
+                  <div class="cf3d__fact">
+                    <dt>Standard gap</dt>
+                    <dd>{{ mm(plan.standard_gap_mm) }} mm <span class="cf3d__muted">· pre-fills each added tank's gap</span></dd>
+                  </div>
+                  <div class="cf3d__fact">
+                    <dt>Pallet thickness</dt>
+                    <dd>{{ mm(plan.pallet_thickness_mm) }} mm <span class="cf3d__muted">· one under every tank</span></dd>
+                  </div>
+                  <div class="cf3d__fact">
+                    <dt>Container internal</dt>
+                    <dd>{{ dims(plan.container) }}</dd>
+                  </div>
+                  <div class="cf3d__fact">
+                    <dt>Tank as placed (L × W × H)</dt>
+                    <dd>{{ dims(plan.tank) }}</dd>
+                  </div>
+                  <div class="cf3d__fact">
+                    <dt>Order quantity</dt>
+                    <dd>{{ plural(orderQty, 'tank') }} → {{ plural(containersRequired, 'container') }}</dd>
+                  </div>
+                </dl>
+              </template>
             </div>
 
-            <div v-if="containerRows.length" class="cf3d__containers">
-              <div v-for="row in containerRows" :key="row.index" class="cf3d__container-row">
-                <span class="cf3d__container-n">{{ row.index + 1 }}</span>
-                <span class="cf3d__container-load">
-                  <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ unitsPerContainer }}
-                  <span v-if="(layout.pallet_thickness_mm ?? 0) > 0" class="cf3d__muted" title="Pallet under every tank">· <span class="cf3d__swatch cf3d__swatch--pallet" />pallets</span>
-                  <span v-if="row.free" class="cf3d__muted">· <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free</span>
-                </span>
-                <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
+            <div v-if="plan || savedPlanExists" class="cf3d__actions">
+              <div class="cf3d__actions-row">
+                <button
+                  type="button"
+                  class="cf3d__btn cf3d__btn--primary"
+                  :disabled="!canSave"
+                  :title="saveHelp || undefined"
+                  :aria-describedby="saveHelp ? `${uid}-save-help` : undefined"
+                  @click="save"
+                >
+                  {{ saving ? 'Saving…' : 'Save load plan' }}
+                </button>
+                <button
+                  v-if="savedPlanExists"
+                  type="button"
+                  class="cf3d__btn"
+                  :disabled="busy || !costingWorksheet || locked"
+                  @click="resetToAutomatic"
+                >
+                  {{ resetting ? 'Resetting…' : 'Reset to automatic' }}
+                </button>
               </div>
+              <p v-if="saveHelp" :id="`${uid}-save-help`" class="cf3d__action-help">{{ saveHelp }}</p>
             </div>
-
-            <dl class="cf3d__facts">
-              <div class="cf3d__fact">
-                <dt>Arrangement per container</dt>
-                <dd>
-                  {{ layout.counts.along_length }} along × {{ layout.counts.along_width }} across ×
-                  {{ layout.counts.along_height }} high
-                  <span v-if="layout.payload_capped" class="cf3d__warn">
-                    · {{ layout.geometric_units }} fit by size, capped to {{ unitsPerContainer }} by
-                    {{ mm(layout.container.max_payload_kg) }} kg payload
-                  </span>
-                </dd>
-              </div>
-              <div v-if="layout.counts.along_height === 2" class="cf3d__fact">
-                <dt>Stacking</dt>
-                <dd>Stacked 2 high (the maximum) — pallet, tank, tank, pallet</dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Standard gap</dt>
-                <dd>{{ mm(layout.gap_mm) }} mm <span class="cf3d__muted">· along length and width, none vertically</span></dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Pallet thickness</dt>
-                <dd>{{ mm(layout.pallet_thickness_mm ?? 0) }} mm <span class="cf3d__muted">· one under every tank</span></dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Container internal</dt>
-                <dd>{{ dims(layout.container) }}</dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Tank as placed (L × W × H)</dt>
-                <dd>{{ dims(layout.tank) }}</dd>
-              </div>
-              <div class="cf3d__fact">
-                <dt>Order quantity</dt>
-                <dd>{{ plural(orderQty, 'tank') }} → {{ plural(containersRequired, 'container') }}</dd>
-              </div>
-            </dl>
           </aside>
         </div>
       </div>
@@ -519,6 +1033,8 @@ onBeforeUnmount(() => {
 .cf3d {
   --cf-navy: #0b3465;
   --cf-green: #107830;
+  --cf-amber: #b45309;
+  --cf-red: #b42318;
   --cf-border: #d7dee8;
   --cf-row: #edf1f6;
   --cf-text: #0e1b2b;
@@ -529,8 +1045,8 @@ onBeforeUnmount(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(1120px, 94vw);
-  height: min(740px, 92vh);
+  width: min(1180px, 94vw);
+  height: min(760px, 92vh);
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -587,11 +1103,19 @@ onBeforeUnmount(() => {
   background: var(--cf-row);
 }
 
+.cf3d__close:focus-visible,
+.cf3d__btn:focus-visible,
+.cf3d__gap-input:focus-visible,
+.cf3d__toggle input:focus-visible {
+  outline: 2px solid var(--cf-navy);
+  outline-offset: 2px;
+}
+
 .cf3d__body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px;
 }
 
 .cf3d__stage {
@@ -629,18 +1153,308 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 32px;
   text-align: center;
+  background: #f4f6fa;
   font: 400 14px/1.6 'Raleway', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
+.cf3d__banner {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  right: 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: #fff;
+  font: 500 13px/1.45 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+  pointer-events: none;
+}
+
 .cf3d__side {
   min-height: 0;
-  overflow-y: auto;
-  padding: 18px 20px 20px;
-  border-left: 1px solid var(--cf-border);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  border-left: 1px solid var(--cf-border);
+}
+
+.cf3d__side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cf3d__alert {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--cf-border);
+  font: 500 12.5px/1.45 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+  white-space: pre-line;
+}
+
+.cf3d__alert--error {
+  border-color: #f3c3be;
+  background: #fef3f2;
+  color: var(--cf-red);
+}
+
+.cf3d__alert--notice {
+  border-color: #f6d9a8;
+  background: #fffaeb;
+  color: var(--cf-amber);
+}
+
+.cf3d__alert--ok {
+  border-color: #b7dfc3;
+  background: #effaf2;
+  color: var(--cf-green);
+}
+
+.cf3d__verdict {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.cf3d__verdict-text {
+  font: 700 14px/1.3 'Raleway', system-ui, sans-serif;
+}
+
+.cf3d__verdict--ok {
+  background: #effaf2;
+  border-color: #b7dfc3;
+  color: var(--cf-green);
+}
+
+.cf3d__verdict--warn {
+  background: #fffaeb;
+  border-color: #f6d9a8;
+  color: var(--cf-amber);
+}
+
+.cf3d__verdict--bad {
+  background: #fef3f2;
+  border-color: #f3c3be;
+  color: var(--cf-red);
+}
+
+.cf3d__verdict-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font: 500 12px/1.5 'Raleway', system-ui, sans-serif;
+}
+
+.cf3d__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cf3d__section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cf3d__section-title {
+  margin: 0;
+  font: 700 13px/1.2 'Raleway', system-ui, sans-serif;
+  color: var(--cf-navy);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.cf3d__updating {
+  font: 500 11px/1 'IBM Plex Mono', monospace;
+  color: var(--cf-faint);
+}
+
+.cf3d__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 13px/1.4 'Raleway', system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.cf3d__toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--cf-navy);
+}
+
+.cf3d__rotated {
+  margin: 0;
+  font: 500 12px/1.45 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__axis {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.cf3d__axis-title {
+  padding: 0 4px;
+  font: 700 12.5px/1.2 'Raleway', system-ui, sans-serif;
+}
+
+.cf3d__axis-hint {
+  margin: 0 0 8px;
+  font: 400 11.5px/1.45 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__gaps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cf3d__gap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cf3d__gap-label {
+  font: 600 11px/1.2 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__gap-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cf3d__gap-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--cf-border);
+  border-radius: 6px;
+  background: #fff;
+  font: 600 13px/1 'IBM Plex Mono', monospace;
+  color: var(--cf-text);
+}
+
+.cf3d__gap-input:disabled {
+  background: var(--cf-row);
+  color: var(--cf-muted);
+}
+
+.cf3d__gap-unit {
+  font: 500 11px/1 'IBM Plex Mono', monospace;
+  color: var(--cf-faint);
+}
+
+.cf3d__axis-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cf3d__btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--cf-text);
+  font: 600 13px/1 'Raleway', system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.cf3d__btn:hover:not(:disabled) {
+  background: var(--cf-row);
+}
+
+.cf3d__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cf3d__btn--small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.cf3d__btn--primary {
+  border-color: var(--cf-navy);
+  background: var(--cf-navy);
+  color: #fff;
+}
+
+.cf3d__btn--primary:hover:not(:disabled) {
+  background: #082747;
+}
+
+.cf3d__figures {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cf3d__figure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding: 7px 10px;
+}
+
+.cf3d__figure + .cf3d__figure {
+  border-top: 1px solid var(--cf-row);
+}
+
+.cf3d__figure dt {
+  font: 600 12px/1.4 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__figure dd {
+  margin: 0;
+  text-align: right;
+  font: 600 12.5px/1.4 'IBM Plex Mono', monospace;
+  color: var(--cf-text);
+}
+
+.cf3d__figure-note {
+  display: block;
+  font: 500 11px/1.35 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__figure--bad dd,
+.cf3d__figure--bad .cf3d__figure-note {
+  color: var(--cf-red);
+}
+
+.cf3d__figure--warn dd,
+.cf3d__figure--warn .cf3d__figure-note {
+  color: var(--cf-amber);
 }
 
 .cf3d__stat {
@@ -655,7 +1469,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__stat--hero .cf3d__v {
-  font: 700 30px/1 'IBM Plex Mono', monospace;
+  font: 700 26px/1 'IBM Plex Mono', monospace;
   color: var(--cf-navy);
 }
 
@@ -681,6 +1495,11 @@ onBeforeUnmount(() => {
 .cf3d__note strong {
   color: var(--cf-text);
   font-weight: 700;
+}
+
+.cf3d__note--warn {
+  margin: 0;
+  color: var(--cf-amber);
 }
 
 .cf3d__containers {
@@ -756,11 +1575,23 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.cf3d__warn {
-  display: block;
-  margin-top: 2px;
-  font: 600 12px/1.45 'Raleway', system-ui, sans-serif;
-  color: #b45309;
+.cf3d__actions {
+  flex: none;
+  padding: 12px 20px 14px;
+  border-top: 1px solid var(--cf-border);
+  background: #fff;
+}
+
+.cf3d__actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cf3d__action-help {
+  margin: 8px 0 0;
+  font: 500 11.5px/1.45 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
 }
 
 .cf3d__swatch {
@@ -781,19 +1612,27 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-.cf3d__swatch--pallet {
-  background: #b08a5a;
+.cf3d__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (max-width: 860px) {
   .cf3d__body {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(220px, 1fr) auto;
   }
   .cf3d__side {
     border-left: none;
     border-top: 1px solid var(--cf-border);
-    max-height: 42%;
+    max-height: 58%;
   }
 }
 
