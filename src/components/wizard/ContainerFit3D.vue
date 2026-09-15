@@ -4,10 +4,16 @@
  * packed inside -- the visual answer to "why is utilization only 26% when
  * all my tanks fit?" and "why 2 containers?". Draws EXACTLY the arrangement
  * the backend's `compute_container_layout()` priced from (same
- * orientation, per-axis counts and 180mm gap -- see `preview_container_fit`'s
- * `layout` key), so what's on screen can never disagree with the Units per
- * Container / Container Utilization % figures next to the button that opens
- * this.
+ * orientation, per-axis counts, the Packing Settings gap along length/width
+ * and the pallet under every tank -- see `preview_container_fit`'s `layout`
+ * key: `gap_mm`, `pallet_thickness_mm`, `counts`), so what's on screen can
+ * never disagree with the Units per Container / Container Utilization %
+ * figures next to the button that opens this.
+ *
+ * Height rule (mirrors the backend): no gap on the vertical axis at all --
+ * every tank sits on a pallet, layer k occupies k × (pallet + tank height),
+ * and stacking is capped at 2 layers; when there ARE 2 layers the stack is
+ * pallet, tank, tank, pallet (a pallet on top of the upper tank as well).
  *
  * Nothing here recomputes *fit*: `layout` is taken as given. The only
  * client-side arithmetic is splitting the order Quantity across containers
@@ -47,6 +53,8 @@ const COLORS = {
   tank: 0x107830,
   tankEdge: 0x0a4d20,
   ghost: 0x94a0ae,
+  pallet: 0xb08a5a,
+  palletEdge: 0x7a5a36,
   label: '#0b3465'
 }
 
@@ -222,6 +230,7 @@ function buildContainer(group, layout, zOffset, index) {
 
 function buildTanks(group, layout, zOffset, placed) {
   const gap = layout.gap_mm * MM
+  const pallet = (layout.pallet_thickness_mm ?? 0) * MM
   const tl = layout.tank.length_mm * MM
   const tw = layout.tank.width_mm * MM
   const th = layout.tank.height_mm * MM
@@ -239,6 +248,25 @@ function buildTanks(group, layout, zOffset, placed) {
     transparent: true,
     opacity: 0.8
   })
+  // Pallet slab: same footprint as the tank, `pallet_thickness_mm` tall, in
+  // a muted wood tone so it reads as dunnage rather than another tank. One
+  // under every tank; when stacked 2 high, one more on top of the upper
+  // tank (pallet, tank, tank, pallet -- see the file header).
+  const palletGeometry = pallet > 0 ? new THREE.BoxGeometry(tl, pallet, tw) : null
+  const palletEdgeGeometry = palletGeometry ? new THREE.EdgesGeometry(palletGeometry) : null
+  const palletMaterial = new THREE.MeshStandardMaterial({ color: COLORS.pallet, roughness: 0.9, metalness: 0 })
+  const palletEdgeMaterial = new THREE.LineBasicMaterial({ color: COLORS.palletEdge })
+  const ghostPalletMaterial = new THREE.MeshBasicMaterial({ color: COLORS.pallet, transparent: true, opacity: 0.1 })
+  const addPallet = (x, yCentre, z, isLoaded) => {
+    if (!palletGeometry) return
+    const slab = new THREE.Mesh(palletGeometry, isLoaded ? palletMaterial : ghostPalletMaterial)
+    slab.position.set(x, yCentre, z)
+    group.add(slab)
+    const outline = new THREE.LineSegments(palletEdgeGeometry, isLoaded ? palletEdgeMaterial : ghostEdgeMaterial)
+    outline.position.set(x, yCentre, z)
+    if (!isLoaded) outline.computeLineDistances()
+    group.add(outline)
+  }
 
   const capacity = unitsPerContainer.value
   // Same fill order a loader would use: floor first, front-to-back along
@@ -252,8 +280,12 @@ function buildTanks(group, layout, zOffset, placed) {
         if (slot >= capacity) return
         const x = gap + ix * (tl + gap) + tl / 2
         const z = zOffset + gap + iy * (tw + gap) + tw / 2
-        const y = gap + iz * (th + gap) + th / 2
+        // No vertical gap: layer iz starts at iz × (pallet + tank height),
+        // then the tank's own pallet, then the tank itself.
+        const layerBase = iz * (pallet + th)
+        const y = layerBase + pallet + th / 2
         const isLoaded = slot < placed
+        addPallet(x, layerBase + pallet / 2, z, isLoaded)
         const box = new THREE.Mesh(solidGeometry, isLoaded ? solidMaterial : ghostMaterial)
         box.position.set(x, y, z)
         group.add(box)
@@ -261,6 +293,8 @@ function buildTanks(group, layout, zOffset, placed) {
         outline.position.set(x, y, z)
         if (!isLoaded) outline.computeLineDistances()
         group.add(outline)
+        // Top of a 2-high stack carries a pallet above the upper tank too.
+        if (nH === 2 && iz === 1) addPallet(x, layerBase + pallet + th + pallet / 2, z, isLoaded)
         slot += 1
       }
     }
@@ -412,8 +446,9 @@ onBeforeUnmount(() => {
                 Volume of the {{ plural(orderQty, 'tank') }} ordered ÷ volume of the
                 {{ plural(containersRequired, 'container') }} needed.
                 <strong>{{ pct(fullUtilization) }} when full</strong> ({{ unitsPerContainer }} per container) — the
-                rest is the {{ mm(layout.gap_mm) }} mm handling gap around every tank plus whatever is left once no
-                more whole tanks fit along each axis.
+                rest is the {{ mm(layout.gap_mm) }} mm handling gap around every tank along the length and width,
+                the {{ mm(layout.pallet_thickness_mm ?? 0) }} mm pallet under each tank<template v-if="layout.counts.along_height === 2"> (and above the top layer)</template>,
+                the two-layer stacking cap, plus whatever is left once no more whole tanks fit along each axis.
               </p>
             </div>
 
@@ -422,6 +457,7 @@ onBeforeUnmount(() => {
                 <span class="cf3d__container-n">{{ row.index + 1 }}</span>
                 <span class="cf3d__container-load">
                   <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ unitsPerContainer }}
+                  <span v-if="(layout.pallet_thickness_mm ?? 0) > 0" class="cf3d__muted" title="Pallet under every tank">· <span class="cf3d__swatch cf3d__swatch--pallet" />pallets</span>
                   <span v-if="row.free" class="cf3d__muted">· <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free</span>
                 </span>
                 <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
@@ -439,6 +475,18 @@ onBeforeUnmount(() => {
                     {{ mm(layout.container.max_payload_kg) }} kg payload
                   </span>
                 </dd>
+              </div>
+              <div v-if="layout.counts.along_height === 2" class="cf3d__fact">
+                <dt>Stacking</dt>
+                <dd>Stacked 2 high (the maximum) — pallet, tank, tank, pallet</dd>
+              </div>
+              <div class="cf3d__fact">
+                <dt>Standard gap</dt>
+                <dd>{{ mm(layout.gap_mm) }} mm <span class="cf3d__muted">· along length and width, none vertically</span></dd>
+              </div>
+              <div class="cf3d__fact">
+                <dt>Pallet thickness</dt>
+                <dd>{{ mm(layout.pallet_thickness_mm ?? 0) }} mm <span class="cf3d__muted">· one under every tank</span></dd>
               </div>
               <div class="cf3d__fact">
                 <dt>Container internal</dt>
@@ -731,6 +779,10 @@ onBeforeUnmount(() => {
 .cf3d__swatch--ghost {
   border: 1.5px dashed var(--cf-faint);
   background: transparent;
+}
+
+.cf3d__swatch--pallet {
+  background: #b08a5a;
 }
 
 @media (max-width: 860px) {

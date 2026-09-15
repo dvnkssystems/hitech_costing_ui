@@ -44,6 +44,9 @@ import {
   TAX_FIELDS,
   ADDRESS_FIELDS,
   EXIM_FIELDS,
+  CURRENCY_FIELDS,
+  EXIM_FLAGS_FIELD,
+  EXIM_ITEM_DEAL_VALUE_FIELDS,
   TERMS_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
@@ -136,6 +139,25 @@ const visibleAddressFields = computed(() => ADDRESS_FIELDS)
  *  computed (rather than inlined) for the same reason `visibleAddressFields`
  *  above is, in case cross-frm filtering is ever needed again. */
 const visibleEximFields = computed(() => EXIM_FIELDS)
+/** The Exim step's Calculated rail — every `EXIM_FIELDS` entry except
+ *  `hitech_exchange_rate_flags`, which is a Small Text the engine fills only
+ *  when a quarter's exchange rate is MISSING (that leg is then 0 INR, never
+ *  1:1). A grey rail row would make it read like just another figure; it's
+ *  rendered as a warning block instead (see the Exim template), and hidden
+ *  outright when empty. */
+const eximRailFields = computed(() => EXIM_FIELDS.filter((fieldname) => fieldname !== EXIM_FLAGS_FIELD))
+const exchangeRateFlags = computed(() => String(quotationHeaderFrm.value?.doc?.[EXIM_FLAGS_FIELD] ?? '').trim())
+/** Item Deal Value (INR / quote currency) only become non-zero once a linked
+ *  Costing Worksheet actually exists server-side — until then the rail shows
+ *  ₹0 for both, which reads as "broken" rather than "not yet". */
+const anyItemSaved = computed(() => items.value.some((item) => !item.frm.is_new()))
+const itemDealValueLabels = computed(() =>
+  EXIM_ITEM_DEAL_VALUE_FIELDS.map((fieldname) => quotationHeaderFrm.value?.fields_dict?.[fieldname]?.df?.label || fieldname)
+)
+/** The quote's own currency (`currency` on the Quotation header) — INR unless
+ *  the estimator picks otherwise at the top of the Exim step. */
+const quoteCurrency = computed(() => String(quotationHeaderFrm.value?.doc?.currency || 'INR').toUpperCase())
+const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -282,7 +304,12 @@ const reviewSections = computed(() => [
     ]
   },
   { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
-  { key: 'exim', n: '03', title: 'Exim / Incoterms', rows: sectionRows(quotationHeaderFrm.value, visibleEximFields.value) },
+  {
+    key: 'exim',
+    n: '03',
+    title: 'Exim / Incoterms',
+    rows: sectionRows(quotationHeaderFrm.value, [...CURRENCY_FIELDS, ...visibleEximFields.value])
+  },
   { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
 
@@ -506,7 +533,12 @@ const FREIGHT_PREVIEW_HEADER_FIELDS = [
   'hitech_insurance_value',
   'hitech_destination_inland_cost',
   'hitech_unloading_cost_at_destination',
-  'hitech_import_duty_tax'
+  'hitech_import_duty_tax',
+  // Currency Conversion inputs (backend Phase 2): the quote's own currency
+  // (what `hitech_item_deal_value_fc` is expressed in) and the date whose
+  // quarter picks the Currency Exchange Master rates for the CIF/DAP legs.
+  'currency',
+  'transaction_date'
 ]
 /** What `preview_freight` hands back — applied onto `quotationHeaderFrm.doc`
  *  via `set_value` (same idiom every other computed value in this file
@@ -522,7 +554,19 @@ const FREIGHT_PREVIEW_RESULT_FIELDS = [
   'hitech_total_gross_weight_kg',
   'hitech_insurance_cost',
   'hitech_fob_cost_applied',
-  'hitech_region_margin_applied'
+  'hitech_region_margin_applied',
+  // Currency Conversion outputs — see `EXIM_FIELDS`' own comment on these.
+  'hitech_freight_currency',
+  'hitech_cif_leg_native',
+  'hitech_cif_exchange_rate',
+  'hitech_cif_leg_inr',
+  'hitech_dap_addon_native',
+  'hitech_dap_exchange_rate',
+  'hitech_dap_addon_inr',
+  'hitech_item_deal_value_inr',
+  'hitech_item_exchange_rate',
+  'hitech_item_deal_value_fc',
+  'hitech_exchange_rate_flags'
 ]
 
 const freightPreviewPending = ref(false)
@@ -542,6 +586,11 @@ let freightPreviewDebounce = null
 function buildFreightPreviewHeader() {
   const header = pick(quotationHeaderFrm.value?.doc, FREIGHT_PREVIEW_HEADER_FIELDS)
   header.customer = orderFrm.value?.doc?.customer ?? null
+  // Same story as `customer`: the Costing Worksheet's own `company` (auto-
+  // defaulted by the backend on save) is the one the estimator's items
+  // actually carry, so it wins; the Quotation header frm's own `company`
+  // (set when resuming a real Quotation) is the fallback.
+  header.company = orderFrm.value?.doc?.company ?? quotationHeaderFrm.value?.doc?.company ?? null
   return header
 }
 /** `costing_worksheet` names that don't resolve to a real saved record yet
@@ -615,7 +664,144 @@ watch(
   }
 )
 watch(() => orderFrm.value?.doc?.customer, scheduleFreightPreview)
+watch(() => orderFrm.value?.doc?.company, scheduleFreightPreview)
 watch(() => buildFreightPreviewItems(), scheduleFreightPreview, { deep: true })
+
+/* ── Currency picker (top of the Exim step) ──────────────────────────────── */
+
+/** Today as `YYYY-MM-DD`, for the exchange-rate lookups below when the
+ *  header frm has no `transaction_date` yet (the SDK's autoBoot normally
+ *  fills Quotation's "Today" default, but a hand-seeded draft may not). */
+function todayIso() {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+function headerTransactionDate() {
+  return quotationHeaderFrm.value?.doc?.transaction_date || todayIso()
+}
+
+/** Shown under the Conversion Rate input when ERPNext has no Currency
+ *  Exchange record to fill it from — the estimator types it by hand. */
+const conversionRateHint = ref('')
+let conversionRateToken = 0
+
+/**
+ * Mirrors what ERPNext's own Quotation form does on a currency change: INR
+ * (the company currency) pins `conversion_rate` to 1; anything else with a
+ * blank/0 rate gets ERPNext's native rate for that date via the standard
+ * `erpnext.setup.utils.get_exchange_rate` (its own Currency Exchange
+ * records, then its configured external service). A rate the estimator has
+ * already typed is left alone — but switching from one non-INR currency to
+ * another (or from INR's pinned 1) makes the old rate stale, so that case
+ * clears it first and re-looks it up. `previous` is `undefined` on the very
+ * first run (a resumed Quotation's saved rate must survive boot untouched).
+ */
+watch(
+  () => quotationHeaderFrm.value?.doc?.currency,
+  async (currency, previous) => {
+    const frm = quotationHeaderFrm.value
+    if (!frm || !currency) return
+    const token = ++conversionRateToken
+    conversionRateHint.value = ''
+    if (String(currency).toUpperCase() === 'INR') {
+      if (Number(frm.doc.conversion_rate) !== 1) await frm.set_value('conversion_rate', 1)
+      return
+    }
+    const switched = previous !== undefined && previous !== null && previous !== '' && previous !== currency
+    if (switched) await frm.set_value('conversion_rate', 0)
+    if (Number(frm.doc.conversion_rate) > 0) return
+    let rate = 0
+    try {
+      rate = Number(
+        await call('erpnext.setup.utils.get_exchange_rate', {
+          from_currency: currency,
+          to_currency: 'INR',
+          transaction_date: headerTransactionDate()
+        })
+      )
+    } catch {
+      rate = 0
+    }
+    if (token !== conversionRateToken || quotationHeaderFrm.value !== frm) return
+    // Re-check after the round trip: a rate typed by hand meanwhile, or one
+    // a restored localStorage draft applied right after `currency` (see
+    // `applyDraftToFrms`), must win over ERPNext's lookup.
+    if (Number(frm.doc.conversion_rate) > 0) return
+    if (rate > 0) {
+      await frm.set_value('conversion_rate', rate)
+    } else {
+      conversionRateHint.value = `No ${currency} → INR rate found in ERPNext for ${formatDate(headerTransactionDate())} — enter the Conversion Rate by hand.`
+    }
+  }
+)
+
+/**
+ * The three compact "USD CIF Q3 2026: 84.50" chips next to the currency
+ * picker — one `lookup_exchange_rate` per purpose (CIF / DAP / Item) against
+ * this app's own Currency Exchange Master, for the quarter the header's
+ * `transaction_date` falls in. A missing quarter shows as "no rate" in red:
+ * that's exactly the case where the freight engine prices that leg at 0
+ * INR and sets `hitech_exchange_rate_flags` (see the warning block on the
+ * Exim step), so the estimator sees it coming before the preview does.
+ * Debounced/token-guarded the same way `runFreightPreview()` is.
+ */
+const EXCHANGE_RATE_PURPOSES = ['CIF', 'DAP', 'Item']
+const exchangeRateChips = ref([])
+const exchangeRateChipsPending = ref(false)
+let exchangeRateToken = 0
+let exchangeRateDebounce = null
+
+function quarterLabel(result) {
+  const quarter = result?.quarter
+  const year = result?.year
+  const q = quarter === undefined || quarter === null || quarter === '' ? '' : /^q/i.test(String(quarter)) ? String(quarter).toUpperCase() : `Q${quarter}`
+  return [q, year].filter(Boolean).join(' ')
+}
+
+async function runExchangeRateLookup() {
+  const currency = quoteCurrency.value
+  if (!quotationHeaderFrm.value || !quoteIsForeignCurrency.value) {
+    exchangeRateChips.value = []
+    return
+  }
+  const token = ++exchangeRateToken
+  exchangeRateChipsPending.value = true
+  const date = headerTransactionDate()
+  try {
+    const results = await Promise.all(
+      EXCHANGE_RATE_PURPOSES.map((purpose) =>
+        call(
+          'hitech_costing.hitech_costing.doctype.currency_exchange_master.currency_exchange_master.lookup_exchange_rate',
+          { currency, purpose, date }
+        ).catch(() => null)
+      )
+    )
+    if (token !== exchangeRateToken) return
+    exchangeRateChips.value = EXCHANGE_RATE_PURPOSES.map((purpose, i) => {
+      const result = results[i]
+      const rate = result?.exchange_rate
+      const missing = rate === null || rate === undefined || rate === ''
+      const when = quarterLabel(result) || formatDate(date)
+      return {
+        key: purpose,
+        label: `${currency} ${purpose} ${when}`,
+        value: missing ? 'no rate' : Number(rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
+        missing
+      }
+    })
+  } finally {
+    if (token === exchangeRateToken) exchangeRateChipsPending.value = false
+  }
+}
+/** 400ms of quiet before firing — same window as `scheduleFreightPreview()`. */
+function scheduleExchangeRateLookup() {
+  clearTimeout(exchangeRateDebounce)
+  exchangeRateDebounce = setTimeout(runExchangeRateLookup, 400)
+}
+watch([() => quotationHeaderFrm.value?.doc?.currency, () => quotationHeaderFrm.value?.doc?.transaction_date], () => {
+  if (quotationHeaderFrm.value) scheduleExchangeRateLookup()
+})
 
 /** Pure Margin (INR/kg) and Pure Margin % moved out of the Commercials step's
  *  Calculated rail and into its main card instead (on request) — they sit
@@ -756,6 +942,12 @@ const containerLogisticsRows = computed(() => {
   if (!(layout && doc?.mode_of_transport === 'Sea' && doc?.container_type)) return rows
   const whenFull = rows.find((row) => row.label === 'Container Utilization %')
   if (whenFull) whenFull.label = 'Container Utilization % (when full)'
+  // The two packing constants the layout was priced with (Packing Settings
+  // on the backend) -- surfaced here so they're visible without opening the
+  // 3D view, since they explain most of the "why only N per container".
+  const mmValue = (value) => `${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })} mm`
+  rows.push({ label: 'Standard gap', value: mmValue(layout.gap_mm), low: false, warning: '' })
+  rows.push({ label: 'Pallet thickness', value: mmValue(layout.pallet_thickness_mm ?? 0), low: false, warning: '' })
   const units = Number(layout.units_per_container || 0)
   if (!units) return rows
   const { tank, container } = layout
@@ -1247,6 +1439,7 @@ const DRAFT_HEADER_FIELDS = [
   ...TYPE_FIELDS,
   ...TAX_FIELDS,
   ...ADDRESS_FIELDS,
+  ...CURRENCY_FIELDS,
   ...EXIM_FIELDS,
   ...TERMS_FIELDS,
   TAX_TABLE_FIELD,
@@ -1834,6 +2027,9 @@ async function submitAll() {
         ...TAX_FIELDS,
         TAX_TABLE_FIELD,
         ...ADDRESS_FIELDS,
+        // `currency`/`conversion_rate`/`transaction_date` — accepted by the
+        // backend's `submit_and_map` header allowlist alongside the rest.
+        ...CURRENCY_FIELDS,
         ...EXIM_FIELDS,
         ...TERMS_FIELDS,
         TERMS_TABLE_FIELD
@@ -2179,6 +2375,16 @@ watch(() => props.quotation, load)
                 <span class="qw-totals-box__k">Net Total</span>
                 <span class="qw-totals-box__v">{{ itemsSummary.netTotal }}</span>
               </div>
+              <!-- The ERPNext totals above are always in company currency
+                   (INR) -- this wizard never converts them itself. For a
+                   non-INR quote the freight engine's own quote-currency
+                   figure (`hitech_item_deal_value_fc`, Quotation header)
+                   is shown alongside, labelled with that currency. -->
+              <div v-if="quoteIsForeignCurrency" class="qw-totals-box">
+                <span class="qw-totals-box__k">Item Deal Value ({{ quoteCurrency }})</span>
+                <span class="qw-totals-box__v">{{ money(quotationHeaderFrm?.doc?.hitech_item_deal_value_fc, quoteCurrency) }}</span>
+                <span v-if="!anyItemSaved" class="qw-derived__hint" style="margin: 2px 0 0;">Fills after the item is saved</span>
+              </div>
               <div v-if="itemsSummary.showContainers" class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Containers Required (est.)</span>
                 <span v-if="itemsSummary.hasNonFitting" class="qw-derived__warning">
@@ -2290,13 +2496,53 @@ watch(() => props.quotation, load)
             <p v-if="quotationName" class="qw-step-lede">
               Editing freight &amp; Incoterm details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
+            <!-- Currency picker — the quote's own currency trio (real core
+                 Quotation fields, see `CURRENCY_FIELDS`). Sits above the
+                 Incoterm/freight inputs because `transaction_date` decides
+                 which quarter's Currency Exchange Master rates the freight
+                 engine converts the CIF/DAP legs with, and `currency` is
+                 what the Item Deal Value (FC) figure below is priced in. -->
+            <WizardStep :frm="quotationHeaderFrm" :fields="CURRENCY_FIELDS" read-only-filter="exclude" />
+            <p v-if="conversionRateHint" class="qw-derived__warning" style="margin-top: 8px;">{{ conversionRateHint }}</p>
+            <!-- One chip per exchange-rate purpose (CIF / DAP / Item) for the
+                 chosen currency + date's quarter — see
+                 `runExchangeRateLookup()`. Only for a non-INR quote; INR
+                 never needs converting. -->
+            <div v-if="quoteIsForeignCurrency" class="qw-fx-chips">
+              <span v-if="exchangeRateChipsPending && !exchangeRateChips.length" class="qw-fx-chips__pending">
+                Looking up {{ quoteCurrency }} exchange rates…
+              </span>
+              <span
+                v-for="chip in exchangeRateChips"
+                :key="chip.key"
+                class="qw-fx-chip"
+                :class="{ 'qw-fx-chip--missing': chip.missing }"
+                :title="chip.missing ? `No Currency Exchange Master rate for ${chip.label} — that leg will be costed at ₹0` : ''"
+              >
+                <span class="qw-fx-chip__k">{{ chip.label }}:</span>
+                <span class="qw-fx-chip__v">{{ chip.value }}</span>
+              </span>
+            </div>
+            <div class="qw-fx-divider" />
             <WizardStep :frm="quotationHeaderFrm" :fields="visibleEximFields" read-only-filter="exclude" />
             <WizardStep
               :frm="quotationHeaderFrm"
-              :fields="visibleEximFields"
+              :fields="eximRailFields"
               read-only-filter="only"
               style="margin-top: 14px;"
             />
+            <!-- `hitech_exchange_rate_flags`, pulled out of the rail above
+                 (see `eximRailFields`): non-empty means a quarter's rate is
+                 missing and that leg was costed at 0 INR, never 1:1. -->
+            <div v-if="exchangeRateFlags" class="qw-fx-flags">
+              <span class="qw-fx-flags__title">
+                <LucideIcon name="triangle-alert" /> Exchange rate missing — affected legs are costed at ₹0
+              </span>
+              <span class="qw-derived__warning qw-fx-flags__text">{{ exchangeRateFlags }}</span>
+            </div>
+            <p v-if="!anyItemSaved" class="qw-derived__hint" style="margin-top: 10px;">
+              {{ itemDealValueLabels.join(' / ') }}: fills after the item is saved.
+            </p>
             <!-- Live freight preview status -- see `runFreightPreview()`. Quiet
                  by design: this fires automatically as a side effect of typing,
                  so neither state should read as an error or block the step. -->
@@ -3111,6 +3357,77 @@ watch(() => props.quotation, load)
 .qw-derived__warning {
   font: 600 11.5px/1.4 'Raleway', system-ui, sans-serif;
   color: #E63946;
+}
+
+/* Exim step: the CIF / DAP / Item exchange-rate chips next to the currency
+   picker, and the `hitech_exchange_rate_flags` warning block below the rail
+   (see `runExchangeRateLookup()` / `exchangeRateFlags`). */
+.qw-fx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.qw-fx-chips__pending {
+  font: 500 12px/1 'Raleway', system-ui, sans-serif;
+  color: var(--qw-faint);
+}
+
+.qw-fx-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--qw-border);
+  background: var(--qw-row-border);
+  font: 600 11.5px/1 'IBM Plex Mono', monospace;
+  color: var(--qw-text);
+}
+
+.qw-fx-chip__k {
+  color: var(--qw-muted);
+  font-weight: 500;
+}
+
+.qw-fx-chip--missing {
+  background: rgba(230, 57, 70, .08);
+  border-color: #E63946;
+  color: #E63946;
+}
+
+.qw-fx-chip--missing .qw-fx-chip__k {
+  color: #E63946;
+}
+
+.qw-fx-divider {
+  height: 1px;
+  background: var(--qw-border);
+  margin: 18px 0 16px;
+}
+
+.qw-fx-flags {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #E63946;
+  background: rgba(230, 57, 70, .08);
+}
+
+.qw-fx-flags__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 12.5px/1.3 'Raleway', system-ui, sans-serif;
+  color: #E63946;
+}
+
+.qw-fx-flags__text {
+  white-space: pre-line;
 }
 
 .qw-step-actions {

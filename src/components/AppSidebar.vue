@@ -31,9 +31,19 @@ import httLogo from '@/assets/brand/htt-logo.png'
 const MASTER_NAV = [
   { doctype: 'Order Complexity Question', label: 'Complexity Questions', icon: 'list-checks' },
   { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' },
-  { doctype: 'Item Price Master', label: 'Item Price Master', icon: 'tag' }
+  { doctype: 'Item Price Master', label: 'Item Price Master', icon: 'tag' },
+  { doctype: 'Currency Exchange Master', label: 'Exchange Rates', icon: 'coins' },
+  { doctype: 'International Freight Rate Master', label: 'Freight Rates', icon: 'ship' },
+  { doctype: 'Container Type', label: 'Container Types', icon: 'container' }
+  // Container Fit Plan is a transaction, not a master: it lives under MAIN via
+  // the server-side Custom UI Sidebar Item record, next to Quotation.
 ].map((m) => ({ ...m, route: `/list/${m.doctype}` }))
-const SETTINGS_NAV = { label: 'Costing Settings', icon: 'settings', route: '/form/Costing Settings/Costing Settings' }
+// Singles (one record each, opened straight on their form). Packing Settings
+// sits next to Costing Settings: both are the app's own global knobs.
+const SETTINGS_NAV = [
+  { label: 'Costing Settings', icon: 'settings', route: '/form/Costing Settings/Costing Settings' },
+  { label: 'Packing Settings', icon: 'package', route: '/form/Packing Settings/Packing Settings' }
+]
 // Same header treatment SidebarNodes.vue uses for a server-driven "Section"
 // group (e.g. MAIN) — kept in sync by eye since this one's hardcoded.
 const setupHeaderStyle = {
@@ -178,13 +188,15 @@ const initials = computed(() =>
           <span>{{ m.label }}</span>
         </RouterLink>
         <RouterLink
-          :to="SETTINGS_NAV.route"
-          :style="navItemStyle(isMasterActive(SETTINGS_NAV))"
-          :title="SETTINGS_NAV.label"
+          v-for="s in SETTINGS_NAV"
+          :key="s.route"
+          :to="s.route"
+          :style="navItemStyle(isMasterActive(s))"
+          :title="s.label"
           class="hv2"
         >
-          <span style="font-size:19px;"><LucideIcon :name="SETTINGS_NAV.icon" /></span>
-          <span>{{ SETTINGS_NAV.label }}</span>
+          <span style="font-size:19px;"><LucideIcon :name="s.icon" /></span>
+          <span>{{ s.label }}</span>
         </RouterLink>
       </div>
     </nav>

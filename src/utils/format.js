@@ -7,8 +7,18 @@ export function decimal(n) {
   })
 }
 
-export function money(n) {
-  return `₹${decimal(n)}`
+/**
+ * `money(1234.5)` -> '₹1,234.5000'; `money(1234.5, 'USD')` -> 'USD 1,234.5000'.
+ *
+ * Only INR gets the ₹ glyph — every other ISO code is prefixed as-is, so a
+ * native-currency amount (a quotation priced in USD, the CIF leg in the
+ * freight master's own currency) never reads as rupees. An empty/unknown
+ * currency falls back to INR, which is what every caller before this
+ * argument existed was assuming anyway.
+ */
+export function money(n, currency = 'INR') {
+  const code = String(currency || 'INR').toUpperCase()
+  return code === 'INR' ? `₹${decimal(n)}` : `${code} ${decimal(n)}`
 }
 
 /**

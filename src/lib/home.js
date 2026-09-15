@@ -115,9 +115,30 @@ async function averageMargin() {
  * pipeline value the stat cards need alongside it. "Open" excludes only
  * Lost — Draft through Quoted still counts toward it.
  */
+/** `grand_total` is in the quote's own `currency`; the dashboard's open-
+ *  pipeline value is an INR figure, so a non-INR quote is converted at its
+ *  own `conversion_rate` (ERPNext's quote→company-currency rate, saved on
+ *  the Quotation). A missing/0 rate on a foreign-currency quote can't be
+ *  converted honestly — it contributes 0 rather than a rupee-labelled
+ *  foreign amount. */
+export function grandTotalInr(row) {
+  const total = Number(row?.grand_total) || 0
+  const currency = String(row?.currency || 'INR').toUpperCase()
+  if (currency === 'INR') return total
+  const rate = Number(row?.conversion_rate) || 0
+  return rate > 0 ? total * rate : 0
+}
+
+/** Non-empty `hitech_exchange_rate_flags` = the freight engine found no
+ *  Currency Exchange Master rate for a quarter it needed, and priced that
+ *  leg at 0 INR. */
+export function hasMissingExchangeRate(row) {
+  return Boolean(String(row?.hitech_exchange_rate_flags ?? '').trim())
+}
+
 async function quotationPipeline() {
   const rows = await db.get_list(QUOTATION_DOCTYPE, {
-    fields: ['name', 'grand_total'],
+    fields: ['name', 'grand_total', 'currency', 'conversion_rate', 'hitech_total_freight_cost', 'hitech_exchange_rate_flags'],
     limit_page_length: 0
   })
   const statusFor = await worksheetStatusByQuotation((rows ?? []).map((r) => r.name))
@@ -127,6 +148,7 @@ async function quotationPipeline() {
   let pendingCfo = 0
   let openValue = 0
   let openCount = 0
+  let missingExchangeRates = 0
 
   for (const r of rows ?? []) {
     const status = statusFor.get(r.name)?.status ?? null
@@ -135,8 +157,9 @@ async function quotationPipeline() {
     if (status === 'Pending BU Head') pendingBuHead += 1
     if (status === 'Pending CFO') pendingCfo += 1
     if (status !== 'Lost') {
-      openValue += Number(r.grand_total) || 0
+      openValue += grandTotalInr(r)
       openCount += 1
+      if (hasMissingExchangeRate(r)) missingExchangeRates += 1
     }
   }
 
@@ -148,7 +171,8 @@ async function quotationPipeline() {
     pendingBuHead,
     pendingCfo,
     openValue,
-    openCount
+    openCount,
+    missingExchangeRates
   }
 }
 
@@ -160,14 +184,27 @@ async function recentQuotations() {
   const rows = await db.get_list(QUOTATION_DOCTYPE, {
     // `customer` isn't a real field on Quotation — the party is `party_name`
     // (a Dynamic Link; `customer_name` is fetched from it and what's shown).
-    fields: ['name', 'customer_name', 'party_name', 'modified'],
+    fields: [
+      'name',
+      'customer_name',
+      'party_name',
+      'modified',
+      'currency',
+      'conversion_rate',
+      'hitech_total_freight_cost',
+      'hitech_exchange_rate_flags'
+    ],
     order_by: 'modified desc',
     limit_page_length: 5
   })
   if (!rows?.length) return []
 
   const statusFor = await worksheetStatusByQuotation(rows.map((r) => r.name))
-  return rows.map((r) => ({ ...r, status: statusFor.get(r.name)?.status ?? null }))
+  return rows.map((r) => ({
+    ...r,
+    status: statusFor.get(r.name)?.status ?? null,
+    missingExchangeRate: hasMissingExchangeRate(r)
+  }))
 }
 
 export async function fetchHomeStats() {
@@ -187,6 +224,7 @@ export async function fetchHomeStats() {
     pendingCfo: pipeline.pendingCfo,
     openQuotesValue: pipeline.openValue,
     openQuotesCount: pipeline.openCount,
+    missingExchangeRates: pipeline.missingExchangeRates,
     quotationPipeline: pipeline.stages,
     quotationPipelineTotal: pipeline.total,
     recentQuotations: recentQuotationRows ?? []
