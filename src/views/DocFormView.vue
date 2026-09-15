@@ -34,6 +34,29 @@ const WORKFLOW_STATE_FIELD = {
   'Costing Worksheet': 'status'
 }
 
+/**
+ * Read-only fields whose legitimate `0` must stay on screen, per DocType —
+ * `hideEmptyReadOnlyFields` (lib/frmCompat.js) otherwise treats 0 and ""
+ * alike, the way the desk does. On a Container Fit Plan a variance of 0 mm
+ * or a count of 0 IS the answer ("doesn't fit", "exactly flush"), not a
+ * field that hasn't been computed yet.
+ */
+const KEEP_ZERO_READ_ONLY_FIELDS = {
+  'Container Fit Plan': [
+    'fits',
+    'exceeds_max_load',
+    'fit_notes',
+    'length_variance_mm',
+    'width_variance_mm',
+    'height_variance_mm',
+    'weight_variance_kg',
+    'total_tanks',
+    'tanks_per_row',
+    'tanks_per_column',
+    'layers'
+  ]
+}
+
 const props = defineProps({
   doctype: { type: String, required: true },
   name: { type: String, default: '' }
@@ -70,6 +93,30 @@ onMounted(async () => {
   layoutMap.value = await fetchLayoutMap()
 })
 const formLayout = computed(() => formLayoutFor(layoutMap.value, frm.value?.doctype))
+
+/**
+ * `frm.dashboard.set_headline(text, colour)` state — the SDK keeps it on the
+ * reactive `frm._dashboard.headline` (`{ html, color }`; `clear_headline()`
+ * empties both). A form script like Container Fit Plan's uses it for the
+ * "Fits / Does not fit" verdict, so it's rendered here as a proper banner
+ * above the section cards. `color` is Frappe's own word (green/red/blue/
+ * orange/yellow); anything else falls back to the neutral grey.
+ */
+const HEADLINE_STYLES = {
+  green: { bg: '#ECFDF5', border: '#A7F3D0', fg: '#065F46', icon: 'check-circle-2' },
+  red: { bg: '#FEF2F2', border: '#FECACA', fg: '#991B1B', icon: 'triangle-alert' },
+  blue: { bg: '#EFF6FF', border: '#BFDBFE', fg: '#1E40AF', icon: 'info' },
+  orange: { bg: '#FFF7ED', border: '#FED7AA', fg: '#9A3412', icon: 'triangle-alert' },
+  yellow: { bg: '#FEFCE8', border: '#FDE68A', fg: '#854D0E', icon: 'triangle-alert' },
+  default: { bg: '#F8FAFC', border: '#E2E8F0', fg: '#334155', icon: 'info' }
+}
+const headline = computed(() => {
+  const state = frm.value?._dashboard?.headline
+  const html = String(state?.html ?? '').trim()
+  if (!html) return null
+  const color = String(state?.color ?? '').toLowerCase()
+  return { html, ...(HEADLINE_STYLES[color] ?? HEADLINE_STYLES.default) }
+})
 
 /** The server-side name, or '' while the document is still unsaved. */
 const savedName = computed(() => {
@@ -126,7 +173,7 @@ async function load() {
       scripts: [
         nativeClientScripts(props.doctype),
         renderTextEditorsAsHtml(props.doctype),
-        hideEmptyReadOnlyFields(props.doctype),
+        hideEmptyReadOnlyFields(props.doctype, { keep: KEEP_ZERO_READ_ONLY_FIELDS[props.doctype] ?? [] }),
         lockOnSubmit(props.doctype),
         hideNamingSeries(props.doctype),
         ...(WORKFLOW_STATE_FIELD[props.doctype]
@@ -253,6 +300,18 @@ watch([() => props.doctype, () => props.name], load)
           >
             <FormToolbar :frm="frm" @error="error = $event" @duplicate="onDuplicate" />
           </div>
+          <!-- `frm.dashboard.set_headline()` banner — see `headline` above. The
+               headline is the script's own (trusted, same-origin) text, the
+               same way the desk renders it; `v-html` keeps any <b>/<br> it
+               used. -->
+          <div
+            v-if="headline"
+            class="form-headline-banner"
+            :style="{ background: headline.bg, borderColor: headline.border, color: headline.fg }"
+          >
+            <span style="font-size:17px; flex:none; display:flex;"><LucideIcon :name="headline.icon" /></span>
+            <div style="min-width:0; font-size:14px; font-weight:600; line-height:1.45;" v-html="headline.html" />
+          </div>
           <FormSections :frm="frm" :layout-name="formLayout" />
         </form>
 
@@ -266,3 +325,22 @@ watch([() => props.doctype, () => props.name], load)
     </template>
   </div>
 </template>
+
+<style scoped>
+.form-headline-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid;
+  border-radius: 13px;
+  padding: 13px 18px;
+  margin-bottom: 18px;
+}
+
+/* The SDK's FormToolbar renders the same `_dashboard.headline` inline (an
+   unstyled `.form-dashboard-headline` div) — hide that copy so the verdict
+   shows once, as the banner above. */
+.frappe-form :deep(.form-dashboard-headline) {
+  display: none;
+}
+</style>

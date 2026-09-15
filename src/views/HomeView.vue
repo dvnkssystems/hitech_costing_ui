@@ -92,7 +92,27 @@ const cards = computed(() => {
       fg: '#059669',
       to: '/list/Quotation',
       note: { text: 'target ≥ 10%', icon: 'check-circle-2', color: '#64748B' }
-    }
+    },
+    // Open quotations whose freight engine found no Currency Exchange Master
+    // rate for a quarter it needed (`hitech_exchange_rate_flags` set) — that
+    // leg is priced at ₹0 until the rate is entered, so anything > 0 here is
+    // a quote going out under-costed. Warning-styled only when it bites.
+    (() => {
+      const missing = s ? Number(s.missingExchangeRates) || 0 : 0
+      const warn = missing > 0
+      return {
+        label: 'Missing exchange rates',
+        value: s ? n(missing) : '—',
+        icon: warn ? 'triangle-alert' : 'coins',
+        bg: warn ? '#FEF2F2' : '#F1F5F9',
+        fg: warn ? '#DC2626' : '#475569',
+        to: warn ? '/list/Quotation' : '/list/Currency Exchange Master',
+        warning: warn,
+        note: warn
+          ? { text: 'open quotes with a freight leg costed at ₹0 — add the quarter\'s rate', icon: 'triangle-alert', color: '#DC2626' }
+          : { text: 'every open quote has its quarter\'s rates', icon: 'check-circle-2', color: '#64748B' }
+      }
+    })()
   ]
 })
 
@@ -165,13 +185,22 @@ onMounted(load)
         v-for="card in cards"
         :key="card.label"
         @click="go(card.to)"
-        style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:22px; box-shadow:0 1px 2px rgba(15,23,42,.04); font-family:inherit; cursor:pointer;"
+        :style="{
+          textAlign: 'left',
+          background: card.warning ? '#FFF5F5' : '#fff',
+          border: `1px solid ${card.warning ? '#FECACA' : '#EAEEF3'}`,
+          borderRadius: '8px',
+          padding: '22px',
+          boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+          fontFamily: 'inherit',
+          cursor: 'pointer'
+        }"
         class="hv3"
       >
         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div>
             <div style="font-size:13px; color:#64748B; font-weight:600;">{{ card.label }}</div>
-            <div style="font-size:32px; font-weight:800; margin-top:8px; letter-spacing:-.02em;">{{ card.value }}</div>
+            <div :style="{ fontSize: '32px', fontWeight: '800', marginTop: '8px', letterSpacing: '-.02em', color: card.warning ? '#B91C1C' : undefined }">{{ card.value }}</div>
           </div>
           <div
             :style="{ width:'44px', height:'44px', borderRadius:'12px', background: card.bg, color: card.fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'21px', flex:'none' }"
@@ -230,7 +259,14 @@ onMounted(load)
               style="cursor:pointer; border-bottom:1px solid #F1F5F9;"
               class="hv4"
             >
-              <td style="padding:12px 22px; font-weight:700; color:#0F172A;">{{ r.name }}</td>
+              <td style="padding:12px 22px; font-weight:700; color:#0F172A;">
+                {{ r.name }}
+                <span
+                  v-if="r.missingExchangeRate"
+                  title="A freight leg is costed at ₹0 — no exchange rate for its quarter"
+                  style="margin-left:6px; color:#DC2626; font-size:14px; vertical-align:-2px;"
+                ><LucideIcon name="triangle-alert" /></span>
+              </td>
               <td style="padding:12px 22px;">{{ r.customer_name || r.party_name || '—' }}</td>
               <td style="padding:12px 22px;">
                 <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>

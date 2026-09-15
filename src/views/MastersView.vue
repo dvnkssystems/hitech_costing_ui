@@ -9,7 +9,12 @@ const MASTERS = [
   { doctype: 'Paint System Rate', label: 'Paint System Rates', desc: 'Price per sqm by paint make, method and DFT band.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
   { doctype: 'DFT Range', label: 'DFT Ranges', desc: 'Dry film thickness bands used by Paint System Rates and the Paint System step.', icon: 'layers', bg: '#FFF7ED', fg: '#EA580C' },
   { doctype: 'Order Complexity Question', label: 'Order Complexity Questions', desc: 'Questions used to score order complexity.', icon: 'list-checks', bg: '#F1F5F9', fg: '#475569' },
-  { doctype: 'Quotation Term', label: 'Terms & Conditions', desc: 'The Quotation Wizard\'s Terms & Conditions checklist entries.', icon: 'file-check', bg: '#FEFCE8', fg: '#CA8A04' }
+  { doctype: 'Quotation Term', label: 'Terms & Conditions', desc: 'The Quotation Wizard\'s Terms & Conditions checklist entries.', icon: 'file-check', bg: '#FEFCE8', fg: '#CA8A04' },
+  { doctype: 'Currency Exchange Master', label: 'Currency Exchange Rates', desc: 'Quarterly CIF / DAP / Item exchange rates the freight engine converts native-currency legs to INR with.', icon: 'coins', bg: '#FFFBEB', fg: '#B45309' },
+  { doctype: 'International Freight Rate Master', label: 'International Freight Rates', desc: 'Sea / air freight rates by sector, port pair and container type, in the carrier\'s own currency.', icon: 'ship', bg: '#EFF6FF', fg: '#1D4ED8' },
+  { doctype: 'Container Type', label: 'Container Types', desc: 'Internal dimensions and max payload per container size, used by the container-fit calculation.', icon: 'container', bg: '#F0FDFA', fg: '#0F766E' },
+  { doctype: 'Container Fit Plan', label: 'Container Fit Plans', desc: 'Saved what-if fit checks: how many tanks of a given size go in a container, with variances and notes.', icon: 'box', bg: '#F5F3FF', fg: '#6D28D9' },
+  { doctype: 'Packing Settings', label: 'Packing Settings', desc: 'Standard handling gap and pallet thickness every container-fit calculation packs with.', icon: 'package', bg: '#F1F5F9', fg: '#475569', route: '/form/Packing Settings/Packing Settings' }
 ]
 </script>
 
@@ -27,7 +32,7 @@ const MASTERS = [
       <RouterLink
         v-for="m in MASTERS"
         :key="m.doctype"
-        :to="`/ui/${m.doctype}`"
+        :to="m.route ?? `/ui/${m.doctype}`"
         style="text-align:left; background:#fff; border:1px solid #EAEEF3; border-radius:8px; padding:22px; cursor:pointer; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(15,23,42,.04); color:inherit;"
         class="hv3"
       >

@@ -70,7 +70,9 @@ export function installFrappeGlobals(frappe) {
   globalThis.cint = globalThis.cint ?? cint
   globalThis.cstr = globalThis.cstr ?? cstr
   // Some scripts wrap user-facing strings; without a shim they throw on load.
-  globalThis.__ = globalThis.__ ?? ((text) => text)
+  // Frappe's real `__(text, args)` also substitutes `{0}`, `{1}`, … from
+  // `args` (Container Fit Plan's headline relies on it: "Fits: {0} tanks").
+  globalThis.__ = globalThis.__ ?? translate
   // Frappe's array helpers. `user.js` calls has_common() to decide whether the
   // current roles allow editing, and without it the whole handler dies.
   globalThis.has_common = globalThis.has_common ?? has_common
@@ -89,6 +91,17 @@ export function installFrappeGlobals(frappe) {
  * late. Router-dependent APIs (new_doc, mapped docs) can wait, since those only
  * fire on a click.
  */
+/** `__('Fits {0} tanks', [4])` -> 'Fits 4 tanks'. No translation here —
+ *  only the placeholder substitution Frappe's own `__` does. */
+function translate(text, args) {
+  const str = text === undefined || text === null ? '' : String(text)
+  if (!Array.isArray(args) || !args.length) return str
+  return str.replace(/\{(\d+)\}/g, (match, index) => {
+    const value = args[Number(index)]
+    return value === undefined || value === null ? match : String(value)
+  })
+}
+
 function installRuntimeShims(frappe) {
   // `frappe.datetime.get_today` — the SDK names it `now_date`.
   try {

@@ -47,7 +47,13 @@ export default defineConfig(({ mode }) => {
       // that proxies the backend has to forward `/assets/**` for the print
       // view's stylesheets and letterhead images, which would then shadow this
       // app's own bundles and leave a blank page. Ours live under `/app`.
-      assetsDir: 'app'
+      assetsDir: 'app',
+      // The one chunk over Vite's 500 kB default is three.js, pulled in by
+      // `ContainerFit3D.vue` — already lazy (`defineAsyncComponent` in the
+      // wizard), so it only loads when someone opens the 3D view. Raising
+      // the limit just past it keeps `pnpm build` quiet without hiding a
+      // genuinely new oversized chunk.
+      chunkSizeWarningLimit: 600
     },
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },

@@ -246,8 +246,43 @@ export const EXIM_FIELDS = [
   'hitech_total_freight_cost',
   'hitech_fob_cost_applied',
   'hitech_region_margin_applied',
-  'hitech_freight_inr_per_kg'
+  'hitech_freight_inr_per_kg',
+  // "Currency Conversion" section (backend Phase 2) — every one of these is
+  // `read_only`, engine-computed alongside the freight numbers above, so
+  // they all land in the Exim step's Calculated rail. The CIF/DAP legs are
+  // priced in `hitech_freight_currency` (the Freight Master's own currency)
+  // and converted to INR at that quarter's Currency Exchange Master rate;
+  // `hitech_exchange_rate_flags` is non-empty whenever a quarter's rate is
+  // missing — that leg is then 0 INR, never silently 1:1 — and the wizard
+  // renders it as a warning block rather than a plain rail row. The two
+  // Item Deal Value figures only fill once the linked worksheets are saved.
+  'hitech_freight_currency',
+  'hitech_cif_leg_native',
+  'hitech_cif_exchange_rate',
+  'hitech_cif_leg_inr',
+  'hitech_dap_addon_native',
+  'hitech_dap_exchange_rate',
+  'hitech_dap_addon_inr',
+  'hitech_item_deal_value_inr',
+  'hitech_item_exchange_rate',
+  'hitech_item_deal_value_fc',
+  'hitech_exchange_rate_flags'
 ]
+/** The quote's own currency trio — real, standard Quotation fields (ERPNext
+ *  core), edited at the top of the Exim / Incoterms step and staged on the
+ *  same throwaway Quotation header frm as everything else there. `currency`
+ *  is what the Item Deal Value (FC) figure above is expressed in;
+ *  `conversion_rate` is ERPNext's own quote→company-currency rate (kept at 1
+ *  for INR, otherwise looked up via `erpnext.setup.utils.get_exchange_rate`
+ *  when blank — see CostingWorksheetWizard.vue); `transaction_date` picks
+ *  which quarter's Currency Exchange Master rates the freight engine uses. */
+export const CURRENCY_FIELDS = ['currency', 'conversion_rate', 'transaction_date']
+/** The one `EXIM_FIELDS` entry that is NOT rendered as a Calculated-rail
+ *  row — see the Exim step's own warning block in CostingWorksheetWizard.vue. */
+export const EXIM_FLAGS_FIELD = 'hitech_exchange_rate_flags'
+/** The two engine-computed Item Deal Value fields (INR and quote currency)
+ *  that stay 0 until at least one linked Costing Worksheet has been saved. */
+export const EXIM_ITEM_DEAL_VALUE_FIELDS = ['hitech_item_deal_value_inr', 'hitech_item_deal_value_fc']
 /** The Terms step's free-text box — a real custom field (`hitech_terms_notes`,
  *  see `costing_worksheet.py`'s `QUOTATION_HEADER_FIELDS` and the backend's
  *  `setup/install.py`). The step's 26-item checklist isn't a flat field

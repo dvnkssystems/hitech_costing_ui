@@ -54,6 +54,22 @@ function row(label, value) {
   return value === undefined || value === null || value === '' ? null : { label, value }
 }
 
+/** A `row()` the template renders as a red warning block instead of a plain
+ *  value — for `hitech_exchange_rate_flags`, whose text means "this leg was
+ *  costed at ₹0 because a quarter's rate is missing". */
+function warningRow(label, value) {
+  const r = row(label, value)
+  return r ? { ...r, warning: true } : null
+}
+
+/** The quote's own currency (`currency` on the Quotation, INR unless the
+ *  wizard's currency picker chose otherwise) and the freight master's
+ *  (`hitech_freight_currency`, what the CIF/DAP native legs are priced in) —
+ *  every native-currency amount below is formatted with its own code, never
+ *  a hardcoded ₹. */
+const quoteCurrency = computed(() => String(doc.value?.currency || 'INR').toUpperCase())
+const freightCurrency = computed(() => String(doc.value?.hitech_freight_currency || quoteCurrency.value).toUpperCase())
+
 const orderRows = computed(() => {
   if (!doc.value) return []
   const d = doc.value
@@ -61,6 +77,11 @@ const orderRows = computed(() => {
     row('Customer', d.customer_name || d.party_name),
     row('Company', d.company),
     row('Order type', d.order_type),
+    row('Currency', d.currency),
+    row(
+      'Conversion rate',
+      d.conversion_rate && quoteCurrency.value !== 'INR' ? `1 ${quoteCurrency.value} = ${decimal(d.conversion_rate)} INR` : null
+    ),
     row('Date', d.transaction_date ? formatDate(d.transaction_date) : null),
     row('Valid till', d.valid_till ? formatDate(d.valid_till) : null)
   ].filter(Boolean)
@@ -158,6 +179,34 @@ const eximRows = computed(() => {
   ].filter(Boolean)
 })
 
+/** The "Currency Conversion" section the backend adds after Freight (INR/kg):
+ *  the CIF leg and DAP add-on in the freight master's own currency, the
+ *  quarter's Currency Exchange Master rate each was converted with, the INR
+ *  result, and the item deal value in INR / the quote currency. Empty
+ *  figures are skipped like everywhere else on this page — except
+ *  `hitech_exchange_rate_flags`, which is the one thing that must NOT be
+ *  quietly dropped: it means a leg was costed at ₹0 for want of a rate. */
+const currencyRows = computed(() => {
+  if (!doc.value) return []
+  const d = doc.value
+  const fc = freightCurrency.value
+  const qc = quoteCurrency.value
+  const fx = (value) => (value ? decimal(value) : null)
+  return [
+    row('Freight currency', d.hitech_freight_currency),
+    row(`CIF leg (${fc})`, d.hitech_cif_leg_native ? money(d.hitech_cif_leg_native, fc) : null),
+    row('CIF exchange rate', fx(d.hitech_cif_exchange_rate)),
+    row('CIF leg (INR)', d.hitech_cif_leg_inr ? money(d.hitech_cif_leg_inr) : null),
+    row(`DAP add-on (${fc})`, d.hitech_dap_addon_native ? money(d.hitech_dap_addon_native, fc) : null),
+    row('DAP exchange rate', fx(d.hitech_dap_exchange_rate)),
+    row('DAP add-on (INR)', d.hitech_dap_addon_inr ? money(d.hitech_dap_addon_inr) : null),
+    row('Item deal value (INR)', d.hitech_item_deal_value_inr ? money(d.hitech_item_deal_value_inr) : null),
+    row('Item exchange rate', fx(d.hitech_item_exchange_rate)),
+    row(`Item deal value (${qc})`, d.hitech_item_deal_value_fc ? money(d.hitech_item_deal_value_fc, qc) : null),
+    warningRow('Exchange rate missing — affected legs costed at ₹0', d.hitech_exchange_rate_flags)
+  ].filter(Boolean)
+})
+
 const termsRows = computed(() => {
   if (!doc.value) return []
   const all = doc.value.hitech_quotation_terms ?? []
@@ -176,7 +225,8 @@ const sections = computed(() =>
     { key: 'taxes', n: '02', title: 'Taxes & Charges', rows: [row('Template', doc.value?.taxes_and_charges), ...totalsRows.value.filter(Boolean)].filter(Boolean) },
     { key: 'address', n: '03', title: 'Address & Delivery', rows: addressRows.value },
     { key: 'exim', n: '04', title: 'Exim / Incoterms', rows: eximRows.value },
-    { key: 'terms', n: '05', title: 'Terms & Conditions', rows: termsRows.value }
+    { key: 'currency', n: '05', title: 'Currency Conversion', rows: currencyRows.value },
+    { key: 'terms', n: '06', title: 'Terms & Conditions', rows: termsRows.value }
   ].filter((s) => s.rows.length)
 )
 
@@ -350,9 +400,20 @@ watch(() => props.name, load)
           <span style="font-size:18px; font-weight:800; color:#0F172A;">{{ sec.title }}</span>
         </div>
         <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px 22px; margin-top:14px;">
-          <div v-for="r in sec.rows" :key="r.label" style="display:flex; flex-direction:column; gap:2px; min-width:0;">
-            <span style="font-size:12px; font-weight:600; color:#94A0AE;">{{ r.label }}</span>
-            <span style="font-size:15px; color:#0F172A; overflow-wrap:anywhere;">{{ r.value }}</span>
+          <div
+            v-for="r in sec.rows"
+            :key="r.label"
+            :style="
+              r.warning
+                ? 'grid-column:1 / -1; display:flex; flex-direction:column; gap:4px; min-width:0; padding:12px 14px; border-radius:8px; border:1px solid #FECACA; background:#FEF2F2;'
+                : 'display:flex; flex-direction:column; gap:2px; min-width:0;'
+            "
+          >
+            <span v-if="r.warning" style="display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; color:#991B1B;">
+              <LucideIcon name="triangle-alert" /> {{ r.label }}
+            </span>
+            <span v-else style="font-size:12px; font-weight:600; color:#94A0AE;">{{ r.label }}</span>
+            <span :style="r.warning ? 'font-size:13.5px; color:#B91C1C; white-space:pre-line; overflow-wrap:anywhere;' : 'font-size:15px; color:#0F172A; overflow-wrap:anywhere;'">{{ r.value }}</span>
           </div>
         </div>
       </div>
