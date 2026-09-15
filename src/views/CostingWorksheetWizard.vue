@@ -529,6 +529,7 @@ const FREIGHT_PREVIEW_HEADER_FIELDS = [
   'hitech_mode_of_transport',
   'hitech_sector',
   'hitech_basic_freight',
+  'hitech_containers_override',
   'hitech_insurance_percent',
   'hitech_insurance_value',
   'hitech_destination_inland_cost',
@@ -548,6 +549,8 @@ const FREIGHT_PREVIEW_HEADER_FIELDS = [
  *  of these overlap `FREIGHT_PREVIEW_HEADER_FIELDS` above, so applying them
  *  can't re-trigger this same preview in a loop. */
 const FREIGHT_PREVIEW_RESULT_FIELDS = [
+  'hitech_containers_estimated',
+  'hitech_containers_applied',
   'hitech_freight_rate_source',
   'hitech_total_freight_cost',
   'hitech_freight_inr_per_kg',
@@ -942,15 +945,26 @@ const containerLogisticsRows = computed(() => {
   if (!(layout && doc?.mode_of_transport === 'Sea' && doc?.container_type)) return rows
   const whenFull = rows.find((row) => row.label === 'Container Utilization %')
   if (whenFull) whenFull.label = 'Container Utilization % (when full)'
+  // Which arrangement the figures above come from: a saved per-item load
+  // plan (edited in the 3D dialog) or the automatic uniform-gap estimate.
+  const fitPlan = item.containerFitPlan
+  rows.push({
+    label: 'Load plan',
+    value: fitPlan ? 'Adjusted (saved)' : 'Automatic estimate',
+    low: false,
+    warning: ''
+  })
   // The two packing constants the layout was priced with (Packing Settings
   // on the backend) -- surfaced here so they're visible without opening the
   // 3D view, since they explain most of the "why only N per container".
   const mmValue = (value) => `${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })} mm`
   rows.push({ label: 'Standard gap', value: mmValue(layout.gap_mm), low: false, warning: '' })
   rows.push({ label: 'Pallet thickness', value: mmValue(layout.pallet_thickness_mm ?? 0), low: false, warning: '' })
-  const units = Number(layout.units_per_container || 0)
+  // A saved load plan drives units per container; tank volume is the same
+  // either way, the plan just may place it rotated.
+  const units = Number((fitPlan ?? layout).units_per_container || 0)
   if (!units) return rows
-  const { tank, container } = layout
+  const { tank, container } = fitPlan ?? layout
   const tankVolume = tank.length_mm * tank.width_mm * tank.height_mm
   const containerVolume = container.length_mm * container.width_mm * container.height_mm
   const qty = normalizedQuantity(item)
@@ -1038,7 +1052,10 @@ async function runContainerFitPreview() {
         ext_length_mm: doc?.ext_length_mm ?? null,
         ext_width_mm: doc?.ext_width_mm ?? null,
         ext_height_mm: doc?.ext_height_mm ?? null,
-        total_weight_kg: doc?.total_weight_kg ?? null
+        total_weight_kg: doc?.total_weight_kg ?? null,
+        // A saved item may have a saved load plan that overrides the
+        // automatic estimate's units / utilization (returned as `fit_plan`).
+        ...(frm.is_new() || !doc?.name ? {} : { costing_worksheet: doc.name })
       }
     )
     // A newer preview may have started -- or the active item itself may
@@ -1050,6 +1067,7 @@ async function runContainerFitPreview() {
       if (fieldname in result) await frm.set_value(fieldname, result[fieldname])
     }
     item.containerFitLayout = result.layout ?? null
+    item.containerFitPlan = result.fit_plan ?? null
     // units_per_container may have just changed -- keep containers_required
     // in step with it (see syncContainersRequiredPreview's own doc comment).
     syncContainersRequiredPreview()
@@ -1081,6 +1099,18 @@ async function openContainerFit3D() {
     await runContainerFitPreview()
   }
   containerFit3DOpen.value = true
+}
+/** The active item's SAVED Costing Worksheet name -- what its load plan is
+ *  stored against. Null while the item has never been saved. */
+const activeItemWorksheetName = computed(() => {
+  const frm = activeItem.value?.frm
+  return frm && !frm.is_new() ? frm.doc?.name ?? null : null
+})
+/** The 3D dialog saved or reset this item's load plan -- re-run the preview
+ *  right away so Units per Container / Containers Required reflect it. */
+function onContainerFitPlanChanged() {
+  clearTimeout(containerFitPreviewDebounce)
+  runContainerFitPreview()
 }
 
 /** Same 400ms debounce window `scheduleFreightPreview()` uses. */
@@ -1147,6 +1177,24 @@ watch(activeItemKey, () => {
   // immediately off whatever units_per_container/quantity it already has.
   syncContainersRequiredPreview()
 })
+// Reopening a saved quotation lands on Items & Pricing with the item's
+// container fields already filled, so none of the per-field watchers above
+// fire -- and the Load plan / Standard gap / Pallet thickness rows (and a
+// saved load plan's own Units per Container) stay hidden until something is
+// edited or the 3D dialog is opened. Run the preview once when the step is
+// shown, or the active item changes, and nothing is cached for that item yet.
+watch(
+  [activePageStep, activeItemKey],
+  () => {
+    const item = activeItem.value
+    if (activePageStep.value !== 'pricing' || !item) return
+    const doc = item.frm?.doc
+    if (!(doc?.mode_of_transport === 'Sea' && doc?.container_type)) return
+    if (item.containerFitLayout) return
+    scheduleContainerFitPreview()
+  },
+  { immediate: true }
+)
 
 const wizardEl = ref(null)
 let teardownEnhancements = null
@@ -1348,7 +1396,11 @@ function makeItem(frm, key) {
     description: '',
     // Last `preview_container_fit().layout` for this item -- what the
     // "View in 3D" container dialog draws. Wizard-only, never persisted.
-    containerFitLayout: null
+    containerFitLayout: null,
+    // `preview_container_fit().fit_plan` -- this item's saved, non-stale,
+    // fitting Container Fit Plan payload when one drives the figures, else
+    // null. Wizard-only cache; the plan itself lives server-side.
+    containerFitPlan: null
   })
 }
 
@@ -2702,6 +2754,14 @@ watch(() => props.quotation, load)
         :layout="activeItem?.containerFitLayout ?? null"
         :quantity="activeItem ? normalizedQuantity(activeItem) : 1"
         :item-label="activeItem ? itemLabel(activeItem, items.indexOf(activeItem)) : ''"
+        :costing-worksheet="activeItemWorksheetName"
+        :container-type="activeItem?.frm?.doc?.container_type ?? null"
+        :ext-length-mm="Number(activeItem?.frm?.doc?.ext_length_mm) || 0"
+        :ext-width-mm="Number(activeItem?.frm?.doc?.ext_width_mm) || 0"
+        :ext-height-mm="Number(activeItem?.frm?.doc?.ext_height_mm) || 0"
+        :total-weight-kg="Number(activeItem?.frm?.doc?.total_weight_kg) || 0"
+        :locked="activeItemLocked"
+        @refresh="onContainerFitPlanChanged"
         @close="containerFit3DOpen = false"
       />
     </template>
