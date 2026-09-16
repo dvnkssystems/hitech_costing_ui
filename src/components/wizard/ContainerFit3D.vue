@@ -323,12 +323,22 @@ const verdict = computed(() => {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-  const per = hasOverriddenContainers.value ? 'per container on the load plan' : 'per container'
-  if (!p.geometric_fit) return { tone: 'bad', text: 'Does not fit yet', notes }
+  // "on the load plan" whenever some container is packed at its own values,
+  // so a plan figure is never read as covering every container.
+  const onPlan = hasOverriddenContainers.value ? ' on the load plan' : ''
+  if (!p.geometric_fit) return { tone: 'bad', text: `Does not fit yet${onPlan}`, notes }
   if (p.exceeds_max_load) {
-    return { tone: 'warn', text: `Fits, but weight caps it at ${slotsPerContainer.value}`, notes }
+    return {
+      tone: 'warn',
+      text: `Fits, but weight caps it at ${slotsPerContainer.value} per container${onPlan}`,
+      notes
+    }
   }
-  return { tone: 'ok', text: `Fits: ${plural(slotsPerContainer.value, 'tank')} ${per}`, notes: [] }
+  return {
+    tone: 'ok',
+    text: `Fits: ${plural(slotsPerContainer.value, 'tank')} per container${onPlan}`,
+    notes: []
+  }
 })
 
 function varianceRow(label, variance, used, available) {
