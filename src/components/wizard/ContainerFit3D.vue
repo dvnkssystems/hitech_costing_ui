@@ -41,6 +41,15 @@
  * Physical positions past what is loaded are ghosted (free, or ruled out by
  * weight).
  *
+ * The side panel describes ONE container at a time -- whichever is picked in
+ * the container strip at its top (or clicked in the container list). Pick a
+ * container packed on the load plan and the panel is the plan editor it has
+ * always been. Pick one with its own gap / pallet and the panel switches to
+ * that container's own read-only figures, because those values are edited in
+ * the wizard's Load per container table, not here. Without that, the panel
+ * showed the plan's gaps and capacity while the scene drew a container
+ * packed differently, and the two appeared to contradict each other.
+ *
  * Coordinate mapping: container length along X, height along Y (up), width
  * along Z; containers line up side by side along Z; 1 scene unit = 1 metre.
  */
@@ -147,7 +156,7 @@ function uniformGaps(count, gap) {
 
 /** One container drawn from the plan being edited: its per-position gaps,
  *  pallet and stacking, `loaded` of `capacity` tanks in it. */
-function planView(index, loaded, free, utilization) {
+function planView(index, { loaded = 0, free = 0, utilization = 0, weightKg = 0 } = {}) {
   const p = plan.value
   return {
     index,
@@ -162,6 +171,7 @@ function planView(index, loaded, free, utilization) {
     capacity: slotsPerContainer.value,
     loaded: Math.max(0, Number(loaded) || 0),
     free: Math.max(0, Number(free) || 0),
+    weightKg: Number(weightKg) || 0,
     utilization: Number(utilization) || 0,
     fits: true
   }
@@ -183,7 +193,12 @@ const containerViews = computed(() => {
   const split = Array.isArray(p.containers) ? p.containers : []
   if (split.length) {
     return split.map((row, index) => {
-      const view = planView(index, row.loaded, row.free, row.utilization_percent)
+      const view = planView(index, {
+        loaded: row.loaded,
+        free: row.free,
+        utilization: row.utilization_percent,
+        weightKg: row.weight_kg
+      })
       view.containerNo = Number(row.container_no) || index + 1
       view.capacity = Math.max(0, Number(row.capacity) || 0)
       view.fits = row.fits !== false
@@ -206,12 +221,38 @@ const containerViews = computed(() => {
     quantity: orderQty.value,
     unitsPerContainer: slotsPerContainer.value,
     tank: p.tank,
-    container: p.container
-  }).rows.map((row) => planView(row.index, row.loaded, row.free, row.utilization))
+    container: p.container,
+    unitWeightKg: Number(p.tank?.weight_kg) || 0
+  }).rows.map((row) => planView(row.index, row))
 })
 const containersRequired = computed(() => containerViews.value.length)
 const drawnContainers = computed(() => Math.max(1, Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS)))
 const hasOverriddenContainers = computed(() => containerViews.value.some((view) => view.overridden))
+
+/** The container the side panel describes. Container 1 on open; follows the
+ *  list when it shrinks (a smaller quantity, an override cleared). */
+const selectedContainerNo = ref(1)
+const selectedView = computed(() => {
+  const views = containerViews.value
+  if (!views.length) return null
+  return views.find((view) => view.containerNo === selectedContainerNo.value) ?? views[0]
+})
+/** The selected container is packed at its own gap / pallet, so the plan
+ *  editor does not describe it and is replaced by its own figures. */
+const editingPlan = computed(() => !selectedView.value?.overridden)
+watch(containerViews, (views) => {
+  if (views.length && !views.some((view) => view.containerNo === selectedContainerNo.value)) {
+    selectedContainerNo.value = views[0].containerNo
+  }
+})
+/** True when an overridden container's layout turned the tank the other way
+ *  round from the plan's -- the usual reason its counts differ. */
+const selectedTurnedFromPlan = computed(() => {
+  const view = selectedView.value
+  const tank = plan.value?.tank
+  if (!view?.overridden || !tank || !view.tank) return false
+  return Number(view.tank.length_mm) !== Number(tank.length_mm)
+})
 
 /** Actual fill of everything being shipped: the mean fill of the containers
  *  needed (the wizard table's total row uses the same figure). */
@@ -263,15 +304,31 @@ function plural(n, word) {
 const verdict = computed(() => {
   const p = plan.value
   if (!p) return null
+  // An overridden container's verdict is about THAT container, not the plan:
+  // saying "42 per container" while the picked one holds 50 is what made the
+  // panel look wrong next to the scene.
+  const view = selectedView.value
+  if (view?.overridden) {
+    const at = `at its own ${mm(view.gapMm)} mm gap and ${mm(view.palletMm)} mm pallet`
+    if (!view.capacity) {
+      return { tone: 'bad', text: `Container ${view.containerNo} fits nothing ${at}`, notes: [] }
+    }
+    return {
+      tone: 'ok',
+      text: `Container ${view.containerNo}: ${plural(view.capacity, 'tank')} ${at}`,
+      notes: []
+    }
+  }
   const notes = String(p.fit_notes || '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
+  const per = hasOverriddenContainers.value ? 'per container on the load plan' : 'per container'
   if (!p.geometric_fit) return { tone: 'bad', text: 'Does not fit yet', notes }
   if (p.exceeds_max_load) {
     return { tone: 'warn', text: `Fits, but weight caps it at ${slotsPerContainer.value}`, notes }
   }
-  return { tone: 'ok', text: `Fits: ${plural(slotsPerContainer.value, 'tank')} per container`, notes: [] }
+  return { tone: 'ok', text: `Fits: ${plural(slotsPerContainer.value, 'tank')} ${per}`, notes: [] }
 })
 
 function varianceRow(label, variance, used, available) {
@@ -313,6 +370,38 @@ const figures = computed(() => {
     }
   ]
 })
+
+/** The picked overridden container's own figures, in `figures`' shape. Its
+ *  per-axis counts come from the backend split's `counts`, so nothing about
+ *  its fit is worked out here. A plan container uses `figures` instead. */
+const ownFigures = computed(() => {
+  const view = selectedView.value
+  const c = plan.value?.container || {}
+  if (!view?.overridden) return []
+  return [
+    { label: 'Tanks per row', value: String(Math.max(view.lengthGaps.length - 1, 0)) },
+    { label: 'Tanks per column', value: String(Math.max(view.widthGaps.length - 1, 0)) },
+    { label: 'Layers', value: String(view.layers) },
+    {
+      label: 'Fits in this container',
+      value: String(view.capacity),
+      note: 'at its own gap and pallet, weight cap included'
+    },
+    {
+      label: 'Loaded',
+      value: `${view.loaded} of ${view.capacity}`,
+      note: view.free ? `${plural(view.free, 'slot')} free` : ''
+    },
+    {
+      label: 'Weight',
+      value: c.max_load_kg ? `${kg(view.weightKg)} / ${kg(c.max_load_kg)} kg` : `${kg(view.weightKg)} kg`,
+      tone: c.max_load_kg && view.weightKg > c.max_load_kg ? 'bad' : ''
+    },
+    { label: 'Utilization', value: pct(view.utilization) }
+  ]
+})
+/** Whichever figure list describes the picked container. */
+const shownFigures = computed(() => (editingPlan.value ? figures.value : ownFigures.value))
 
 const axes = computed(() => [
   {
@@ -472,6 +561,13 @@ function onEdit() {
   clearTimeout(previewTimer)
   previewing.value = true
   previewTimer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS)
+}
+
+/** "Edit the load plan instead" -- pick the first container that is packed
+ *  on the plan, so the editor comes back. */
+function selectPlanContainer() {
+  const view = containerViews.value.find((row) => !row.overridden)
+  if (view) selectedContainerNo.value = view.containerNo
 }
 
 function setStacked(checked) {
@@ -645,20 +741,21 @@ function frameCamera(L, H, totalDepth) {
   sun.position.set(L, H * 2.2, totalDepth * 1.4)
 }
 
-/** A floating "1", "2", … above each container. */
-function makeLabel(text, size) {
+/** A floating "1", "2", … above each container; filled in for the one the
+ *  side panel is describing, so panel and picture cannot be mixed up. */
+function makeLabel(text, size, selected = false) {
   const canvas = document.createElement('canvas')
   canvas.width = 128
   canvas.height = 128
   const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#ffffff'
+  ctx.fillStyle = selected ? COLORS.label : '#ffffff'
   ctx.beginPath()
   ctx.arc(64, 64, 56, 0, Math.PI * 2)
   ctx.fill()
   ctx.lineWidth = 6
   ctx.strokeStyle = COLORS.label
   ctx.stroke()
-  ctx.fillStyle = COLORS.label
+  ctx.fillStyle = selected ? '#ffffff' : COLORS.label
   ctx.font = 'bold 64px "IBM Plex Mono", monospace'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -669,7 +766,7 @@ function makeLabel(text, size) {
   return sprite
 }
 
-function buildContainer(group, container, zOffset, index) {
+function buildContainer(group, container, zOffset, index, selected = true) {
   const L = container.length_mm * MM
   const H = container.height_mm * MM
   const W = container.width_mm * MM
@@ -681,19 +778,29 @@ function buildContainer(group, container, zOffset, index) {
   const geometry = new THREE.BoxGeometry(L, H, W)
   const walls = new THREE.Mesh(
     geometry,
-    new THREE.MeshBasicMaterial({ color: COLORS.container, transparent: true, opacity: 0.05, side: THREE.BackSide })
+    new THREE.MeshBasicMaterial({
+      color: COLORS.container,
+      transparent: true,
+      opacity: selected ? 0.08 : 0.03,
+      side: THREE.BackSide
+    })
   )
   walls.position.copy(centre)
   group.add(walls)
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(geometry),
-    new THREE.LineBasicMaterial({ color: COLORS.container })
+    new THREE.LineBasicMaterial({ color: COLORS.container, transparent: true, opacity: selected ? 1 : 0.45 })
   )
   edges.position.copy(centre)
   group.add(edges)
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(L, W),
-    new THREE.MeshBasicMaterial({ color: COLORS.container, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({
+      color: COLORS.container,
+      transparent: true,
+      opacity: selected ? 0.16 : 0.06,
+      side: THREE.DoubleSide
+    })
   )
   floor.rotation.x = -Math.PI / 2
   floor.position.set(L / 2, 0.001, zOffset + W / 2)
@@ -707,7 +814,7 @@ function buildContainer(group, container, zOffset, index) {
   group.add(doorFrame)
 
   if (containersRequired.value > 1) {
-    const label = makeLabel(String(index + 1), Math.max(H, W) * 0.28)
+    const label = makeLabel(String(index + 1), Math.max(H, W) * 0.28, selected)
     label.position.set(L / 2, H + Math.max(H, W) * 0.22, zOffset + W / 2)
     group.add(label)
   }
@@ -826,11 +933,12 @@ function draw() {
   }
   contentGroup = new THREE.Group()
   // No split at all (nothing fits yet): one container, every position ghosted.
-  const views = containerViews.value.length ? containerViews.value : [planView(0, 0, 0, 0)]
+  const views = containerViews.value.length ? containerViews.value : [planView(0)]
   for (let i = 0; i < count; i += 1) {
     const zOffset = i * (W + spacing)
-    buildContainer(contentGroup, c, zOffset, i)
-    if (views[i]) buildTanks(contentGroup, views[i], zOffset)
+    const view = views[i]
+    buildContainer(contentGroup, c, zOffset, i, !view || view.containerNo === selectedContainerNo.value)
+    if (view) buildTanks(contentGroup, view, zOffset)
   }
   scene.add(contentGroup)
 }
@@ -875,6 +983,7 @@ watch(
       return
     }
     window.addEventListener('keydown', onWindowKeydown, true)
+    selectedContainerNo.value = 1
     load()
     if (!previous?.[0]) {
       nextTick(() => requestAnimationFrame(() => panel.value?.focus?.({ preventScroll: true })))
@@ -883,7 +992,7 @@ watch(
   { immediate: true }
 )
 
-watch([plan, () => props.open], async () => {
+watch([plan, selectedContainerNo, () => props.open], async () => {
   await nextTick()
   if (props.open) draw()
 })
@@ -965,12 +1074,101 @@ onBeforeUnmount(() => {
                   </ul>
                 </div>
 
+                <!-- Which container everything below describes. Containers
+                     packed at their own gap / pallet are marked, and picking
+                     one swaps the plan editor for that container's own
+                     figures (see `selectedView` / `editingPlan`). -->
+                <div v-if="containerViews.length > 1" class="cf3d__picker">
+                  <span :id="`${uid}-picker-label`" class="cf3d__picker-label">Container</span>
+                  <div class="cf3d__picker-tabs" role="tablist" :aria-labelledby="`${uid}-picker-label`">
+                    <button
+                      v-for="row in containerViews"
+                      :key="row.containerNo"
+                      type="button"
+                      role="tab"
+                      class="cf3d__picker-tab"
+                      :class="{
+                        'cf3d__picker-tab--on': row.containerNo === selectedContainerNo,
+                        'cf3d__picker-tab--own': row.overridden
+                      }"
+                      :aria-selected="row.containerNo === selectedContainerNo"
+                      :title="
+                        row.overridden
+                          ? `Container ${row.containerNo} — its own ${mm(row.gapMm)} mm gap and ${mm(row.palletMm)} mm pallet`
+                          : `Container ${row.containerNo} — packed on the load plan`
+                      "
+                      @click="selectedContainerNo = row.containerNo"
+                    >
+                      {{ row.containerNo }}
+                    </button>
+                  </div>
+                  <span v-if="hasOverriddenContainers" class="cf3d__picker-key">
+                    <span class="cf3d__swatch cf3d__swatch--own" />own gap / pallet
+                  </span>
+                </div>
+
                 <section class="cf3d__section" :aria-labelledby="`${uid}-plan-title`">
                   <div class="cf3d__section-head">
-                    <h3 :id="`${uid}-plan-title`" class="cf3d__section-title">Load plan</h3>
+                    <h3 :id="`${uid}-plan-title`" class="cf3d__section-title">
+                      {{ editingPlan ? 'Load plan' : `Container ${selectedView.containerNo} packing` }}
+                    </h3>
                     <span v-if="previewing" class="cf3d__updating">Updating…</span>
                   </div>
 
+                  <!-- The picked container has its own gap / pallet, set in
+                       the wizard's Load per container table. Its packing is
+                       shown read-only here: editing it there is the only way
+                       to change it, and the plan's per-position gaps do not
+                       apply to it at all. -->
+                  <template v-if="!editingPlan">
+                    <p class="cf3d__own-lede">
+                      Packed at <strong>{{ mm(selectedView.gapMm) }} mm</strong> on every side with a
+                      <strong>{{ mm(selectedView.palletMm) }} mm</strong> pallet, from this item's
+                      <strong>Load per container</strong> table — not the load plan's gaps. Change those values in that
+                      table. The load plan applies to the containers without their own values; pick one above to edit
+                      it.
+                    </p>
+                    <dl class="cf3d__own-axes">
+                      <div class="cf3d__own-axis">
+                        <dt>Length axis</dt>
+                        <dd>
+                          {{ plural(Math.max(selectedView.lengthGaps.length - 1, 0), 'tank') }}
+                          <span class="cf3d__muted">· {{ mm(selectedView.gapMm) }} mm every gap</span>
+                        </dd>
+                      </div>
+                      <div class="cf3d__own-axis">
+                        <dt>Width axis</dt>
+                        <dd>
+                          {{ plural(Math.max(selectedView.widthGaps.length - 1, 0), 'tank') }}
+                          <span class="cf3d__muted">· {{ mm(selectedView.gapMm) }} mm every gap</span>
+                        </dd>
+                      </div>
+                      <div class="cf3d__own-axis">
+                        <dt>Stacking</dt>
+                        <dd>
+                          <template v-if="selectedView.layers === 2">
+                            Stacked 2 high <span class="cf3d__muted">· pallet, tank, tank, pallet</span>
+                          </template>
+                          <template v-else-if="selectedView.layers === 1">
+                            One layer <span class="cf3d__muted">· pallet, tank</span>
+                          </template>
+                          <template v-else>Nothing fits at these values</template>
+                        </dd>
+                      </div>
+                      <div v-if="selectedTurnedFromPlan" class="cf3d__own-axis">
+                        <dt>Orientation</dt>
+                        <dd>
+                          Turned 90° from the load plan
+                          <span class="cf3d__muted">· {{ dims(selectedView.tank) }}</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <button type="button" class="cf3d__btn cf3d__btn--small" @click="selectPlanContainer">
+                      Edit the load plan instead
+                    </button>
+                  </template>
+
+                  <template v-else>
                   <label class="cf3d__toggle" :for="`${uid}-stacked`">
                     <input
                       :id="`${uid}-stacked`"
@@ -1025,11 +1223,12 @@ onBeforeUnmount(() => {
                       </button>
                     </div>
                   </fieldset>
+                  </template>
                 </section>
 
                 <dl class="cf3d__figures">
                   <div
-                    v-for="row in figures"
+                    v-for="row in shownFigures"
                     :key="row.label"
                     class="cf3d__figure"
                     :class="row.tone ? `cf3d__figure--${row.tone}` : ''"
@@ -1059,11 +1258,17 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div v-if="containerViews.length" class="cf3d__containers">
-                  <div
+                  <button
                     v-for="row in containerViews"
                     :key="row.containerNo"
+                    type="button"
                     class="cf3d__container-row"
-                    :class="{ 'cf3d__container-row--own': row.overridden }"
+                    :class="{
+                      'cf3d__container-row--own': row.overridden,
+                      'cf3d__container-row--on': row.containerNo === selectedContainerNo
+                    }"
+                    :aria-pressed="row.containerNo === selectedContainerNo"
+                    @click="selectedContainerNo = row.containerNo"
                   >
                     <span class="cf3d__container-n">{{ row.containerNo }}</span>
                     <span class="cf3d__container-load">
@@ -1081,11 +1286,12 @@ onBeforeUnmount(() => {
                       </span>
                     </span>
                     <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
-                  </div>
+                  </button>
                 </div>
                 <p v-if="hasOverriddenContainers" class="cf3d__note">
                   A container marked <strong>own</strong> is packed at the gap and pallet set for it in the
-                  Load per container table and is drawn that way; the gaps above apply to the others.
+                  Load per container table and is drawn that way; the load plan's gaps apply to the others. Pick any
+                  container above to see its own figures.
                 </p>
                 <p v-if="ruledOutByWeight" class="cf3d__note cf3d__note--warn">
                   <span class="cf3d__swatch cf3d__swatch--ghost" />{{ plural(ruledOutByWeight, 'position') }} per
@@ -1680,8 +1886,133 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.cf3d__container-row {
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.cf3d__container-row:hover {
+  background: var(--cf-row);
+}
+
 .cf3d__container-row--own {
   background: #fff8ec;
+}
+
+.cf3d__container-row--own:hover {
+  background: #fdf0d8;
+}
+
+.cf3d__container-row--on {
+  box-shadow: inset 3px 0 0 var(--cf-navy);
+}
+
+.cf3d__picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.cf3d__picker-label {
+  font: 500 10.5px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--cf-muted);
+}
+
+.cf3d__picker-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cf3d__picker-tab {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--cf-border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--cf-muted);
+  font: 700 12px/1 'IBM Plex Mono', monospace;
+  cursor: pointer;
+}
+
+.cf3d__picker-tab:hover {
+  color: var(--cf-text);
+  background: var(--cf-row);
+}
+
+.cf3d__picker-tab--own {
+  border-color: #e7c894;
+  background: #fff8ec;
+  color: var(--cf-amber);
+}
+
+.cf3d__picker-tab--on {
+  border-color: var(--cf-navy);
+  background: var(--cf-navy);
+  color: #fff;
+}
+
+.cf3d__picker-tab:focus-visible {
+  outline: 2px solid var(--cf-navy);
+  outline-offset: 2px;
+}
+
+.cf3d__picker-key {
+  font: 500 11px/1.3 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__swatch--own {
+  background: #fff8ec;
+  border: 1.5px solid #e7c894;
+}
+
+.cf3d__own-lede {
+  margin: 0;
+  font: 400 12px/1.55 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__own-lede strong {
+  color: var(--cf-text);
+  font-weight: 700;
+}
+
+.cf3d__own-axes {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: #fff8ec;
+}
+
+.cf3d__own-axis {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.cf3d__own-axis dt {
+  font: 500 11px/1.35 'Raleway', system-ui, sans-serif;
+  color: var(--cf-muted);
+}
+
+.cf3d__own-axis dd {
+  margin: 0;
+  font: 600 12px/1.35 'IBM Plex Mono', monospace;
 }
 
 .cf3d__container-own {
