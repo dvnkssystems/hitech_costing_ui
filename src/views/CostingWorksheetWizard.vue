@@ -1630,7 +1630,18 @@ function initialUnlockedSteps(frm) {
   return unlocked
 }
 
-function makeItem(frm, key) {
+/**
+ * One wizard item around a Costing Worksheet frm.
+ *
+ * `line` is that worksheet's existing Quotation Item row when the wizard is
+ * resuming a saved Quotation. Quantity and Description live on that row, not
+ * on the worksheet, so without it a saved Quotation reopens at quantity 1 --
+ * and every per-quantity figure (final amount, Containers Required,
+ * Utilization (this order), the per-container split and the 3D view) would be
+ * worked out for a single tank instead of what was actually ordered.
+ */
+function makeItem(frm, key, line = null) {
+  const orderedQty = Number(line?.qty)
   return shallowReactive({
     key,
     frm,
@@ -1644,8 +1655,8 @@ function makeItem(frm, key) {
     // Worksheet fields, just carried through to `submit_and_map`. Quantity
     // lets one costed design price multiple units of the same job; Description
     // overrides the backend's auto-generated line text when set.
-    quantity: 1,
-    description: '',
+    quantity: Number.isFinite(orderedQty) && orderedQty > 0 ? orderedQty : 1,
+    description: line?.description ? String(line.description) : '',
     // Last `preview_container_fit().layout` for this item -- what the
     // "View in 3D" container dialog draws. Wizard-only, never persisted.
     containerFitLayout: null,
@@ -2022,9 +2033,16 @@ async function load() {
         fields: ['name'],
         limit_page_length: 0
       })
+      // The header frm above already loaded the Quotation with its child
+      // rows, so each worksheet's ordered quantity and line description are
+      // in hand -- no extra round trip, and no reopening at quantity 1.
+      const orderedLines = Array.isArray(quotationHeaderFrm.value.doc?.items)
+        ? quotationHeaderFrm.value.doc.items
+        : []
       for (const row of linked) {
         const frm = await bootFrm(DOCTYPE, { name: row.name, scripts: itemScripts(DOCTYPE) })
-        items.value = [...items.value, makeItem(frm, uid())]
+        const line = orderedLines.find((entry) => entry?.costing_worksheet === row.name) ?? null
+        items.value = [...items.value, makeItem(frm, uid(), line)]
       }
       orderFrm.value = items.value[0]?.frm ?? null
       activeItemKey.value = items.value[0]?.key ?? null
