@@ -2872,7 +2872,7 @@ watch(() => props.quotation, load)
                   </button>
                 </div>
                 <p v-if="canViewContainerFit3D && activeItemHasContainerOverrides" class="qw-derived__hint qw-container-split__note">
-                  3D view shows the item's standard packing; containers with their own gap/pallet aren't drawn differently.
+                  Containers with their own gap / pallet are drawn at those values in the 3D view; the load plan's gaps apply to the rest.
                 </p>
               </template>
             </div>
@@ -3136,6 +3136,7 @@ watch(() => props.quotation, load)
         :total-weight-kg="Number(activeItem?.frm?.doc?.total_weight_kg) || 0"
         :standard-gap-mm="numberOrNull(activeItem?.frm?.doc?.standard_gap_mm)"
         :pallet-thickness-mm="numberOrNull(activeItem?.frm?.doc?.pallet_thickness_mm)"
+        :container-overrides="activeItem ? containerOverridesPayload(containerOverrideRows(activeItem)) : []"
         :locked="activeItemLocked"
         @refresh="onContainerFitPlanChanged"
         @close="containerFit3DOpen = false"

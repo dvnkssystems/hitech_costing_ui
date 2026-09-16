@@ -23,14 +23,23 @@
  *
  * Geometry (mirrors the backend): along the length the cursor starts at
  * length gap 1, each tank takes its length and is followed by the next gap;
- * same across the width. No vertical gap -- layer k sits at k × (pallet +
- * tank height), a pallet under every tank, and when stacked 2 high a pallet
- * on top of the upper tank too.
+ * same across the width. Height has no gap: one pallet under the bottom
+ * tank, the two tanks of a stack sit directly on each other, and a second
+ * pallet goes on top of the upper tank only (pallet, tank, tank, pallet --
+ * the client's confirmed stacking rule; never a pallet between the two).
  *
- * The only client-side arithmetic is splitting the order Quantity across
- * containers (qty ÷ units_per_container) and the resulting shipment volume
- * utilization. `total_tanks` physical positions are drawn per container; the
- * ones past `units_per_container` are ghosted as ruled out by weight.
+ * Container by container: every plan call is sent the order Quantity and the
+ * item's per-container gap / pallet override rows (the wizard's "Load per
+ * container" table), and the payload's `containers` split says what each
+ * container holds. A container WITHOUT an override is drawn from the plan
+ * being edited (its per-position gaps, pallet and stacking); one WITH its own
+ * gap / pallet is drawn from the automatic layout at those values (uniform
+ * gaps, its own layers and orientation, as the backend sized it) -- so the
+ * picture matches the wizard's table container for container. Nothing about
+ * fit is recomputed here; the only client fallback is the plain qty ÷
+ * units_per_container split when the backend returned no split at all.
+ * Physical positions past what is loaded are ghosted (free, or ruled out by
+ * weight).
  *
  * Coordinate mapping: container length along X, height along Y (up), width
  * along Z; containers line up side by side along Z; 1 scene unit = 1 metre.
@@ -39,7 +48,7 @@ import { ref, shallowRef, computed, watch, onBeforeUnmount, nextTick, useId } fr
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { call } from '@/lib/frappe.js'
-import { containerBreakdown, unitsInContainer, numberOrNull } from '@/lib/containerLoad.js'
+import { containerBreakdown, numberOrNull } from '@/lib/containerLoad.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -60,6 +69,11 @@ const props = defineProps({
    *  wizard; null = use the worksheet's / Packing Settings' value. */
   standardGapMm: { type: [Number, String], default: null },
   palletThicknessMm: { type: [Number, String], default: null },
+  /** The item's per-container gap / pallet rows, already in the shape
+   *  `preview_container_fit` takes (`containerOverridesPayload()`):
+   *  `[{ container_no, standard_gap_mm, pallet_thickness_mm }]`. Sent with
+   *  every plan call so the payload's split -- and the scene -- honour them. */
+  containerOverrides: { type: Array, default: () => [] },
   /** Quotation submitted -- the plan can be viewed and tried, not saved. */
   locked: { type: Boolean, default: false }
 })
@@ -124,31 +138,89 @@ const orderQty = computed(() => Math.max(Number(props.quantity) || 0, 1))
 const slotsPerContainer = computed(() => Math.max(0, Number(plan.value?.units_per_container || 0)))
 const physicalPositions = computed(() => Math.max(0, Number(plan.value?.total_tanks || 0)))
 const ruledOutByWeight = computed(() => Math.max(0, physicalPositions.value - slotsPerContainer.value))
-/** The qty split across containers -- `src/lib/containerLoad.js`, the same
- *  helper the wizard's per-container table uses, so the dialog's container
- *  list and that table always agree. */
-const breakdown = computed(() =>
-  containerBreakdown({
-    quantity: orderQty.value,
-    unitsPerContainer: slotsPerContainer.value,
-    tank: plan.value?.tank,
-    container: plan.value?.container
-  })
-)
-const containersRequired = computed(() => breakdown.value.containers)
-const drawnContainers = computed(() => Math.max(1, Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS)))
-
-/** Tanks loaded into container `index` (0-based) -- full for every
- *  container but the last, which gets the remainder. */
-function tanksIn(index) {
-  return unitsInContainer(index, orderQty.value, slotsPerContainer.value)
+/** `n + 1` gaps of `gap` mm -- how an overridden container's automatic
+ *  layout (uniform standard gap) is drawn. */
+function uniformGaps(count, gap) {
+  const n = Math.max(0, Number(count) || 0)
+  return n ? Array.from({ length: n + 1 }, () => gap) : []
 }
 
-/** Actual fill of everything being shipped, across all containers needed. */
-const shipmentUtilization = computed(() => breakdown.value.shipmentUtilization)
+/** One container drawn from the plan being edited: its per-position gaps,
+ *  pallet and stacking, `loaded` of `capacity` tanks in it. */
+function planView(index, loaded, free, utilization) {
+  const p = plan.value
+  return {
+    index,
+    containerNo: index + 1,
+    overridden: false,
+    gapMm: Number(p?.standard_gap_mm) || 0,
+    palletMm: Number(p?.pallet_thickness_mm) || 0,
+    tank: p?.tank ?? null,
+    lengthGaps: gapValues(p?.length_axis_gaps),
+    widthGaps: gapValues(p?.width_axis_gaps),
+    layers: Math.max(0, Number(p?.layers) || 0),
+    capacity: slotsPerContainer.value,
+    loaded: Math.max(0, Number(loaded) || 0),
+    free: Math.max(0, Number(free) || 0),
+    utilization: Number(utilization) || 0,
+    fits: true
+  }
+}
+
+/**
+ * One entry per container the order needs -- what the scene draws and the
+ * side panel lists. From the payload's `containers` split (the backend's
+ * `compute_container_split`, the same figures the wizard's "Load per
+ * container" table shows): a container without an override row is the plan
+ * as edited here; one with its own gap / pallet is the automatic layout at
+ * those values -- uniform gaps, its own layers and orientation. Falls back to
+ * the plain qty ÷ units_per_container split (`containerLoad.js`) only when
+ * the payload carries no split.
+ */
+const containerViews = computed(() => {
+  const p = plan.value
+  if (!p) return []
+  const split = Array.isArray(p.containers) ? p.containers : []
+  if (split.length) {
+    return split.map((row, index) => {
+      const view = planView(index, row.loaded, row.free, row.utilization_percent)
+      view.containerNo = Number(row.container_no) || index + 1
+      view.capacity = Math.max(0, Number(row.capacity) || 0)
+      view.fits = row.fits !== false
+      if (!row.overridden) return view
+      const counts = row.counts || {}
+      const gap = Number(row.standard_gap_mm) || 0
+      return {
+        ...view,
+        overridden: true,
+        gapMm: gap,
+        palletMm: Number(row.pallet_thickness_mm) || 0,
+        tank: row.tank ?? p.tank ?? null,
+        lengthGaps: uniformGaps(counts.along_length, gap),
+        widthGaps: uniformGaps(counts.along_width, gap),
+        layers: Math.max(0, Number(counts.along_height) || 0)
+      }
+    })
+  }
+  return containerBreakdown({
+    quantity: orderQty.value,
+    unitsPerContainer: slotsPerContainer.value,
+    tank: p.tank,
+    container: p.container
+  }).rows.map((row) => planView(row.index, row.loaded, row.free, row.utilization))
+})
+const containersRequired = computed(() => containerViews.value.length)
+const drawnContainers = computed(() => Math.max(1, Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS)))
+const hasOverriddenContainers = computed(() => containerViews.value.some((view) => view.overridden))
+
+/** Actual fill of everything being shipped: the mean fill of the containers
+ *  needed (the wizard table's total row uses the same figure). */
+const shipmentUtilization = computed(() => {
+  const views = containerViews.value
+  return views.length ? views.reduce((sum, view) => sum + view.utilization, 0) / views.length : 0
+})
 /** The plan's utilization when a container is full. */
 const fullUtilization = computed(() => Number(plan.value?.container_utilization_percent || 0))
-const containerRows = computed(() => breakdown.value.rows)
 
 /** Per-item Standard gap / Pallet thickness overrides from the wizard (the
  *  worksheet's `standard_gap_mm` / `pallet_thickness_mm`), sent to every
@@ -158,6 +230,16 @@ function packingOverrides() {
   return {
     standard_gap_mm: numberOrNull(props.standardGapMm),
     pallet_thickness_mm: numberOrNull(props.palletThicknessMm)
+  }
+}
+
+/** Order quantity + the per-container override rows, sent with every plan
+ *  call so the payload carries the per-container split the scene draws.
+ *  Always a list (possibly empty) so unsaved deletions win over saved rows. */
+function splitArgs() {
+  return {
+    quantity: orderQty.value,
+    container_overrides: Array.isArray(props.containerOverrides) ? props.containerOverrides : []
   }
 }
 
@@ -291,6 +373,7 @@ function cancelPendingPreview() {
 function openingProposalArgs() {
   return {
     ...packingOverrides(),
+    ...splitArgs(),
     plan: {
       container_type: props.containerType ?? null,
       ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
@@ -331,7 +414,8 @@ async function load() {
     if (props.costingWorksheet) {
       const res = await call(`${FIT_PLAN_API}.get_worksheet_fit_plan`, {
         costing_worksheet: props.costingWorksheet,
-        ...packingOverrides()
+        ...packingOverrides(),
+        ...splitArgs()
       })
       if (mine !== session) return
       saved = res?.plan ?? null
@@ -364,6 +448,7 @@ async function runPreview() {
   try {
     const res = await call(`${FIT_PLAN_API}.preview_fit_plan`, {
       ...packingOverrides(),
+      ...splitArgs(),
       plan: {
         ...editedPlan(base),
         ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
@@ -420,6 +505,7 @@ async function save() {
     const res = await call(`${FIT_PLAN_API}.save_worksheet_fit_plan`, {
       costing_worksheet: props.costingWorksheet,
       ...packingOverrides(),
+      ...splitArgs(),
       plan: editedPlan(base)
     })
     if (mine !== session) return
@@ -639,14 +725,14 @@ function axisCentres(gaps, size) {
   return centres
 }
 
-function buildTanks(group, p, zOffset, placed) {
-  const pallet = Number(p.pallet_thickness_mm || 0) * MM
-  const tankL = Number(p.tank?.length_mm) || 0
-  const tankW = Number(p.tank?.width_mm) || 0
-  const th = (Number(p.tank?.height_mm) || 0) * MM
-  const xs = axisCentres(gapValues(p.length_axis_gaps), tankL)
-  const zs = axisCentres(gapValues(p.width_axis_gaps), tankW)
-  const nH = Math.max(0, Number(p.layers) || 0)
+function buildTanks(group, view, zOffset) {
+  const pallet = Number(view.palletMm || 0) * MM
+  const tankL = Number(view.tank?.length_mm) || 0
+  const tankW = Number(view.tank?.width_mm) || 0
+  const th = (Number(view.tank?.height_mm) || 0) * MM
+  const xs = axisCentres(view.lengthGaps, tankL)
+  const zs = axisCentres(view.widthGaps, tankW)
+  const nH = Math.max(0, Number(view.layers) || 0)
   if (!xs.length || !zs.length || !nH || !tankL || !tankW || !th) return
   const tl = tankL * MM
   const tw = tankW * MM
@@ -663,9 +749,10 @@ function buildTanks(group, p, zOffset, placed) {
     transparent: true,
     opacity: 0.8
   })
-  // Pallet slab: same footprint as the tank, `pallet_thickness_mm` tall, in
-  // a muted wood tone. One under every tank; when stacked 2 high, one more on
-  // top of the upper tank (pallet, tank, tank, pallet).
+  // Pallet slab: same footprint as the tank, `palletMm` tall, in a muted
+  // wood tone. One under the bottom tank; when stacked 2 high the upper tank
+  // sits straight on the lower one and a second pallet goes on top of it
+  // (pallet, tank, tank, pallet) -- never one between the two tanks.
   const palletGeometry = pallet > 0 ? new THREE.BoxGeometry(tl, pallet, tw) : null
   const palletEdgeGeometry = palletGeometry ? new THREE.EdgesGeometry(palletGeometry) : null
   const palletMaterial = new THREE.MeshStandardMaterial({ color: COLORS.pallet, roughness: 0.9, metalness: 0 })
@@ -682,7 +769,8 @@ function buildTanks(group, p, zOffset, placed) {
     group.add(outline)
   }
 
-  const slots = slotsPerContainer.value
+  const slots = Math.max(0, Number(view.capacity) || 0)
+  const placed = Math.max(0, Number(view.loaded) || 0)
   // Loader's fill order: floor first, front-to-back along the length, then
   // across the width, then the next layer up. Every physical position is
   // drawn; slots past `placed` are free, positions past `slots` are ruled
@@ -693,10 +781,11 @@ function buildTanks(group, p, zOffset, placed) {
       for (let ix = 0; ix < xs.length; ix += 1) {
         const x = xs[ix] * MM
         const z = zOffset + zs[iy] * MM
-        const layerBase = iz * (pallet + th)
-        const y = layerBase + pallet + th / 2
+        // Tank k sits at pallet + k × tank height: the stack's one pallet
+        // is under the bottom tank only.
+        const y = pallet + iz * th + th / 2
         const isLoaded = slot < slots && slot < placed
-        addPallet(x, layerBase + pallet / 2, z, isLoaded)
+        if (iz === 0) addPallet(x, pallet / 2, z, isLoaded)
         const box = new THREE.Mesh(solidGeometry, isLoaded ? solidMaterial : ghostMaterial)
         box.position.set(x, y, z)
         group.add(box)
@@ -704,7 +793,8 @@ function buildTanks(group, p, zOffset, placed) {
         outline.position.set(x, y, z)
         if (!isLoaded) outline.computeLineDistances()
         group.add(outline)
-        if (nH === 2 && iz === 1) addPallet(x, layerBase + pallet + th + pallet / 2, z, isLoaded)
+        // Top pallet: above the upper tank of a 2-high stack only.
+        if (nH === 2 && iz === 1) addPallet(x, pallet + 2 * th + pallet / 2, z, isLoaded)
         slot += 1
       }
     }
@@ -735,10 +825,12 @@ function draw() {
     disposeObject(contentGroup)
   }
   contentGroup = new THREE.Group()
+  // No split at all (nothing fits yet): one container, every position ghosted.
+  const views = containerViews.value.length ? containerViews.value : [planView(0, 0, 0, 0)]
   for (let i = 0; i < count; i += 1) {
     const zOffset = i * (W + spacing)
     buildContainer(contentGroup, c, zOffset, i)
-    buildTanks(contentGroup, p, zOffset, tanksIn(i))
+    if (views[i]) buildTanks(contentGroup, views[i], zOffset)
   }
   scene.add(contentGroup)
 }
@@ -763,10 +855,13 @@ watch(
     () => props.extWidthMm,
     () => props.extHeightMm,
     () => props.totalWeightKg,
-    // Changing either re-opens from scratch (saved plan / fresh proposal)
-    // so the facts and figures reflect the new effective values.
+    // Changing any of these re-opens from scratch (saved plan / fresh
+    // proposal) so the facts, figures and per-container split reflect the
+    // new effective values.
     () => numberOrNull(props.standardGapMm),
-    () => numberOrNull(props.palletThicknessMm)
+    () => numberOrNull(props.palletThicknessMm),
+    () => props.quantity,
+    () => JSON.stringify(props.containerOverrides ?? [])
   ],
   ([open], previous) => {
     window.removeEventListener('keydown', onWindowKeydown, true)
@@ -788,7 +883,7 @@ watch(
   { immediate: true }
 )
 
-watch([plan, () => props.quantity, () => props.open], async () => {
+watch([plan, () => props.open], async () => {
   await nextTick()
   if (props.open) draw()
 })
@@ -957,24 +1052,41 @@ onBeforeUnmount(() => {
                     Volume of the {{ plural(orderQty, 'tank') }} ordered ÷ volume of the
                     {{ plural(containersRequired, 'container') }} needed.
                     <strong>{{ pct(fullUtilization) }} when full</strong> ({{ slotsPerContainer }} per container). The
-                    rest is the gaps set above, the {{ mm(plan.pallet_thickness_mm) }} mm pallet under each
-                    tank<template v-if="plan.layers === 2"> (and above the top layer)</template>, and whatever space
-                    is left along each axis.
+                    rest is the gaps set above, the {{ mm(plan.pallet_thickness_mm) }} mm pallet under the bottom
+                    tank<template v-if="plan.layers === 2"> (and the one on top of the upper tank)</template>, and
+                    whatever space is left along each axis.
                   </p>
                 </div>
 
-                <div v-if="containerRows.length" class="cf3d__containers">
-                  <div v-for="row in containerRows" :key="row.index" class="cf3d__container-row">
-                    <span class="cf3d__container-n">{{ row.index + 1 }}</span>
+                <div v-if="containerViews.length" class="cf3d__containers">
+                  <div
+                    v-for="row in containerViews"
+                    :key="row.containerNo"
+                    class="cf3d__container-row"
+                    :class="{ 'cf3d__container-row--own': row.overridden }"
+                  >
+                    <span class="cf3d__container-n">{{ row.containerNo }}</span>
                     <span class="cf3d__container-load">
-                      <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ slotsPerContainer }}
-                      <span v-if="row.free" class="cf3d__muted">
-                        · <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free
+                      <template v-if="!row.fits && !row.loaded">
+                        <span class="cf3d__container-bad">Doesn't fit</span>
+                      </template>
+                      <template v-else>
+                        <span class="cf3d__swatch cf3d__swatch--tank" />{{ row.loaded }} of {{ row.capacity }}
+                        <span v-if="row.free" class="cf3d__muted">
+                          · <span class="cf3d__swatch cf3d__swatch--ghost" />{{ row.free }} free
+                        </span>
+                      </template>
+                      <span v-if="row.overridden" class="cf3d__container-own">
+                        own gap {{ mm(row.gapMm) }} · pallet {{ mm(row.palletMm) }} mm
                       </span>
                     </span>
                     <span class="cf3d__container-pct">{{ pct(row.utilization) }}</span>
                   </div>
                 </div>
+                <p v-if="hasOverriddenContainers" class="cf3d__note">
+                  A container marked <strong>own</strong> is packed at the gap and pallet set for it in the
+                  Load per container table and is drawn that way; the gaps above apply to the others.
+                </p>
                 <p v-if="ruledOutByWeight" class="cf3d__note cf3d__note--warn">
                   <span class="cf3d__swatch cf3d__swatch--ghost" />{{ plural(ruledOutByWeight, 'position') }} per
                   container ruled out by weight: they fit by size, but the container's max load stops at
@@ -988,7 +1100,10 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="cf3d__fact">
                     <dt>Pallet thickness</dt>
-                    <dd>{{ mm(plan.pallet_thickness_mm) }} mm <span class="cf3d__muted">· one under every tank</span></dd>
+                    <dd>
+                      {{ mm(plan.pallet_thickness_mm) }} mm
+                      <span class="cf3d__muted">· under the bottom tank, and on top when stacked 2 high</span>
+                    </dd>
                   </div>
                   <div class="cf3d__fact">
                     <dt>Container internal</dt>
@@ -1559,6 +1674,21 @@ onBeforeUnmount(() => {
 .cf3d__container-pct {
   color: var(--cf-navy);
   font-weight: 700;
+}
+
+.cf3d__container-row--own {
+  background: #fff8ec;
+}
+
+.cf3d__container-own {
+  display: block;
+  margin-top: 2px;
+  font: 500 11px/1.3 'IBM Plex Mono', monospace;
+  color: var(--cf-amber);
+}
+
+.cf3d__container-bad {
+  color: var(--cf-red);
 }
 
 .cf3d__facts {

@@ -12,10 +12,10 @@
  * takes the remainder. Utilization is by volume: tanks loaded × tank volume
  * ÷ container volume.
  *
- * The wizard only falls back to `containerBreakdown()` when the backend
- * didn't return its own per-container split (`preview_container_fit`'s
- * `containers`, which honours per-container gap / pallet overrides); the 3D
- * dialog always uses it, since it draws the item's standard packing.
+ * Both the wizard and the 3D dialog only fall back to `containerBreakdown()`
+ * when the backend didn't return its own per-container split
+ * (`preview_container_fit` / `preview_fit_plan`'s `containers`, which honours
+ * per-container gap / pallet overrides).
  */
 
 /** L × W × H in mm³ of a `{ length_mm, width_mm, height_mm }` box; 0 when
