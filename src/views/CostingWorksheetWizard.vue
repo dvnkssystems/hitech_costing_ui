@@ -164,6 +164,15 @@ const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
  *  the totals is actually priced at, shown next to that figure so it can be
  *  checked without opening the Exim step. */
 const itemExchangeRateChip = computed(() => exchangeRateChips.value.find((chip) => chip.key === 'Item') ?? null)
+/** Whether the Exchange Rate on the header IS this quarter's Item rate --
+ *  i.e. the customer's quote and the Item Deal Value convert at the same
+ *  controlled rate. False while a hand-typed or ERPNext-sourced rate stands. */
+const conversionRateIsQuarterly = computed(() => {
+  const chip = itemExchangeRateChip.value
+  const applied = Number(quotationHeaderFrm.value?.doc?.conversion_rate)
+  if (!chip?.rate || !(applied > 0)) return false
+  return Math.abs(applied - chip.rate) < 1e-9
+})
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -565,6 +574,12 @@ const FREIGHT_PREVIEW_RESULT_FIELDS = [
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc',
+  // The engine puts the quarter's Item rate on the Quotation's own
+  // `conversion_rate` (backend `_apply_item_rate_to_conversion_rate`), so the
+  // customer's quote converts at the controlled quarterly rate rather than a
+  // live market one. Applying it here keeps the Exchange Rate input showing
+  // what a save would really store.
+  'conversion_rate',
   'hitech_exchange_rate_flags'
 ]
 
@@ -686,15 +701,25 @@ const conversionRateHint = ref('')
 let conversionRateToken = 0
 
 /**
- * Mirrors what ERPNext's own Quotation form does on a currency change: INR
- * (the company currency) pins `conversion_rate` to 1; anything else with a
- * blank/0 rate gets ERPNext's native rate for that date via the standard
- * `erpnext.setup.utils.get_exchange_rate` (its own Currency Exchange
- * records, then its configured external service). A rate the estimator has
- * already typed is left alone — but switching from one non-INR currency to
- * another (or from INR's pinned 1) makes the old rate stale, so that case
- * clears it first and re-looks it up. `previous` is `undefined` on the very
- * first run (a resumed Quotation's saved rate must survive boot untouched).
+ * On a currency change: INR (the company currency) pins `conversion_rate`
+ * to 1. For anything else, THIS APP'S quarterly Item rate is tried first
+ * (`lookup_exchange_rate`, the same Currency Exchange Master the engine
+ * uses), and only if that quarter has no row does it fall back to ERPNext's
+ * native `erpnext.setup.utils.get_exchange_rate` (its own Currency Exchange
+ * records, then its configured external service).
+ *
+ * That order matters and was the wrong way round until 2026-09-16: with no
+ * `Currency Exchange` row on the site, ERPNext fetched a live market rate
+ * (95.45) into this field while the Item leg used the quarterly master
+ * (95.85), so one tank showed two foreign-currency prices and the customer
+ * was billed at the uncontrolled one. The client confirmed the quarterly
+ * rate governs; the backend applies the same rule on save.
+ *
+ * A rate the estimator has already typed is left alone — but switching from
+ * one non-INR currency to another (or from INR's pinned 1) makes the old
+ * rate stale, so that case clears it first and re-looks it up. `previous` is
+ * `undefined` on the very first run (a resumed Quotation's saved rate must
+ * survive boot untouched).
  */
 watch(
   () => quotationHeaderFrm.value?.doc?.currency,
@@ -711,16 +736,30 @@ watch(
     if (switched) await frm.set_value('conversion_rate', 0)
     if (Number(frm.doc.conversion_rate) > 0) return
     let rate = 0
+    let source = ''
     try {
-      rate = Number(
-        await call('erpnext.setup.utils.get_exchange_rate', {
-          from_currency: currency,
-          to_currency: 'INR',
-          transaction_date: headerTransactionDate()
-        })
+      const own = await call(
+        'hitech_costing.hitech_costing.doctype.currency_exchange_master.currency_exchange_master.lookup_exchange_rate',
+        { currency, purpose: 'Item', date: headerTransactionDate() }
       )
+      rate = Number(own?.exchange_rate) || 0
+      if (rate > 0) source = 'item'
     } catch {
       rate = 0
+    }
+    if (!(rate > 0)) {
+      try {
+        rate = Number(
+          await call('erpnext.setup.utils.get_exchange_rate', {
+            from_currency: currency,
+            to_currency: 'INR',
+            transaction_date: headerTransactionDate()
+          })
+        )
+        if (rate > 0) source = 'erpnext'
+      } catch {
+        rate = 0
+      }
     }
     if (token !== conversionRateToken || quotationHeaderFrm.value !== frm) return
     // Re-check after the round trip: a rate typed by hand meanwhile, or one
@@ -729,8 +768,15 @@ watch(
     if (Number(frm.doc.conversion_rate) > 0) return
     if (rate > 0) {
       await frm.set_value('conversion_rate', rate)
+      // Say which of the two sources this came from: the quarterly rate is
+      // the controlled one, a live ERPNext rate is not, and the difference
+      // decides what the customer is billed.
+      conversionRateHint.value =
+        source === 'erpnext'
+          ? `No ${currency} Item rate in the Currency Exchange Master for this quarter — using ERPNext's own ${rate} for now. Add the quarter's rate and this will follow it.`
+          : ''
     } else {
-      conversionRateHint.value = `No ${currency} → INR rate found in ERPNext for ${formatDate(headerTransactionDate())} — enter the Conversion Rate by hand.`
+      conversionRateHint.value = `No ${currency} → INR rate in the Currency Exchange Master for this quarter, and none in ERPNext for ${formatDate(headerTransactionDate())} — enter the Exchange Rate by hand.`
     }
   }
 )
@@ -786,6 +832,7 @@ async function runExchangeRateLookup() {
         key: purpose,
         label: `${currency} ${purpose} ${when}`,
         when,
+        rate: missing ? null : Number(rate),
         value: missing ? 'no rate' : Number(rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
         missing
       }
@@ -2707,7 +2754,8 @@ watch(() => props.quotation, load)
                 </template>
                 <template v-else>
                   Item rate: <strong>{{ itemExchangeRateChip.value }}</strong> ₹ per {{ quoteCurrency }} ·
-                  {{ itemExchangeRateChip.when }}. Freight legs use their own CIF / DAP rates — see the Exim step.
+                  {{ itemExchangeRateChip.when }} — what this quote converts at. Freight legs use their own CIF / DAP
+                  rates, see the Exim step.
                 </template>
               </p>
               <p v-else-if="exchangeRateChipsPending" class="qw-derived__hint qw-items-currency__note">
@@ -2982,6 +3030,25 @@ watch(() => props.quotation, load)
                  what the Item Deal Value (FC) figure below is priced in. -->
             <WizardStep :frm="quotationHeaderFrm" :fields="CURRENCY_FIELDS" read-only-filter="exclude" />
             <p v-if="conversionRateHint" class="qw-derived__warning" style="margin-top: 8px;">{{ conversionRateHint }}</p>
+            <!-- Which rate the Exchange Rate field is actually carrying. The
+                 quarterly Item rate is the controlled one and is what the
+                 customer's quote converts at; anything else is not, and the
+                 difference decides what they are billed. -->
+            <p
+              v-else-if="quoteIsForeignCurrency && itemExchangeRateChip && !itemExchangeRateChip.missing"
+              class="qw-items-currency__note"
+              :class="conversionRateIsQuarterly ? 'qw-derived__hint' : 'qw-derived__warning'"
+            >
+              <template v-if="conversionRateIsQuarterly">
+                Exchange Rate is this quarter's <strong>Item</strong> rate ({{ itemExchangeRateChip.when }}), so the
+                customer's quote and Item Deal Value convert at the same rate.
+              </template>
+              <template v-else>
+                Exchange Rate is <strong>{{ quotationHeaderFrm?.doc?.conversion_rate }}</strong>, but this quarter's
+                <strong>Item</strong> rate is {{ itemExchangeRateChip.value }} ({{ itemExchangeRateChip.when }}) —
+                saving will apply the quarterly rate, so the quote converts at the controlled one.
+              </template>
+            </p>
             <!-- One chip per exchange-rate purpose (CIF / DAP / Item) for the
                  chosen currency + date's quarter — see
                  `runExchangeRateLookup()`. Only for a non-INR quote; INR
