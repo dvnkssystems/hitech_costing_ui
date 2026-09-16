@@ -1633,6 +1633,10 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__containers {
+  /* `flex: none`: with `overflow: hidden` a flex item's min-height is 0,
+     so inside the scrolling column this list used to shrink to its border
+     and the per-container rows were never visible. */
+  flex: none;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--cf-border);
