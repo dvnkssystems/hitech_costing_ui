@@ -45,6 +45,8 @@ import {
   TAX_FIELDS,
   ADDRESS_FIELDS,
   EXIM_FIELDS,
+  EXIM_FREIGHT_TABLE_FIELDS,
+  EXIM_HIDDEN_FIELDS,
   CURRENCY_FIELDS,
   ITEMS_CURRENCY_FIELDS,
   EXIM_FLAGS_FIELD,
@@ -147,8 +149,82 @@ const visibleEximFields = computed(() => EXIM_FIELDS)
  *  1:1). A grey rail row would make it read like just another figure; it's
  *  rendered as a warning block instead (see the Exim template), and hidden
  *  outright when empty. */
-const eximRailFields = computed(() => EXIM_FIELDS.filter((fieldname) => fieldname !== EXIM_FLAGS_FIELD))
+const eximRailFields = computed(() => {
+  const owned = new Set([EXIM_FLAGS_FIELD, ...EXIM_FREIGHT_TABLE_FIELDS, ...EXIM_HIDDEN_FIELDS])
+  return EXIM_FIELDS.filter((fieldname) => !owned.has(fieldname))
+})
 const exchangeRateFlags = computed(() => String(quotationHeaderFrm.value?.doc?.[EXIM_FLAGS_FIELD] ?? '').trim())
+
+/* ── Freight Cost table (Exim step) ──────────────────────────────────────── */
+/**
+ * One row per freight leg actually charged, as the client's target layout
+ * draws it: Leg / Amount / From / To / Ex. Rate / Converted Amount.
+ *
+ * Every figure is the engine's. The CIF and DAP legs are priced in the
+ * Freight Master's own currency and converted at that quarter's rate; the
+ * destination-side extras are already INR, so they show a 1.0 rate against
+ * themselves rather than being hidden from the breakdown.
+ *
+ * The extras read the engine's *applied* fields, never the input fields next
+ * to them: a figure typed into Import Duty is only charged when the Incoterm
+ * includes it, so reading the input would put rows in the table that the
+ * total never counted.
+ *
+ * A leg that contributed nothing is left out entirely, which is what makes
+ * "show a row only when that leg applies to the selected Incoterm" fall out
+ * without restating the Incoterm rules here.
+ */
+const freightLegRows = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc
+  if (!doc) return []
+  const native = doc.hitech_freight_currency || 'INR'
+  const rows = []
+  const add = (leg, amount, from, rate, converted) => {
+    if (!(Number(converted) || 0) && !(Number(amount) || 0)) return
+    rows.push({
+      leg,
+      amount: Number(amount) || 0,
+      from,
+      to: 'INR',
+      rate: Number(rate) || 0,
+      converted: Number(converted) || 0
+    })
+  }
+  add('CIF', doc.hitech_cif_leg_native, native, doc.hitech_cif_exchange_rate, doc.hitech_cif_leg_inr)
+  add('DAP add-on', doc.hitech_dap_addon_native, native, doc.hitech_dap_exchange_rate, doc.hitech_dap_addon_inr)
+  add('Insurance', doc.hitech_insurance_cost, 'INR', 1, doc.hitech_insurance_cost)
+  add('Destination inland', doc.hitech_destination_inland_applied, 'INR', 1, doc.hitech_destination_inland_applied)
+  add('Unloading at destination', doc.hitech_unloading_applied, 'INR', 1, doc.hitech_unloading_applied)
+  add('Import duty / tax', doc.hitech_import_duty_applied, 'INR', 1, doc.hitech_import_duty_applied)
+  return rows
+})
+/** Domestic freight comes from the Domestic Freight Rate Master, already in
+ *  INR, and has no CIF/DAP legs at all -- so the tab shows a single figure
+ *  instead of the table. Never both, never neither. */
+const isDomesticQuote = computed(() => String(quotationHeaderFrm.value?.doc?.hitech_region || '') === 'Domestic')
+const freightTotal = computed(() => Number(quotationHeaderFrm.value?.doc?.hitech_total_freight_cost) || 0)
+const freightRowsTotal = computed(() => freightLegRows.value.reduce((sum, row) => sum + row.converted, 0))
+/** The banner claims to be the sum of the column above it, so say so when it
+ *  isn't rather than letting a silently-missing leg look like arithmetic. */
+const freightTotalMismatch = computed(
+  () => Boolean(freightLegRows.value.length) && Math.abs(freightRowsTotal.value - freightTotal.value) > 0.01
+)
+/** The chain behind each leg's whole-shipment Amount: base rate per
+ *  container, times containers, times the size-class factor. */
+const freightRateChain = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc
+  const containers = Number(doc?.hitech_containers_applied) || 0
+  const factor = Number(doc?.hitech_freight_rate_factor) || 0
+  if (!containers || !factor) return null
+  return {
+    containers,
+    factor,
+    containerType: doc.hitech_freight_container_type || '',
+    currency: doc.hitech_freight_currency || 'INR',
+    cifBase: Number(doc.hitech_cif_base_rate) || 0,
+    dapBase: Number(doc.hitech_dap_base_rate) || 0
+  }
+})
 /** Item Deal Value (INR / quote currency) only become non-zero once a linked
  *  Costing Worksheet actually exists server-side — until then the rail shows
  *  ₹0 for both, which reads as "broken" rather than "not yet". */
@@ -323,7 +399,15 @@ const reviewSections = computed(() => [
     key: 'exim',
     n: '03',
     title: 'Exim / Incoterms',
-    rows: sectionRows(quotationHeaderFrm.value, [...CURRENCY_FIELDS, ...visibleEximFields.value])
+    // Mirrors the tab: the fields the client had removed from Exim (Item
+    // Deal Value trio, FOB Cost, Freight Rate Currency) are not repeated in
+    // the summary either -- the Item figures are reviewed under Items.
+    rows: sectionRows(
+      quotationHeaderFrm.value,
+      [...CURRENCY_FIELDS, ...visibleEximFields.value].filter(
+        (fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname)
+      )
+    )
   },
   { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
@@ -574,6 +658,17 @@ const FREIGHT_PREVIEW_RESULT_FIELDS = [
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc',
+  // The Freight Cost table's traceability fields: the per-container chain
+  // behind each Amount, and what each destination-side extra actually
+  // contributed. Without these the table shows a bare figure and its rows
+  // stop adding up to the total.
+  'hitech_freight_container_type',
+  'hitech_freight_rate_factor',
+  'hitech_cif_base_rate',
+  'hitech_dap_base_rate',
+  'hitech_destination_inland_applied',
+  'hitech_unloading_applied',
+  'hitech_import_duty_applied',
   // The engine puts the quarter's Item rate on the Quotation's own
   // `conversion_rate` (backend `_apply_item_rate_to_conversion_rate`), so the
   // customer's quote converts at the controlled quarterly rate rather than a
@@ -3076,6 +3171,108 @@ watch(() => props.quotation, load)
               read-only-filter="only"
               style="margin-top: 14px;"
             />
+
+            <!-- Freight Cost, per the client's target layout (2026-09-16).
+                 One table for an international quote, a single figure for a
+                 domestic one, never both and never neither: domestic freight
+                 comes from the Domestic Freight Rate Master, is already in
+                 INR, and has no CIF/DAP legs to convert. Every number is the
+                 engine's; see `freightLegRows` / `freightRateChain`. -->
+            <div class="qw-fx-divider" />
+            <h3 class="qw-terms-notes__title">Freight Cost</h3>
+
+            <template v-if="isDomesticQuote">
+              <div class="qw-freight-domestic">
+                <span class="qw-totals-box__k">Domestic Freight (INR)</span>
+                <span class="qw-freight-total__v">{{ money(freightTotal) }}</span>
+                <p class="qw-derived__hint qw-items-currency__note">
+                  From the Domestic Freight Rate Master for this destination and vehicle type, plus whatever the
+                  Incoterm adds. This is the <strong>Freight &amp; Logistics</strong> line on the quotation.
+                </p>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="qw-freight-meta">
+                <div class="qw-freight-meta__cell">
+                  <span class="qw-totals-box__k">Freight Rate Source</span>
+                  <span class="qw-freight-meta__v">{{ quotationHeaderFrm?.doc?.hitech_freight_rate_source || '—' }}</span>
+                </div>
+                <div class="qw-freight-meta__cell">
+                  <span class="qw-totals-box__k">Container Type</span>
+                  <span class="qw-freight-meta__v">{{ quotationHeaderFrm?.doc?.hitech_freight_container_type || '—' }}</span>
+                </div>
+                <div class="qw-freight-meta__cell">
+                  <span class="qw-totals-box__k">Number of Containers</span>
+                  <span class="qw-freight-meta__v">
+                    {{ quotationHeaderFrm?.doc?.hitech_containers_applied || 0 }}
+                    <span
+                      v-if="Number(quotationHeaderFrm?.doc?.hitech_containers_override) > 0"
+                      class="qw-container-split__muted"
+                    >
+                      · entered, estimate was {{ quotationHeaderFrm?.doc?.hitech_containers_estimated || 0 }}
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="freightLegRows.length" class="qw-pricing-table-wrap qw-container-split">
+                <table class="qw-quotation-items qw-pricing-table">
+                  <thead>
+                    <tr>
+                      <th>Leg</th>
+                      <th>Amount</th>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Ex. rate</th>
+                      <th>Converted amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in freightLegRows" :key="row.leg">
+                      <td class="qw-pricing-table__label">{{ row.leg }}</td>
+                      <td class="qw-pricing-table__num">{{ money(row.amount, row.from) }}</td>
+                      <td class="qw-pricing-table__num">{{ row.from }}</td>
+                      <td class="qw-pricing-table__num">{{ row.to }}</td>
+                      <td class="qw-pricing-table__num">
+                        <span v-if="row.from === row.to" class="qw-container-split__muted">—</span>
+                        <template v-else>{{ row.rate }}</template>
+                      </td>
+                      <td class="qw-pricing-table__num qw-pricing-table__final">{{ money(row.converted) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="qw-derived__hint qw-items-currency__note">
+                No freight legs yet — pick an Incoterm and a Port of Discharge with a matching International Freight
+                Rate Master row.
+              </p>
+
+              <!-- The per-container chain behind each Amount, so the figures
+                   above can be checked rather than trusted. -->
+              <p v-if="freightRateChain" class="qw-derived__hint qw-items-currency__note">
+                Amount = base rate per container × {{ freightRateChain.containers }}
+                {{ freightRateChain.containers === 1 ? 'container' : 'containers' }} ×
+                <strong>{{ freightRateChain.factor }}</strong> rate factor<template v-if="freightRateChain.containerType">
+                  for {{ freightRateChain.containerType }}</template>. CIF base
+                {{ money(freightRateChain.cifBase, freightRateChain.currency) }}<template v-if="freightRateChain.dapBase">, DAP
+                base {{ money(freightRateChain.dapBase, freightRateChain.currency) }}</template>.
+              </p>
+
+              <div class="qw-freight-total">
+                <span class="qw-freight-total__k">Total Freight Cost (INR)</span>
+                <span class="qw-freight-total__v">{{ money(freightTotal) }}</span>
+              </div>
+              <p v-if="freightTotalMismatch" class="qw-derived__warning qw-items-currency__note">
+                The rows above add up to {{ money(freightRowsTotal) }}, not {{ money(freightTotal) }} — a leg is
+                missing from this breakdown. Tell the developer before quoting this.
+              </p>
+              <p class="qw-derived__hint qw-items-currency__note">
+                Becomes the <strong>Freight &amp; Logistics</strong> line on the quotation. Freight per kg
+                {{ money(quotationHeaderFrm?.doc?.hitech_freight_inr_per_kg) }} = this total ÷
+                {{ quotationHeaderFrm?.doc?.hitech_total_gross_weight_kg || 0 }} kg gross weight.
+              </p>
+            </template>
             <!-- `hitech_exchange_rate_flags`, pulled out of the rail above
                  (see `eximRailFields`): non-empty means a quarter's rate is
                  missing and that leg was costed at 0 INR, never 1:1. -->
@@ -3085,9 +3282,9 @@ watch(() => props.quotation, load)
               </span>
               <span class="qw-derived__warning qw-fx-flags__text">{{ exchangeRateFlags }}</span>
             </div>
-            <p v-if="!anyItemSaved" class="qw-derived__hint" style="margin-top: 10px;">
-              {{ itemDealValueLabels.join(' / ') }}: fills after the item is saved.
-            </p>
+            <!-- The Item Deal Value figures moved to Items & Pricing, where
+                 the item is priced (EXIM_HIDDEN_FIELDS), so this tab no
+                 longer warns about them filling in. -->
             <!-- Live freight preview status -- see `runFreightPreview()`. Quiet
                  by design: this fires automatically as a side effect of typing,
                  so neither state should read as an error or block the step. -->
@@ -3537,6 +3734,64 @@ watch(() => props.quotation, load)
 
 .qw-items-currency__note {
   margin: 6px 0 0;
+}
+
+/* Freight Cost block on the Exim step: the three traceability facts above
+   the leg table, and the total banner under it. */
+.qw-freight-meta {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px 18px;
+}
+
+.qw-freight-meta__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.qw-freight-meta__v {
+  font: 600 13px/1.35 'IBM Plex Mono', monospace;
+}
+
+.qw-freight-total {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--qw-navy, #0b3465);
+  color: #fff;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qw-freight-total__k {
+  font: 500 11px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.qw-freight-total__v {
+  font: 700 19px/1.2 'IBM Plex Mono', monospace;
+}
+
+.qw-freight-domestic {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--qw-border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 560px;
+}
+
+.qw-freight-domestic .qw-freight-total__v {
+  color: var(--qw-text, #0e1b2b);
 }
 
 /* The divider now lives on the heading above, so the totals grid itself

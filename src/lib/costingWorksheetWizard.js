@@ -269,7 +269,64 @@ export const EXIM_FIELDS = [
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc',
-  'hitech_exchange_rate_flags'
+  'hitech_exchange_rate_flags',
+  // The per-container chain behind each leg's Amount, and what each
+  // destination-side extra actually contributed. Both added for the Freight
+  // Cost table (client's target layout, 2026-09-16) — see
+  // EXIM_FREIGHT_TABLE_FIELDS.
+  'hitech_freight_container_type',
+  'hitech_freight_rate_factor',
+  'hitech_cif_base_rate',
+  'hitech_dap_base_rate',
+  'hitech_destination_inland_applied',
+  'hitech_unloading_applied',
+  'hitech_import_duty_applied'
+]
+
+/**
+ * Read-only engine fields the Exim step's Freight Cost table renders itself,
+ * so the Calculated rail must not repeat them as flat rows.
+ *
+ * The client's target layout (2026-09-16) replaces that rail with one table —
+ * Leg / Amount / From / To / Ex. Rate / Converted Amount — a Total Freight
+ * Cost banner, and the per-container chain above and below it. Everything
+ * listed here appears somewhere in that block.
+ */
+export const EXIM_FREIGHT_TABLE_FIELDS = [
+  'hitech_freight_rate_source',
+  'hitech_containers_estimated',
+  'hitech_containers_applied',
+  'hitech_freight_container_type',
+  'hitech_freight_rate_factor',
+  'hitech_cif_base_rate',
+  'hitech_dap_base_rate',
+  'hitech_freight_currency',
+  'hitech_cif_leg_native',
+  'hitech_cif_exchange_rate',
+  'hitech_cif_leg_inr',
+  'hitech_dap_addon_native',
+  'hitech_dap_exchange_rate',
+  'hitech_dap_addon_inr',
+  'hitech_insurance_cost',
+  'hitech_destination_inland_applied',
+  'hitech_unloading_applied',
+  'hitech_import_duty_applied',
+  'hitech_total_freight_cost',
+  'hitech_freight_inr_per_kg'
+]
+
+/**
+ * Read-only engine fields dropped from the Exim step altogether, per the same
+ * layout: FOB Cost is already inside the CIF row's Amount, Freight Rate
+ * Currency is the table's own From column, and the three Item Deal Value
+ * figures now live where the item is priced (Items & Pricing). The engine
+ * still computes every one of them — this only hides them here.
+ */
+export const EXIM_HIDDEN_FIELDS = [
+  'hitech_fob_cost_applied',
+  'hitech_item_deal_value_inr',
+  'hitech_item_exchange_rate',
+  'hitech_item_deal_value_fc'
 ]
 /** The quote's own currency trio — real, standard Quotation fields (ERPNext
  *  core), edited at the top of the Exim / Incoterms step and staged on the
