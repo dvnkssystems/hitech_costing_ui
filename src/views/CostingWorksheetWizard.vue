@@ -27,7 +27,7 @@
  * each onto the same Quotation via the backend's `submit_and_map` (first
  * item creates it, later ones target it) — see `submitAll()`.
  */
-import { ref, shallowRef, shallowReactive, computed, onMounted, onBeforeUnmount, watch, defineAsyncComponent } from 'vue'
+import { ref, reactive, shallowRef, shallowReactive, computed, onMounted, onBeforeUnmount, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { fieldState, useFrmRemote, confirm } from '@frappe-vue-sdk/vue'
 import ChildRowDrawer from '@/components/ChildRowDrawer.vue'
@@ -35,6 +35,7 @@ import WizardStep from '@/components/wizard/WizardStep.vue'
 import WizardProgress from '@/components/wizard/WizardProgress.vue'
 // Lazy: pulls in three.js (~600KB) and nobody needs it until they click
 // "View container load in 3D", so keep it out of the wizard's own chunk.
+import { containerBreakdown, containerOverridesPayload, numberOrNull } from '@/lib/containerLoad.js'
 const ContainerFit3D = defineAsyncComponent(() => import('@/components/wizard/ContainerFit3D.vue'))
 import LucideIcon from '@/components/LucideIcon.vue'
 import {
@@ -338,29 +339,18 @@ const itemsPricingRows = computed(() =>
     const doc = item.frm.doc
     const quantity = normalizedQuantity(item)
     const finalAmount = Number(doc.total_deal_value || 0) * quantity
-    // Client-side preview of Containers Required, ahead of the real figure
-    // (see costing_worksheet.py's `_calculate_container_fit`) -- that one
-    // only fills in once this item is a submitted Quotation Item with a real
-    // qty in the database, which happens after this page. This page already
-    // has both `units_per_container` (computed on this same Items & Pricing
-    // step's own Container / Logistics sub-section, Sea-only) and the
-    // quantity being typed in right here, so the same
-    // qty ÷ units-per-container ÷ rounded-up math can be shown immediately,
-    // no submit needed. `null` means "not applicable" (mode of transport
-    // isn't Sea, or no Container Type chosen yet) vs. `0` meaning "doesn't
-    // fit this container" -- the template tells those apart.
-    //
-    // Was gated on `region === 'Export'` -- the backend's own `depends_on`
-    // for `container_type`/`units_per_container`/`containers_required`/
-    // `container_utilization_percent` switched to `mode_of_transport ==
-    // "Sea"`, so this client-side preview follows suit.
-    const isSeaWithContainer = doc.mode_of_transport === 'Sea' && Boolean(doc.container_type)
+    // Preview of Containers Required, ahead of the real figure (see
+    // costing_worksheet.py's `_calculate_container_fit`) -- that one only
+    // fills in once this item is a submitted Quotation Item with a real qty
+    // in the database, which happens after this page. `containerCountFor()`
+    // uses the backend's per-container split for this qty when the preview
+    // has one (it honours per-container gap / pallet overrides), else
+    // ceil(qty ÷ units per container). `null` means "not applicable" (not
+    // Sea, or no Container Type yet) vs. `0` meaning "doesn't fit this
+    // container" -- the template tells those apart.
     const unitsPerContainer = Number(doc.units_per_container || 0)
-    const containersRequiredPreview = isSeaWithContainer
-      ? unitsPerContainer > 0
-        ? Math.ceil(quantity / unitsPerContainer)
-        : 0
-      : null
+    const containersRequiredPreview = containerCountFor(item)
+    const hasContainerOverrides = Boolean(usableContainerSplit(item)?.some((row) => row.overridden))
     return {
       key: item.key,
       item,
@@ -375,7 +365,8 @@ const itemsPricingRows = computed(() =>
       finalAmount: money(finalAmount),
       submitState: item.submitState,
       unitsPerContainer,
-      containersRequiredPreview
+      containersRequiredPreview,
+      hasContainerOverrides
     }
   })
 )
@@ -922,13 +913,247 @@ const commercialsMarginRows = computed(() =>
  * an `only` pass rendered through `derivedRows` below (same helper the
  * Calculated rail elsewhere in this file uses, so the "Doesn't fit this
  * container" warning still fires here).
+ *
+ * `standard_gap_mm` / `pallet_thickness_mm` are per-item editable overrides
+ * of the Packing Settings constants (the backend defaults them from there);
+ * they share the Sea-only `depends_on`, which `WizardStep` already honours,
+ * and on a wide card land in one row with the two pickers (the step grid is
+ * auto-fit at 230px min per column).
  */
-const CONTAINER_LOGISTICS_FIELDS = ['mode_of_transport', 'container_type']
+const CONTAINER_LOGISTICS_FIELDS = ['mode_of_transport', 'container_type', 'standard_gap_mm', 'pallet_thickness_mm']
 const CONTAINER_LOGISTICS_CALCULATED_FIELDS = [
   'units_per_container',
   'containers_required',
   'container_utilization_percent'
 ]
+/**
+ * Per-container Standard gap / Pallet thickness overrides -- the Costing
+ * Worksheet's `container_overrides` child table (DocType "Container Load
+ * Override"), one row `{ container_no, standard_gap_mm, pallet_thickness_mm }`
+ * only for a container that differs from the item's own values. Every row
+ * written here carries BOTH values (the untouched one prefilled with the
+ * item's), so a child Float's blank-vs-0 ambiguity never matters.
+ */
+const CONTAINER_OVERRIDES_FIELD = 'container_overrides'
+const PACKING_FIELDS = ['standard_gap_mm', 'pallet_thickness_mm']
+/** Where the preview's `layout` reports each field's effective item value. */
+const LAYOUT_PACKING_KEYS = { standard_gap_mm: 'gap_mm', pallet_thickness_mm: 'pallet_thickness_mm' }
+
+function containerOverrideRows(item) {
+  const rows = item?.frm?.doc?.[CONTAINER_OVERRIDES_FIELD]
+  return Array.isArray(rows) ? rows : []
+}
+
+/** The item-level value a container falls back to: the worksheet field when
+ *  set, else the effective value the last preview's layout used (Packing
+ *  Settings). */
+function itemPackingValue(item, field) {
+  return numberOrNull(item?.frm?.doc?.[field]) ?? numberOrNull(item?.containerFitLayout?.[LAYOUT_PACKING_KEYS[field]])
+}
+
+/** The backend's per-container split (`preview_container_fit().containers`)
+ *  when it was computed for the qty currently typed in; null when there is
+ *  none or the qty has since changed (callers fall back to client math until
+ *  the next preview lands). */
+function usableContainerSplit(item) {
+  const split = item?.containerSplit
+  return Array.isArray(split) && item.containerSplitQuantity === normalizedQuantity(item) ? split : null
+}
+
+/** Containers the item's order needs: the backend split's count when usable,
+ *  else ceil(qty ÷ units per container). Null unless Sea + a Container Type;
+ *  0 = doesn't fit. */
+function containerCountFor(item) {
+  const doc = item?.frm?.doc
+  if (!(doc?.mode_of_transport === 'Sea' && doc?.container_type)) return null
+  const split = usableContainerSplit(item)
+  if (split) return numberOrNull(item.containersRequired) ?? split.length
+  const units = Number(doc.units_per_container || 0)
+  return units > 0 ? Math.ceil(normalizedQuantity(item) / units) : 0
+}
+
+/**
+ * The active item's order qty split across the containers it needs -- one
+ * entry per container (effective gap / pallet, capacity, units loaded, free
+ * slots, weight, volume fill), for the per-container table under the
+ * Container / Logistics summary boxes.
+ *
+ * From the backend's `containers` split when the preview returned one for
+ * this qty -- containers fill in order, each at its own capacity, so an
+ * override can change how many are needed. Otherwise the client-side
+ * `containerBreakdown()` off whatever drives Units per Container (saved load
+ * plan, else the automatic layout), every container at the item's values.
+ * Weight is checked against the container's max payload when it has one.
+ * `shipmentUtilization` is the mean row fill = loaded tank volume ÷
+ * (containers × container volume). Null unless Sea + a Container Type +
+ * something actually fits.
+ */
+const activeContainerBreakdown = computed(() => {
+  const item = activeItem.value
+  const doc = item?.frm?.doc
+  const layout = item?.containerFitLayout
+  if (!(layout && doc?.mode_of_transport === 'Sea' && doc?.container_type)) return null
+  const quantity = normalizedQuantity(item)
+  const overrideNos = new Set(containerOverridesPayload(containerOverrideRows(item)).map((row) => row.container_no))
+  const itemGap = itemPackingValue(item, 'standard_gap_mm')
+  const itemPallet = itemPackingValue(item, 'pallet_thickness_mm')
+  const split = usableContainerSplit(item)
+  let rows
+  if (split) {
+    rows = split.map((row) => {
+      const capacity = Number(row.capacity || 0)
+      const loaded = Number(row.loaded || 0)
+      return {
+        containerNo: Number(row.container_no),
+        standardGapMm: numberOrNull(row.standard_gap_mm) ?? itemGap,
+        palletThicknessMm: numberOrNull(row.pallet_thickness_mm) ?? itemPallet,
+        overridden: Boolean(row.overridden),
+        capacity,
+        loaded,
+        free: numberOrNull(row.free) ?? Math.max(0, capacity - loaded),
+        weightKg: Number(row.weight_kg || 0),
+        utilization: Number(row.utilization_percent || 0),
+        fits: row.fits !== false
+      }
+    })
+  } else {
+    const source = item.containerFitPlan ?? layout
+    const units = Number(source.units_per_container || 0)
+    if (!(units > 0) || !source.tank || !source.container) return null
+    rows = containerBreakdown({
+      quantity,
+      unitsPerContainer: units,
+      tank: source.tank,
+      container: source.container,
+      unitWeightKg: Number(doc.total_weight_kg || 0)
+    }).rows.map((row) => ({
+      containerNo: row.index + 1,
+      standardGapMm: itemGap,
+      palletThicknessMm: itemPallet,
+      // Only reachable mid-qty-edit with overrides present (before the next
+      // preview lands) -- keep the highlight so the row doesn't flicker.
+      overridden: overrideNos.has(row.index + 1),
+      capacity: units,
+      loaded: row.loaded,
+      free: row.free,
+      weightKg: row.weightKg,
+      utilization: row.utilization,
+      fits: true
+    }))
+  }
+  if (!rows.length) return null
+  const maxPayloadKg =
+    Number(item.containerFitPlan?.container?.max_load_kg || 0) || Number(layout.container?.max_payload_kg || 0)
+  const shown = new Set(rows.map((row) => row.containerNo))
+  return {
+    quantity,
+    containers: rows.length,
+    maxPayloadKg,
+    rows: rows.map((row) => ({ ...row, overweight: maxPayloadKg > 0 && row.weightKg > maxPayloadKg })),
+    totalWeightKg: rows.reduce((sum, row) => sum + row.weightKg, 0),
+    shipmentUtilization: rows.reduce((sum, row) => sum + row.utilization, 0) / rows.length,
+    // Override rows for containers this qty doesn't need -- inert, but they'd
+    // re-apply if the qty grows, so the table offers to clear them.
+    unusedOverrideNos: [...overrideNos].filter((no) => !shown.has(no)).sort((a, b) => a - b)
+  }
+})
+
+/** Whether the active item's per-container gap / pallet inputs are editable:
+ *  not locked, and the backend's `container_overrides` table exists in meta
+ *  (the SDK's null field handle reports fieldtype "Data"). */
+const canEditContainerOverrides = computed(() => {
+  const frm = activeItem.value?.frm
+  return Boolean(
+    frm && !activeItemLocked.value && frm.fields_dict?.[CONTAINER_OVERRIDES_FIELD]?.df?.fieldtype === 'Table'
+  )
+})
+const activeItemHasContainerOverrides = computed(() =>
+  Boolean(activeContainerBreakdown.value?.rows.some((row) => row.overridden))
+)
+
+/** What each gap / pallet input is showing while it has focus -- the raw
+ *  typed string, so a preview re-rendering the rows (keyed by container_no)
+ *  never rewrites the value or moves the caret. Cleared on blur, when the
+ *  input goes back to showing the effective value. */
+const containerOverrideDrafts = reactive({})
+function overrideDraftKey(item, containerNo, field) {
+  return `${item.key}|${containerNo}|${field}`
+}
+function containerOverrideInputValue(item, row, field) {
+  const key = overrideDraftKey(item, row.containerNo, field)
+  if (key in containerOverrideDrafts) return containerOverrideDrafts[key]
+  const saved = containerOverrideRows(item).find((r) => Number(r.container_no) === row.containerNo)
+  const effective = field === 'standard_gap_mm' ? row.standardGapMm : row.palletThicknessMm
+  return numberOrNull(saved?.[field]) ?? effective ?? ''
+}
+function onContainerOverrideInput(item, containerNo, field, event) {
+  containerOverrideDrafts[overrideDraftKey(item, containerNo, field)] = event.target.value
+  setContainerOverride(item, containerNo, field, event.target.value)
+}
+function onContainerOverrideBlur(item, containerNo, field) {
+  delete containerOverrideDrafts[overrideDraftKey(item, containerNo, field)]
+}
+
+/** Child-row edits don't go through `set_value`, so mark the parent dirty by
+ *  hand (a normal item save then persists the table) and poke any grid. */
+function touchContainerOverrides(frm) {
+  frm.dirty?.()
+  frm.refresh_field?.(CONTAINER_OVERRIDES_FIELD)
+}
+
+/** Writes one field of container `containerNo`'s override row: creates the
+ *  row (other field prefilled with the item's value), updates it, or removes
+ *  it once both values equal the item's again. A cleared input means "the
+ *  item's value"; negatives clamp to 0. */
+function setContainerOverride(item, containerNo, field, raw) {
+  const frm = item?.frm
+  if (!frm || !canEditContainerOverrides.value) return
+  const itemValues = Object.fromEntries(PACKING_FIELDS.map((f) => [f, itemPackingValue(item, f)]))
+  const existing = containerOverrideRows(item).find((r) => Number(r.container_no) === containerNo)
+  const next = Object.fromEntries(PACKING_FIELDS.map((f) => [f, numberOrNull(existing?.[f]) ?? itemValues[f]]))
+  const typed = numberOrNull(raw)
+  next[field] = typed === null ? itemValues[field] : Math.max(0, typed)
+  if (PACKING_FIELDS.every((f) => next[f] === itemValues[f])) {
+    removeContainerOverrideRows(item, [containerNo])
+  } else if (existing) {
+    Object.assign(existing, next)
+    touchContainerOverrides(frm)
+  } else {
+    frm.add_child(CONTAINER_OVERRIDES_FIELD, { container_no: containerNo, ...next })
+    touchContainerOverrides(frm)
+  }
+  scheduleContainerFitPreview()
+}
+
+function removeContainerOverrideRows(item, containerNos) {
+  const rows = item?.frm?.doc?.[CONTAINER_OVERRIDES_FIELD]
+  if (!Array.isArray(rows)) return
+  const drop = new Set(containerNos)
+  let removed = false
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (drop.has(Number(rows[i].container_no))) {
+      rows.splice(i, 1)
+      removed = true
+    }
+  }
+  if (!removed) return
+  rows.forEach((row, i) => {
+    row.idx = i + 1
+  })
+  touchContainerOverrides(item.frm)
+}
+
+/** "Reset" on an overridden row, and "Clear" for unused ones -- back to the
+ *  item's values. */
+function resetContainerOverrides(item, containerNos) {
+  if (!canEditContainerOverrides.value) return
+  for (const no of containerNos) {
+    for (const field of PACKING_FIELDS) delete containerOverrideDrafts[overrideDraftKey(item, no, field)]
+  }
+  removeContainerOverrideRows(item, containerNos)
+  scheduleContainerFitPreview()
+}
+
 const containerLogisticsRows = computed(() => {
   const item = activeItem.value
   if (!item) return []
@@ -938,8 +1163,8 @@ const containerLogisticsRows = computed(() => {
   // or 3, which reads as "broken" next to a Quantity field. Label it as
   // such, and add the figure people actually expect: the fill of the
   // containers this order needs (order qty × tank volume ÷ containers ×
-  // container volume), off the same layout the 3D view draws from. Same
-  // arithmetic as ContainerFit3D's headline, so the two always agree.
+  // container volume), off `activeContainerBreakdown` above -- the same
+  // numbers its per-container table's totals row shows.
   const layout = item.containerFitLayout
   const doc = item.frm.doc
   if (!(layout && doc?.mode_of_transport === 'Sea' && doc?.container_type)) return rows
@@ -947,37 +1172,33 @@ const containerLogisticsRows = computed(() => {
   if (whenFull) whenFull.label = 'Container Utilization % (when full)'
   // Which arrangement the figures above come from: a saved per-item load
   // plan (edited in the 3D dialog) or the automatic uniform-gap estimate.
-  const fitPlan = item.containerFitPlan
+  // (Standard gap / Pallet thickness used to be read-only rows here; they
+  // are now editable fields in `CONTAINER_LOGISTICS_FIELDS`.)
   rows.push({
     label: 'Load plan',
-    value: fitPlan ? 'Adjusted (saved)' : 'Automatic estimate',
+    value: item.containerFitPlan ? 'Adjusted (saved)' : 'Automatic estimate',
     low: false,
     warning: ''
   })
-  // The two packing constants the layout was priced with (Packing Settings
-  // on the backend) -- surfaced here so they're visible without opening the
-  // 3D view, since they explain most of the "why only N per container".
-  const mmValue = (value) => `${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })} mm`
-  rows.push({ label: 'Standard gap', value: mmValue(layout.gap_mm), low: false, warning: '' })
-  rows.push({ label: 'Pallet thickness', value: mmValue(layout.pallet_thickness_mm ?? 0), low: false, warning: '' })
-  // A saved load plan drives units per container; tank volume is the same
-  // either way, the plan just may place it rotated.
-  const units = Number((fitPlan ?? layout).units_per_container || 0)
-  if (!units) return rows
-  const { tank, container } = fitPlan ?? layout
-  const tankVolume = tank.length_mm * tank.width_mm * tank.height_mm
-  const containerVolume = container.length_mm * container.width_mm * container.height_mm
-  const qty = normalizedQuantity(item)
-  const containers = Math.ceil(qty / units)
-  const actual = containerVolume ? ((qty * tankVolume) / (containers * containerVolume)) * 100 : 0
+  const breakdown = activeContainerBreakdown.value
+  if (!breakdown) return rows
   rows.push({
     label: 'Utilization (this order)',
-    value: `${actual.toFixed(2)}%`,
+    value: formatPercent(breakdown.shipmentUtilization),
     low: false,
     warning: ''
   })
   return rows
 })
+
+/** Display helpers for the Container / Logistics rows and per-container
+ *  table -- two-decimal %, whole-ish kg, Indian digit grouping. */
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(2)}%`
+}
+function formatKg(value) {
+  return `${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })} kg`
+}
 
 /**
  * Live container-fit preview for the Container / Logistics sub-section above
@@ -993,10 +1214,11 @@ const containerLogisticsRows = computed(() => {
  * that function group's own doc comment, which this one otherwise mirrors
  * closely, adapted for a PER-ITEM frm rather than one shared header frm).
  *
- * `containers_required` deliberately isn't part of this -- it needs a real
- * order qty off a Quotation Item linked to a saved Costing Worksheet, which
- * a not-yet-submitted item doesn't have (see `preview_container_fit`'s own
- * doc comment); it keeps updating only on an actual save, same as today.
+ * Also sends this page's Quantity and the item's `container_overrides` rows;
+ * the response's `containers` / `containers_required` (the per-container
+ * split) are cached on the item as `containerSplit` / `containersRequired`
+ * and drive the per-container table and every Containers Required figure --
+ * see `usableContainerSplit()`.
  */
 const CONTAINER_FIT_PREVIEW_FIELDS = [
   'mode_of_transport',
@@ -1004,7 +1226,11 @@ const CONTAINER_FIT_PREVIEW_FIELDS = [
   'ext_length_mm',
   'ext_width_mm',
   'ext_height_mm',
-  'total_weight_kg'
+  'total_weight_kg',
+  // Per-item packing overrides -- editing either re-prices units per
+  // container / utilization live, same as a dimension change.
+  'standard_gap_mm',
+  'pallet_thickness_mm'
 ]
 /** What `preview_container_fit` hands back -- applied onto the active item's
  *  frm via `set_value`, same idiom `runFreightPreview()` uses. Neither
@@ -1035,6 +1261,7 @@ async function runContainerFitPreview() {
     // whatever triggered the watcher), same reasoning as
     // `buildFreightPreviewHeader()`'s own doc comment.
     const doc = frm.doc
+    const quantity = normalizedQuantity(item)
     // `call()` JSON-serializes this object, which silently DROPS any key
     // whose value is `undefined` (unlike `null`, which still round-trips) --
     // and every one of `preview_container_fit`'s five params is a required
@@ -1053,6 +1280,16 @@ async function runContainerFitPreview() {
         ext_width_mm: doc?.ext_width_mm ?? null,
         ext_height_mm: doc?.ext_height_mm ?? null,
         total_weight_kg: doc?.total_weight_kg ?? null,
+        // Optional overrides: null → Packing Settings default. `numberOrNull`
+        // rather than bare `?? null` so a cleared input goes as null, not "".
+        // The returned `layout.gap_mm` / `layout.pallet_thickness_mm` are
+        // the effective values.
+        standard_gap_mm: numberOrNull(doc?.standard_gap_mm),
+        pallet_thickness_mm: numberOrNull(doc?.pallet_thickness_mm),
+        // Per-container split inputs: always the frm's CURRENT override rows
+        // ([] when none), so unsaved deletions win over the saved ones.
+        quantity,
+        container_overrides: containerOverridesPayload(containerOverrideRows(item)),
         // A saved item may have a saved load plan that overrides the
         // automatic estimate's units / utilization (returned as `fit_plan`).
         ...(frm.is_new() || !doc?.name ? {} : { costing_worksheet: doc.name })
@@ -1068,8 +1305,13 @@ async function runContainerFitPreview() {
     }
     item.containerFitLayout = result.layout ?? null
     item.containerFitPlan = result.fit_plan ?? null
-    // units_per_container may have just changed -- keep containers_required
-    // in step with it (see syncContainersRequiredPreview's own doc comment).
+    // Null when the backend didn't return a split -- the client fallback
+    // math takes over (see `usableContainerSplit()`).
+    item.containerSplit = Array.isArray(result.containers) ? result.containers : null
+    item.containersRequired = item.containerSplit ? numberOrNull(result.containers_required) : null
+    item.containerSplitQuantity = quantity
+    // The split / units_per_container may have just changed -- keep
+    // containers_required in step (see syncContainersRequiredPreview).
     syncContainersRequiredPreview()
     containerFitPreviewError.value = ''
   } catch (e) {
@@ -1123,21 +1365,17 @@ function scheduleContainerFitPreview() {
  *  Container / Logistics section above) live too, instead of only updating
  *  on an actual save -- the backend's own version needs a real Quotation
  *  Item's saved qty (see `_calculate_container_fit`'s doc comment), which a
- *  not-yet-submitted item doesn't have, but this page already has everything
- *  needed to preview the SAME number purely client-side: the live
- *  `units_per_container` (from `runContainerFitPreview` above) and the
- *  Quantity being typed into the Items & Pricing table right now -- the
- *  exact same math `itemsPricingRows`' "(est.)" column already does. No
- *  network round trip needed, so this runs directly off both watchers below
- *  rather than through the debounced preview call. */
+ *  not-yet-submitted item doesn't have. `containerCountFor()` gives the same
+ *  number the "(est.)" column shows: the backend split's count when the last
+ *  preview matches the typed qty, else ceil(qty ÷ units per container) --
+ *  so a qty edit updates it at once and the debounced preview then corrects
+ *  it for any per-container overrides. */
 function syncContainersRequiredPreview() {
   const item = activeItem.value
   if (!item) return
-  const doc = item.frm.doc
-  if (!(doc?.mode_of_transport === 'Sea' && doc?.container_type)) return
-  const unitsPerContainer = Number(doc.units_per_container || 0)
-  const value = unitsPerContainer > 0 ? Math.ceil(normalizedQuantity(item) / unitsPerContainer) : 0
-  if (Number(doc.containers_required || 0) !== value) item.frm.set_value('containers_required', value)
+  const value = containerCountFor(item)
+  if (value === null) return
+  if (Number(item.frm.doc.containers_required || 0) !== value) item.frm.set_value('containers_required', value)
 }
 
 // One getter PER FIELD off the active item's frm, exactly the idiom
@@ -1152,13 +1390,27 @@ watch(
     if (activeItem.value?.frm) scheduleContainerFitPreview()
   }
 )
-// Quantity itself doesn't change `units_per_container`, so it skips the
-// debounced network round trip above entirely -- straight to
-// `syncContainersRequiredPreview()`, same as typing into the Items & Pricing
-// table's own Quantity column already does for its "(est.)" column.
+// Quantity re-splits the order across containers (which, with per-container
+// overrides, only the backend knows): sync the fallback count at once, then
+// run the debounced preview for the real split. Override row edits re-run it
+// too (the input handlers already schedule; this also catches edits from
+// elsewhere, e.g. a grid). Both skip a bare active-item switch -- the
+// `activeItemKey` / pricing-step watchers below own that.
 watch(
-  () => activeItem.value?.quantity,
-  () => syncContainersRequiredPreview()
+  () => [activeItemKey.value, activeItem.value?.quantity],
+  ([key], previous) => {
+    syncContainersRequiredPreview()
+    const doc = activeItem.value?.frm?.doc
+    if (previous?.[0] !== key || !(doc?.mode_of_transport === 'Sea' && doc?.container_type)) return
+    scheduleContainerFitPreview()
+  }
+)
+watch(
+  () => [activeItemKey.value, JSON.stringify(containerOverridesPayload(containerOverrideRows(activeItem.value)))],
+  ([key, signature], previous) => {
+    if (!previous || previous[0] !== key || previous[1] === signature) return
+    if (activeItem.value?.frm) scheduleContainerFitPreview()
+  }
 )
 // Switching the active item (via this section's own item tabs) must
 // invalidate any in-flight/pending preview for whichever item was active
@@ -1179,8 +1431,8 @@ watch(activeItemKey, () => {
 })
 // Reopening a saved quotation lands on Items & Pricing with the item's
 // container fields already filled, so none of the per-field watchers above
-// fire -- and the Load plan / Standard gap / Pallet thickness rows (and a
-// saved load plan's own Units per Container) stay hidden until something is
+// fire -- and the Load plan / Utilization rows, the per-container table (and
+// a saved load plan's own Units per Container) stay hidden until something is
 // edited or the 3D dialog is opened. Run the preview once when the step is
 // shown, or the active item changes, and nothing is cached for that item yet.
 watch(
@@ -1400,7 +1652,13 @@ function makeItem(frm, key) {
     // `preview_container_fit().fit_plan` -- this item's saved, non-stale,
     // fitting Container Fit Plan payload when one drives the figures, else
     // null. Wizard-only cache; the plan itself lives server-side.
-    containerFitPlan: null
+    containerFitPlan: null,
+    // `preview_container_fit().containers` / `.containers_required` -- the
+    // backend's per-container split (honours `container_overrides`) and the
+    // qty it was computed for; see `usableContainerSplit()`. Wizard-only.
+    containerSplit: null,
+    containersRequired: null,
+    containerSplitQuantity: null
   })
 }
 
@@ -2382,6 +2640,9 @@ watch(() => props.quotation, load)
                     <td v-if="showContainersRequiredColumn" class="qw-pricing-table__num">
                       <span v-if="row.containersRequiredPreview === null">—</span>
                       <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">Doesn't fit</span>
+                      <span v-else-if="row.hasContainerOverrides" title="Some containers have their own gap / pallet">
+                        {{ row.containersRequiredPreview }} (varies/ctr)
+                      </span>
                       <span v-else>{{ row.containersRequiredPreview }} (~{{ row.unitsPerContainer }}/ctr)</span>
                     </td>
                     <td class="qw-pricing-table__actions">
@@ -2484,6 +2745,116 @@ watch(() => props.quotation, load)
                     <span v-if="row.warning" class="qw-derived__warning">{{ row.warning }}</span>
                   </div>
                 </div>
+                <!-- One line per container for the active item -- see
+                     `activeContainerBreakdown`. Containers fill in order,
+                     each at its own capacity; Gap / Pallet are editable per
+                     container (`setContainerOverride`), rows keyed by
+                     container number so a preview re-render keeps focus.
+                     The totals row's utilization is the same figure as
+                     "Utilization (this order)" above. Scrolls both ways so
+                     a big order or a narrow screen stays usable. -->
+                <template v-if="activeContainerBreakdown">
+                  <div class="qw-derived__k qw-container-split__heading">
+                    Load per container
+                    <span class="qw-container-split__muted">
+                      · {{ activeContainerBreakdown.quantity }} units in {{ activeContainerBreakdown.containers }}
+                      {{ activeContainerBreakdown.containers === 1 ? 'container' : 'containers' }}
+                    </span>
+                  </div>
+                  <div class="qw-pricing-table-wrap qw-container-split">
+                    <table class="qw-quotation-items qw-pricing-table">
+                      <thead>
+                        <tr>
+                          <th>Container</th>
+                          <th>Gap (mm)</th>
+                          <th>Pallet (mm)</th>
+                          <th>Capacity</th>
+                          <th>Units loaded</th>
+                          <th>Weight</th>
+                          <th>Utilization</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="row in activeContainerBreakdown.rows"
+                          :key="row.containerNo"
+                          :class="{ 'qw-container-split__row--override': row.overridden }"
+                        >
+                          <td class="qw-pricing-table__label">
+                            Container {{ row.containerNo }}
+                            <button
+                              v-if="row.overridden && canEditContainerOverrides"
+                              type="button"
+                              class="qw-container-split__reset"
+                              title="Use the item's gap and pallet for this container"
+                              @click="resetContainerOverrides(activeItem, [row.containerNo])"
+                            >
+                              reset
+                            </button>
+                          </td>
+                          <td v-for="field in PACKING_FIELDS" :key="field">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputmode="decimal"
+                              class="qw-inline-input qw-inline-input--mm"
+                              :value="containerOverrideInputValue(activeItem, row, field)"
+                              :disabled="!canEditContainerOverrides"
+                              :aria-label="`Container ${row.containerNo} ${field === 'standard_gap_mm' ? 'standard gap' : 'pallet thickness'} (mm)`"
+                              @input="onContainerOverrideInput(activeItem, row.containerNo, field, $event)"
+                              @blur="onContainerOverrideBlur(activeItem, row.containerNo, field)"
+                            />
+                          </td>
+                          <td class="qw-pricing-table__num">{{ row.capacity }}</td>
+                          <td class="qw-pricing-table__num">
+                            <span v-if="!row.fits && !row.loaded" class="qw-derived__warning">Doesn't fit</span>
+                            <template v-else>
+                              {{ row.loaded }} of {{ row.capacity }}
+                              <span v-if="row.free" class="qw-container-split__muted">· {{ row.free }} free</span>
+                            </template>
+                          </td>
+                          <td class="qw-pricing-table__num" :class="{ 'qw-container-split__over': row.overweight }">
+                            {{ formatKg(row.weightKg) }}
+                            <span v-if="activeContainerBreakdown.maxPayloadKg" class="qw-container-split__muted">
+                              of {{ formatKg(activeContainerBreakdown.maxPayloadKg) }} max
+                            </span>
+                          </td>
+                          <td class="qw-pricing-table__num">{{ formatPercent(row.utilization) }}</td>
+                        </tr>
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td class="qw-pricing-table__label">Total</td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td class="qw-pricing-table__num">{{ activeContainerBreakdown.quantity }} units</td>
+                          <td class="qw-pricing-table__num">{{ formatKg(activeContainerBreakdown.totalWeightKg) }}</td>
+                          <td class="qw-pricing-table__num">{{ formatPercent(activeContainerBreakdown.shipmentUtilization) }}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  <p
+                    v-if="activeContainerBreakdown.unusedOverrideNos.length"
+                    class="qw-derived__hint qw-container-split__note"
+                  >
+                    {{ activeContainerBreakdown.unusedOverrideNos.length === 1 ? 'Container' : 'Containers' }}
+                    {{ activeContainerBreakdown.unusedOverrideNos.join(', ') }}
+                    {{ activeContainerBreakdown.unusedOverrideNos.length === 1 ? 'has its' : 'have their' }}
+                    own gap / pallet saved but {{ activeContainerBreakdown.unusedOverrideNos.length === 1 ? "isn't" : "aren't" }}
+                    needed at this quantity.
+                    <button
+                      v-if="canEditContainerOverrides"
+                      type="button"
+                      class="qw-container-split__reset"
+                      @click="resetContainerOverrides(activeItem, activeContainerBreakdown.unusedOverrideNos)"
+                    >
+                      clear
+                    </button>
+                  </p>
+                </template>
                 <!-- Live container-fit preview status -- see
                      `runContainerFitPreview()`. Quiet by design: this fires
                      automatically as a side effect of picking a Container
@@ -2500,6 +2871,9 @@ watch(() => props.quotation, load)
                     <LucideIcon name="box" /> View container load in 3D
                   </button>
                 </div>
+                <p v-if="canViewContainerFit3D && activeItemHasContainerOverrides" class="qw-derived__hint qw-container-split__note">
+                  3D view shows the item's standard packing; containers with their own gap/pallet aren't drawn differently.
+                </p>
               </template>
             </div>
           </div>
@@ -2760,6 +3134,8 @@ watch(() => props.quotation, load)
         :ext-width-mm="Number(activeItem?.frm?.doc?.ext_width_mm) || 0"
         :ext-height-mm="Number(activeItem?.frm?.doc?.ext_height_mm) || 0"
         :total-weight-kg="Number(activeItem?.frm?.doc?.total_weight_kg) || 0"
+        :standard-gap-mm="numberOrNull(activeItem?.frm?.doc?.standard_gap_mm)"
+        :pallet-thickness-mm="numberOrNull(activeItem?.frm?.doc?.pallet_thickness_mm)"
         :locked="activeItemLocked"
         @refresh="onContainerFitPlanChanged"
         @close="containerFit3DOpen = false"
@@ -3134,6 +3510,79 @@ watch(() => props.quotation, load)
 
 .qw-pricing-table td:has(> .qw-inline-input) {
   min-width: 150px;
+}
+
+/* Container / Logistics: one line per container for the active item (see
+   `activeContainerBreakdown`). Same shell as the pricing table; capped in
+   height with a sticky header and totals row so a many-container order
+   doesn't push the rest of the page away. */
+.qw-container-split__heading {
+  display: block;
+  margin-top: 18px;
+}
+
+.qw-container-split {
+  margin-top: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.qw-container-split thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 8px;
+}
+
+.qw-container-split tfoot td {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid var(--qw-border);
+  border-bottom: none;
+}
+
+.qw-container-split__muted {
+  font: 500 12px/1 'Raleway', system-ui, sans-serif;
+  color: var(--qw-faint);
+}
+
+.qw-container-split__over {
+  color: #E63946;
+}
+
+/* Per-container Gap / Pallet inputs: compact, overriding the pricing table's
+   150px min for inline-input cells. Overridden rows get a faint primary tint
+   (kept on hover) and a small text "reset". */
+.qw-container-split td:has(> .qw-inline-input--mm) {
+  min-width: 0;
+}
+
+.qw-inline-input--mm {
+  width: 76px;
+  min-width: 76px;
+  padding: 4px 7px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.qw-container-split tbody tr.qw-container-split__row--override,
+.qw-container-split tbody tr.qw-container-split__row--override:hover {
+  background: color-mix(in srgb, var(--qw-primary) 7%, transparent);
+}
+
+.qw-container-split__reset {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: 600 11.5px/1 'Raleway', system-ui, sans-serif;
+  color: var(--qw-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.qw-container-split__note {
+  margin: 8px 0 0;
 }
 
 .qw-pricing-table__actions {

@@ -39,6 +39,7 @@ import { ref, shallowRef, computed, watch, onBeforeUnmount, nextTick, useId } fr
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { call } from '@/lib/frappe.js'
+import { containerBreakdown, unitsInContainer, numberOrNull } from '@/lib/containerLoad.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -55,6 +56,10 @@ const props = defineProps({
   extWidthMm: { type: [Number, String], default: 0 },
   extHeightMm: { type: [Number, String], default: 0 },
   totalWeightKg: { type: [Number, String], default: 0 },
+  /** The item's Standard Gap / Pallet Thickness (mm) as edited in the
+   *  wizard; null = use the worksheet's / Packing Settings' value. */
+  standardGapMm: { type: [Number, String], default: null },
+  palletThicknessMm: { type: [Number, String], default: null },
   /** Quotation submitted -- the plan can be viewed and tried, not saved. */
   locked: { type: Boolean, default: false }
 })
@@ -119,42 +124,42 @@ const orderQty = computed(() => Math.max(Number(props.quantity) || 0, 1))
 const slotsPerContainer = computed(() => Math.max(0, Number(plan.value?.units_per_container || 0)))
 const physicalPositions = computed(() => Math.max(0, Number(plan.value?.total_tanks || 0)))
 const ruledOutByWeight = computed(() => Math.max(0, physicalPositions.value - slotsPerContainer.value))
-const containersRequired = computed(() =>
-  slotsPerContainer.value > 0 ? Math.ceil(orderQty.value / slotsPerContainer.value) : 0
+/** The qty split across containers -- `src/lib/containerLoad.js`, the same
+ *  helper the wizard's per-container table uses, so the dialog's container
+ *  list and that table always agree. */
+const breakdown = computed(() =>
+  containerBreakdown({
+    quantity: orderQty.value,
+    unitsPerContainer: slotsPerContainer.value,
+    tank: plan.value?.tank,
+    container: plan.value?.container
+  })
 )
+const containersRequired = computed(() => breakdown.value.containers)
 const drawnContainers = computed(() => Math.max(1, Math.min(containersRequired.value, MAX_DRAWN_CONTAINERS)))
 
 /** Tanks loaded into container `index` (0-based) -- full for every
  *  container but the last, which gets the remainder. */
 function tanksIn(index) {
-  if (!slotsPerContainer.value) return 0
-  const remaining = orderQty.value - index * slotsPerContainer.value
-  return Math.max(0, Math.min(slotsPerContainer.value, remaining))
+  return unitsInContainer(index, orderQty.value, slotsPerContainer.value)
 }
 
-const tankVolume = computed(() => {
-  const t = plan.value?.tank
-  return t ? t.length_mm * t.width_mm * t.height_mm : 0
-})
-const containerVolume = computed(() => {
-  const c = plan.value?.container
-  return c ? c.length_mm * c.width_mm * c.height_mm : 0
-})
-function utilizationFor(tankCount) {
-  return containerVolume.value ? ((tankCount * tankVolume.value) / containerVolume.value) * 100 : 0
-}
 /** Actual fill of everything being shipped, across all containers needed. */
-const shipmentUtilization = computed(() =>
-  containersRequired.value ? utilizationFor(orderQty.value) / containersRequired.value : 0
-)
+const shipmentUtilization = computed(() => breakdown.value.shipmentUtilization)
 /** The plan's utilization when a container is full. */
 const fullUtilization = computed(() => Number(plan.value?.container_utilization_percent || 0))
-const containerRows = computed(() =>
-  Array.from({ length: containersRequired.value }, (_, i) => {
-    const loaded = tanksIn(i)
-    return { index: i, loaded, free: slotsPerContainer.value - loaded, utilization: utilizationFor(loaded) }
-  })
-)
+const containerRows = computed(() => breakdown.value.rows)
+
+/** Per-item Standard gap / Pallet thickness overrides from the wizard (the
+ *  worksheet's `standard_gap_mm` / `pallet_thickness_mm`), sent to every
+ *  fit-plan call; they win over the worksheet's stored values server-side,
+ *  and null falls back to it / Packing Settings. */
+function packingOverrides() {
+  return {
+    standard_gap_mm: numberOrNull(props.standardGapMm),
+    pallet_thickness_mm: numberOrNull(props.palletThicknessMm)
+  }
+}
 
 function mm(value) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
@@ -285,6 +290,7 @@ function cancelPendingPreview() {
 
 function openingProposalArgs() {
   return {
+    ...packingOverrides(),
     plan: {
       container_type: props.containerType ?? null,
       ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
@@ -323,7 +329,10 @@ async function load() {
   try {
     let saved = null
     if (props.costingWorksheet) {
-      const res = await call(`${FIT_PLAN_API}.get_worksheet_fit_plan`, { costing_worksheet: props.costingWorksheet })
+      const res = await call(`${FIT_PLAN_API}.get_worksheet_fit_plan`, {
+        costing_worksheet: props.costingWorksheet,
+        ...packingOverrides()
+      })
       if (mine !== session) return
       saved = res?.plan ?? null
       savedPlanExists.value = Boolean(saved)
@@ -354,6 +363,7 @@ async function runPreview() {
   const mine = session
   try {
     const res = await call(`${FIT_PLAN_API}.preview_fit_plan`, {
+      ...packingOverrides(),
       plan: {
         ...editedPlan(base),
         ...(props.costingWorksheet ? { costing_worksheet: props.costingWorksheet } : {}),
@@ -409,6 +419,7 @@ async function save() {
   try {
     const res = await call(`${FIT_PLAN_API}.save_worksheet_fit_plan`, {
       costing_worksheet: props.costingWorksheet,
+      ...packingOverrides(),
       plan: editedPlan(base)
     })
     if (mine !== session) return
@@ -751,7 +762,11 @@ watch(
     () => props.extLengthMm,
     () => props.extWidthMm,
     () => props.extHeightMm,
-    () => props.totalWeightKg
+    () => props.totalWeightKg,
+    // Changing either re-opens from scratch (saved plan / fresh proposal)
+    // so the facts and figures reflect the new effective values.
+    () => numberOrNull(props.standardGapMm),
+    () => numberOrNull(props.palletThicknessMm)
   ],
   ([open], previous) => {
     window.removeEventListener('keydown', onWindowKeydown, true)
