@@ -46,6 +46,7 @@ import {
   ADDRESS_FIELDS,
   EXIM_FIELDS,
   CURRENCY_FIELDS,
+  ITEMS_CURRENCY_FIELDS,
   EXIM_FLAGS_FIELD,
   EXIM_ITEM_DEAL_VALUE_FIELDS,
   TERMS_FIELDS,
@@ -159,6 +160,10 @@ const itemDealValueLabels = computed(() =>
  *  the estimator picks otherwise at the top of the Exim step. */
 const quoteCurrency = computed(() => String(quotationHeaderFrm.value?.doc?.currency || 'INR').toUpperCase())
 const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
+/** The Item leg of `exchangeRateChips` -- the rate the Item Deal Value below
+ *  the totals is actually priced at, shown next to that figure so it can be
+ *  checked without opening the Exim step. */
+const itemExchangeRateChip = computed(() => exchangeRateChips.value.find((chip) => chip.key === 'Item') ?? null)
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -780,6 +785,7 @@ async function runExchangeRateLookup() {
       return {
         key: purpose,
         label: `${currency} ${purpose} ${when}`,
+        when,
         value: missing ? 'no rate' : Number(rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
         missing
       }
@@ -2684,6 +2690,31 @@ watch(() => props.quotation, load)
               </button>
             </div>
 
+            <!-- Currency for this quote, offered here as well as on Exim --
+                 see `ITEMS_CURRENCY_FIELDS`. The item is priced on this step,
+                 so this is where the currency decision belongs; the same
+                 field on Exim keeps the CIF/DAP legs' inputs together. -->
+            <div class="qw-items-currency">
+              <WizardStep :frm="quotationHeaderFrm" :fields="ITEMS_CURRENCY_FIELDS" read-only-filter="exclude" />
+              <p v-if="!quoteIsForeignCurrency" class="qw-derived__hint qw-items-currency__note">
+                Priced in INR, so there is nothing to convert. Pick the customer's currency to also see this item's
+                value in it, converted at the <strong>Item</strong> rate from the Currency Exchange Master.
+              </p>
+              <p v-else-if="itemExchangeRateChip" class="qw-items-currency__note" :class="itemExchangeRateChip.missing ? 'qw-derived__warning' : 'qw-derived__hint'">
+                <template v-if="itemExchangeRateChip.missing">
+                  No <strong>Item</strong> exchange rate for {{ quoteCurrency }} in {{ itemExchangeRateChip.when }} —
+                  add one in the Currency Exchange Master, or this item's converted value stays ₹0.
+                </template>
+                <template v-else>
+                  Item rate: <strong>{{ itemExchangeRateChip.value }}</strong> ₹ per {{ quoteCurrency }} ·
+                  {{ itemExchangeRateChip.when }}. Freight legs use their own CIF / DAP rates — see the Exim step.
+                </template>
+              </p>
+              <p v-else-if="exchangeRateChipsPending" class="qw-derived__hint qw-items-currency__note">
+                Looking up the {{ quoteCurrency }} Item rate…
+              </p>
+            </div>
+
             <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
             <div class="qw-totals-grid qw-items-totals-grid">
               <div class="qw-totals-box">
@@ -2715,6 +2746,9 @@ watch(() => props.quotation, load)
                 <span class="qw-totals-box__k">Item Deal Value ({{ quoteCurrency }})</span>
                 <span class="qw-totals-box__v">{{ money(quotationHeaderFrm?.doc?.hitech_item_deal_value_fc, quoteCurrency) }}</span>
                 <span v-if="!anyItemSaved" class="qw-derived__hint" style="margin: 2px 0 0;">Fills after the item is saved</span>
+                <span v-else-if="itemExchangeRateChip && !itemExchangeRateChip.missing" class="qw-derived__hint" style="margin: 2px 0 0;">
+                  at {{ itemExchangeRateChip.value }} ₹ per {{ quoteCurrency }} · {{ itemExchangeRateChip.when }}
+                </span>
               </div>
               <div v-if="itemsSummary.showContainers" class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Containers Required (est.)</span>
@@ -3423,6 +3457,19 @@ watch(() => props.quotation, load)
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid var(--qw-border);
+}
+
+/* Currency for this quote, sitting between the item rows and the totals --
+   the decision belongs next to the pricing it changes. */
+.qw-items-currency {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--qw-border);
+  max-width: 560px;
+}
+
+.qw-items-currency__note {
+  margin: 6px 0 0;
 }
 
 /* The divider now lives on the heading above, so the totals grid itself

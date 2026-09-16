@@ -280,6 +280,18 @@ export const EXIM_FIELDS = [
  *  when blank — see CostingWorksheetWizard.vue); `transaction_date` picks
  *  which quarter's Currency Exchange Master rates the freight engine uses. */
 export const CURRENCY_FIELDS = ['currency', 'conversion_rate', 'transaction_date']
+/**
+ * The currency field ALSO offered on the Items & Pricing step.
+ *
+ * Same core `currency` field as `CURRENCY_FIELDS` above, one frm, one value --
+ * just a second control. The item is priced on Items & Pricing (step 03) but
+ * the currency trio lives on Exim (step 05), so an estimator pricing an
+ * export job had no way to choose the customer's currency until after the
+ * pricing step, and the converted Item Deal Value below the totals looked
+ * simply absent. Conversion rate and transaction date stay on Exim only:
+ * they belong with the CIF/DAP legs that read them.
+ */
+export const ITEMS_CURRENCY_FIELDS = ['currency']
 /** The one `EXIM_FIELDS` entry that is NOT rendered as a Calculated-rail
  *  row — see the Exim step's own warning block in CostingWorksheetWizard.vue. */
 export const EXIM_FLAGS_FIELD = 'hitech_exchange_rate_flags'
