@@ -176,6 +176,10 @@ const eximRows = computed(() => {
     row('Containers (applied)', d.hitech_containers_applied || null),
     row('Freight region', d.hitech_freight_region),
     row('Freight rate source', d.hitech_freight_rate_source),
+    // Only ever set when no master rate matched, and it is the whole of the
+    // total on that path -- so the recap says where the figure came from
+    // instead of leaving Total freight cost unexplained.
+    row('Fallback freight (applied)', d.hitech_fallback_freight_applied ? money(d.hitech_fallback_freight_applied) : null),
     // `hitech_fob_cost_applied` and `hitech_region_margin_applied` are
     // deliberately absent: they are engine intermediates, not figures anyone
     // quotes from, and showing them here invited the reader to add them to

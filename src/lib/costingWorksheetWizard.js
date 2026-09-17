@@ -297,7 +297,10 @@ export const EXIM_FIELDS = [
   'hitech_dap_base_rate',
   'hitech_destination_inland_applied',
   'hitech_unloading_applied',
-  'hitech_import_duty_applied'
+  'hitech_import_duty_applied',
+  // The fallback formula's whole amount, as its own row in the freight table
+  // so the table reconciles to the banner on that path too.
+  'hitech_fallback_freight_applied'
 ]
 
 /**
@@ -335,6 +338,9 @@ export const EXIM_FREIGHT_TABLE_FIELDS = [
   'hitech_destination_inland_applied',
   'hitech_unloading_applied',
   'hitech_import_duty_applied',
+  // Its own row in the table on the fallback path, so it must not also show
+  // up as a rail row — see `freightLegRows`.
+  'hitech_fallback_freight_applied',
   'hitech_total_freight_cost',
   'hitech_freight_inr_per_kg'
 ]

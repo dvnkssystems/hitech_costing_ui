@@ -198,6 +198,13 @@ const freightLegRows = computed(() => {
   // the seller hands the goods over before the main carriage. On every other
   // Incoterm the engine returns 0 and `add()`'s skip-an-empty-leg rule keeps
   // the row out, so the Incoterm rules stay in the engine, not here.
+  // No master rate matched, so the whole amount is the fallback formula's.
+  // It goes in FIRST and in INR: there is no leg, no currency and no rate
+  // behind it, and the row exists so the table reconciles to the banner
+  // instead of showing a total nothing adds up to (client report,
+  // 2026-09-17). On the master-rate path the engine leaves it at 0 and
+  // `add()`'s skip-an-empty-leg rule keeps it out.
+  add('Fallback formula (no master rate)', doc.hitech_fallback_freight_applied, 'INR', 1, doc.hitech_fallback_freight_applied)
   add('Handover charge', doc.hitech_handover_native, native, doc.hitech_handover_exchange_rate, doc.hitech_handover_inr)
   add('CIF', doc.hitech_cif_leg_native, native, doc.hitech_cif_exchange_rate, doc.hitech_cif_leg_inr)
   add('DAP add-on', doc.hitech_dap_addon_native, native, doc.hitech_dap_exchange_rate, doc.hitech_dap_addon_inr)
