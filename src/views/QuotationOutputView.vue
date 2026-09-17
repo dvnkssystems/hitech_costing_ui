@@ -174,10 +174,14 @@ const eximRows = computed(() => {
     row('Containers (estimated)', d.hitech_containers_estimated || null),
     row('Containers (override)', d.hitech_containers_override || null),
     row('Containers (applied)', d.hitech_containers_applied || null),
+    row('Freight region', d.hitech_freight_region),
     row('Freight rate source', d.hitech_freight_rate_source),
+    // `hitech_fob_cost_applied` and `hitech_region_margin_applied` are
+    // deliberately absent: they are engine intermediates, not figures anyone
+    // quotes from, and showing them here invited the reader to add them to
+    // Total freight cost. Total freight cost alone is the freight number
+    // (client call, 17 Sep 2026 — off the Exim tab and off this page).
     row('Total freight cost', d.hitech_total_freight_cost ? money(d.hitech_total_freight_cost) : null),
-    row('FOB cost (applied)', d.hitech_fob_cost_applied ? money(d.hitech_fob_cost_applied) : null),
-    row('Region margin (applied)', d.hitech_region_margin_applied ? money(d.hitech_region_margin_applied) : null),
     row('Freight (INR/kg)', d.hitech_freight_inr_per_kg ? decimal(d.hitech_freight_inr_per_kg) : null)
   ].filter(Boolean)
 })
@@ -197,6 +201,11 @@ const currencyRows = computed(() => {
   const fx = (value) => (value ? decimal(value) : null)
   return [
     row('Freight currency', d.hitech_freight_currency),
+    // The handover leg (EXW/FCA/FOB/FAS) converts under the CIF rate — it has
+    // no rate of its own, which is why only three rows appear for it.
+    row(`Handover leg (${fc})`, d.hitech_handover_native ? money(d.hitech_handover_native, fc) : null),
+    row('Handover exchange rate', fx(d.hitech_handover_exchange_rate)),
+    row('Handover leg (INR)', d.hitech_handover_inr ? money(d.hitech_handover_inr) : null),
     row(`CIF leg (${fc})`, d.hitech_cif_leg_native ? money(d.hitech_cif_leg_native, fc) : null),
     row('CIF exchange rate', fx(d.hitech_cif_exchange_rate)),
     row('CIF leg (INR)', d.hitech_cif_leg_inr ? money(d.hitech_cif_leg_inr) : null),

@@ -222,6 +222,14 @@ export const EXIM_FIELDS = [
   'incoterm',
   'named_place',
   'hitech_region',
+  // Europe / Canada-Americas / Gulf & Far East / Africa-Australia & Colombo —
+  // NOT the same field as `hitech_region` above (Domestic/Export), which is
+  // why both are listed: the International Freight Rate Master is now keyed
+  // on Customer + THIS field + the quarter of `transaction_date`, so with it
+  // blank no international rate can ever match and every leg prices at 0.
+  // Its own native `depends_on`/`mandatory_depends_on` (`hitech_region ==
+  // 'Export'`) hides it on a domestic quote, so no client-side gating here.
+  'hitech_freight_region',
   'hitech_country_of_origin',
   'hitech_country_of_destination',
   'hitech_domestic_destination',
@@ -266,6 +274,15 @@ export const EXIM_FIELDS = [
   'hitech_dap_addon_native',
   'hitech_dap_exchange_rate',
   'hitech_dap_addon_inr',
+  // Handover charge — the origin-side leg the seller stops paying at on
+  // EXW / FCA / FAS, priced per container in the freight currency and
+  // converted like the CIF leg. Zero on every other Incoterm, and the
+  // freight table's "skip a leg that contributed nothing" rule is what keeps
+  // its row out of sight then, rather than restating the Incoterm rules.
+  'hitech_handover_base_rate',
+  'hitech_handover_native',
+  'hitech_handover_exchange_rate',
+  'hitech_handover_inr',
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc',
@@ -307,6 +324,13 @@ export const EXIM_FREIGHT_TABLE_FIELDS = [
   'hitech_dap_addon_native',
   'hitech_dap_exchange_rate',
   'hitech_dap_addon_inr',
+  // Handover charge: its own row in the table (and its base rate in the
+  // per-container chain line below it), so it must not also appear as a rail
+  // row — see `freightLegRows` in CostingWorksheetWizard.vue.
+  'hitech_handover_base_rate',
+  'hitech_handover_native',
+  'hitech_handover_exchange_rate',
+  'hitech_handover_inr',
   'hitech_insurance_cost',
   'hitech_destination_inland_applied',
   'hitech_unloading_applied',
@@ -321,32 +345,70 @@ export const EXIM_FREIGHT_TABLE_FIELDS = [
  * Currency is the table's own From column, and the three Item Deal Value
  * figures now live where the item is priced (Items & Pricing). The engine
  * still computes every one of them — this only hides them here.
+ *
+ * `hitech_region_margin_applied` joined them on 2026-09-17 on the client's
+ * instruction: "hide the field, keep the formula". It still loads a real
+ * engine-computed margin into every quote — nothing about the calculation
+ * changed — the estimator just isn't shown it on this tab or in the Review
+ * summary any more. Do NOT read this list as "unused fields".
  */
 export const EXIM_HIDDEN_FIELDS = [
   'hitech_fob_cost_applied',
+  'hitech_region_margin_applied',
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc'
 ]
 /** The quote's own currency trio — real, standard Quotation fields (ERPNext
- *  core), edited at the top of the Exim / Incoterms step and staged on the
- *  same throwaway Quotation header frm as everything else there. `currency`
- *  is what the Item Deal Value (FC) figure above is expressed in;
- *  `conversion_rate` is ERPNext's own quote→company-currency rate (kept at 1
- *  for INR, otherwise looked up via `erpnext.setup.utils.get_exchange_rate`
- *  when blank — see CostingWorksheetWizard.vue); `transaction_date` picks
- *  which quarter's Currency Exchange Master rates the freight engine uses. */
+ *  core), staged on the throwaway Quotation header frm and sent with the rest
+ *  of the header on submit. `currency` is what the Item Deal Value (FC)
+ *  figure is expressed in; `conversion_rate` is ERPNext's own
+ *  quote→company-currency rate (kept at 1 for INR, otherwise the quarter's
+ *  Item rate, else ERPNext's own lookup — see CostingWorksheetWizard.vue);
+ *  `transaction_date` picks which quarter's Currency Exchange Master rates
+ *  the freight engine uses.
+ *
+ *  NO LONGER RENDERED AS A STEP. Until 2026-09-17 these three were the
+ *  editable block at the top of Exim / Incoterms; the client's spec removed
+ *  it, because the freight table's own From and Ex. Rate columns already say
+ *  what each leg converts from and at, and `currency` is chosen once on Items
+ *  & Pricing (see `ITEMS_CURRENCY_FIELDS`). The list stays because all three
+ *  values still travel: `conversion_rate` is filled by the currency watcher /
+ *  freight preview and `transaction_date` defaults to today, and both are
+ *  persisted through the draft autosave and `submitAll()`'s header. Don't
+ *  re-add a WizardStep for the trio without the client asking.
+ *
+ *  `transaction_date` does have a control again as of 17 Sep 2026 — but a
+ *  separate, single-field one, `EXIM_DATE_FIELDS` below, not this trio. */
 export const CURRENCY_FIELDS = ['currency', 'conversion_rate', 'transaction_date']
 /**
- * The currency field ALSO offered on the Items & Pricing step.
+ * Quotation Date, on its own, as the Exim step's one editable header control.
  *
- * Same core `currency` field as `CURRENCY_FIELDS` above, one frm, one value --
- * just a second control. The item is priced on Items & Pricing (step 03) but
- * the currency trio lives on Exim (step 05), so an estimator pricing an
- * export job had no way to choose the customer's currency until after the
- * pricing step, and the converted Item Deal Value below the totals looked
- * simply absent. Conversion rate and transaction date stay on Exim only:
- * they belong with the CIF/DAP legs that read them.
+ * This is the same `transaction_date` that `CURRENCY_FIELDS` carries, but it
+ * is deliberately a SEPARATE list and a separate block: when the currency
+ * trio came off Exim (2026-09-17) the date went with it, and the date is the
+ * only one of the three that an estimator genuinely has to set by hand. It
+ * picks the quarter, and the quarter picks both the International Freight
+ * Rate Master row and the Currency Exchange Master rates, so quoting a
+ * different quarter means changing this field and nothing else. It came back
+ * at the client's request (17 Sep 2026): visible, plain and not buried in a
+ * currency block nobody was looking at any more.
+ *
+ * Do NOT fold this back into `CURRENCY_FIELDS` — that list is exactly the
+ * set of fields with no control on this step.
+ */
+export const EXIM_DATE_FIELDS = ['transaction_date']
+/**
+ * The currency field offered on the Items & Pricing step — now the ONLY
+ * place the quote's currency is chosen.
+ *
+ * Same core `currency` field as `CURRENCY_FIELDS` above, one frm, one value.
+ * It was added here because the item is priced on Items & Pricing (step 03)
+ * while the currency trio used to live on Exim (step 05), so an estimator
+ * pricing an export job had no way to choose the customer's currency until
+ * after the pricing step and the converted Item Deal Value below the totals
+ * looked simply absent. With the Exim currency block gone (see above) this is
+ * no longer a second control but the only one.
  */
 export const ITEMS_CURRENCY_FIELDS = ['currency']
 /** The one `EXIM_FIELDS` entry that is NOT rendered as a Calculated-rail

@@ -47,6 +47,7 @@ import {
   EXIM_FIELDS,
   EXIM_FREIGHT_TABLE_FIELDS,
   EXIM_HIDDEN_FIELDS,
+EXIM_DATE_FIELDS,
   CURRENCY_FIELDS,
   ITEMS_CURRENCY_FIELDS,
   EXIM_FLAGS_FIELD,
@@ -190,6 +191,14 @@ const freightLegRows = computed(() => {
       converted: Number(converted) || 0
     })
   }
+  // Origin-side leg first, so the rows read in shipment order: handover at
+  // origin, then the sea leg, then everything the destination adds. Priced
+  // and converted exactly like CIF (per container, in the freight currency,
+  // at that quarter's rate) — and non-zero only on EXW / FCA / FAS, where
+  // the seller hands the goods over before the main carriage. On every other
+  // Incoterm the engine returns 0 and `add()`'s skip-an-empty-leg rule keeps
+  // the row out, so the Incoterm rules stay in the engine, not here.
+  add('Handover charge', doc.hitech_handover_native, native, doc.hitech_handover_exchange_rate, doc.hitech_handover_inr)
   add('CIF', doc.hitech_cif_leg_native, native, doc.hitech_cif_exchange_rate, doc.hitech_cif_leg_inr)
   add('DAP add-on', doc.hitech_dap_addon_native, native, doc.hitech_dap_exchange_rate, doc.hitech_dap_addon_inr)
   add('Insurance', doc.hitech_insurance_cost, 'INR', 1, doc.hitech_insurance_cost)
@@ -221,8 +230,21 @@ const freightRateChain = computed(() => {
     factor,
     containerType: doc.hitech_freight_container_type || '',
     currency: doc.hitech_freight_currency || 'INR',
-    cifBase: Number(doc.hitech_cif_base_rate) || 0,
-    dapBase: Number(doc.hitech_dap_base_rate) || 0
+    // The base rates the chain line actually names, in shipment order, with
+    // the zero ones dropped. Two reasons it's a list rather than the three
+    // separate `cifBase`/`dapBase`/`handoverBase` values it replaced: on
+    // EXW / FCA / FAS the handover leg can be the ONLY row in the table, and
+    // the old template printed CIF unconditionally — so that quote showed
+    // "CIF base $0.00" (a real-looking figure for a leg nobody is charging)
+    // and named no base rate for the one leg that was charged, leaving its
+    // Amount uncheckable.
+    bases: [
+      ['Handover', Number(doc.hitech_handover_base_rate) || 0],
+      ['CIF', Number(doc.hitech_cif_base_rate) || 0],
+      ['DAP', Number(doc.hitech_dap_base_rate) || 0]
+    ]
+      .filter(([, amount]) => amount)
+      .map(([label, amount]) => ({ label, amount }))
   }
 })
 /** Item Deal Value (INR / quote currency) only become non-zero once a linked
@@ -240,15 +262,13 @@ const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
  *  the totals is actually priced at, shown next to that figure so it can be
  *  checked without opening the Exim step. */
 const itemExchangeRateChip = computed(() => exchangeRateChips.value.find((chip) => chip.key === 'Item') ?? null)
-/** Whether the Exchange Rate on the header IS this quarter's Item rate --
- *  i.e. the customer's quote and the Item Deal Value convert at the same
- *  controlled rate. False while a hand-typed or ERPNext-sourced rate stands. */
-const conversionRateIsQuarterly = computed(() => {
-  const chip = itemExchangeRateChip.value
-  const applied = Number(quotationHeaderFrm.value?.doc?.conversion_rate)
-  if (!chip?.rate || !(applied > 0)) return false
-  return Math.abs(applied - chip.rate) < 1e-9
-})
+// `conversionRateIsQuarterly` lived here: it compared the header's
+// `conversion_rate` against this quarter's Item rate to warn when the two
+// disagreed. Dropped with the Exim step's Currency / Exchange Rate block
+// (client spec, 2026-09-17) — with no Exchange Rate input on screen there is
+// no hand-typed value left to disagree with, since the freight preview
+// applies the quarterly Item rate to `conversion_rate` itself (see
+// `FREIGHT_PREVIEW_RESULT_FIELDS`) and the backend does the same on save.
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -399,15 +419,23 @@ const reviewSections = computed(() => [
     key: 'exim',
     n: '03',
     title: 'Exim / Incoterms',
-    // Mirrors the tab: the fields the client had removed from Exim (Item
-    // Deal Value trio, FOB Cost, Freight Rate Currency) are not repeated in
-    // the summary either -- the Item figures are reviewed under Items.
-    rows: sectionRows(
-      quotationHeaderFrm.value,
-      [...CURRENCY_FIELDS, ...visibleEximFields.value].filter(
-        (fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname)
-      )
-    )
+    // Mirrors the tab exactly, which is the point: anything the client had
+    // removed from Exim (Item Deal Value trio, FOB Cost, Freight Rate
+    // Currency, and now Region Margin (Applied) -- see `EXIM_HIDDEN_FIELDS`)
+    // must not reappear here, or the summary contradicts the step it
+    // summarises. The Item figures are reviewed under Items instead.
+    //
+    // `CURRENCY_FIELDS` used to be prepended here because they headed the
+    // Exim step; with that block removed (client spec, 2026-09-17) the
+    // summary drops Currency and Exchange Rate. Currency itself is still
+    // visible on Items & Pricing, where it is now chosen. Quotation Date is
+    // the exception: it has its own control on the step again, so it heads
+    // the summary too, or the summary would hide the field that decides
+    // which quarter everything below it was priced in.
+    rows: sectionRows(quotationHeaderFrm.value, [
+      ...EXIM_DATE_FIELDS,
+      ...visibleEximFields.value.filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
+    ])
   },
   { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
@@ -611,6 +639,13 @@ async function saveQuotationHeader() {
 const FREIGHT_PREVIEW_HEADER_FIELDS = [
   'incoterm',
   'hitech_region',
+  // The International Freight Rate Master is matched on Customer + Freight
+  // Region + the quarter of `transaction_date`; `hitech_port_of_discharge`
+  // below is now only a tie-breaker between rows that already matched, not a
+  // match key of its own. So this field is the one that decides whether ANY
+  // international rate is found — leave it out of the payload and the preview
+  // silently prices every leg at 0.
+  'hitech_freight_region',
   'hitech_domestic_destination',
   'hitech_vehicle_type',
   'hitech_port_of_loading',
@@ -655,6 +690,14 @@ const FREIGHT_PREVIEW_RESULT_FIELDS = [
   'hitech_dap_addon_native',
   'hitech_dap_exchange_rate',
   'hitech_dap_addon_inr',
+  // Handover charge (EXW / FCA / FAS only) — same native/rate/INR trio as the
+  // CIF leg, plus the per-container base rate the chain line needs. Without
+  // the base rate here the chain line can't be checked on a quote where
+  // handover is the ONLY leg, which is exactly the EXW case.
+  'hitech_handover_base_rate',
+  'hitech_handover_native',
+  'hitech_handover_exchange_rate',
+  'hitech_handover_inr',
   'hitech_item_deal_value_inr',
   'hitech_item_exchange_rate',
   'hitech_item_deal_value_fc',
@@ -776,7 +819,12 @@ watch(() => orderFrm.value?.doc?.customer, scheduleFreightPreview)
 watch(() => orderFrm.value?.doc?.company, scheduleFreightPreview)
 watch(() => buildFreightPreviewItems(), scheduleFreightPreview, { deep: true })
 
-/* ── Currency picker (top of the Exim step) ──────────────────────────────── */
+/* ── Exchange rates for the quote's currency ─────────────────────────────── */
+/* Was "Currency picker (top of the Exim step)" until the client spec of
+   2026-09-17 removed that block. The currency control now lives on Items &
+   Pricing (`ITEMS_CURRENCY_FIELDS`); everything below still runs, because
+   `conversion_rate` must be filled whether or not anyone can see it, and the
+   Items & Pricing Item-rate line reads these same lookups. */
 
 /** Today as `YYYY-MM-DD`, for the exchange-rate lookups below when the
  *  header frm has no `transaction_date` yet (the SDK's autoBoot normally
@@ -790,9 +838,14 @@ function headerTransactionDate() {
   return quotationHeaderFrm.value?.doc?.transaction_date || todayIso()
 }
 
-/** Shown under the Conversion Rate input when ERPNext has no Currency
- *  Exchange record to fill it from — the estimator types it by hand. */
-const conversionRateHint = ref('')
+/* `conversionRateHint` was a ref rendered under the (now removed) Conversion
+   Rate input, telling the estimator to type a rate by hand when neither this
+   app's Currency Exchange Master nor ERPNext had one. With no such input on
+   screen there is nothing to type into, so the ref went with the block rather
+   than being left set-but-never-read. The same gap is still reported where it
+   is actionable: the Items & Pricing Item-rate line says outright when a
+   quarter has no Item rate, and `hitech_exchange_rate_flags` names every
+   freight leg the engine had to cost at ₹0. */
 let conversionRateToken = 0
 
 /**
@@ -810,11 +863,15 @@ let conversionRateToken = 0
  * was billed at the uncontrolled one. The client confirmed the quarterly
  * rate governs; the backend applies the same rule on save.
  *
- * A rate the estimator has already typed is left alone — but switching from
- * one non-INR currency to another (or from INR's pinned 1) makes the old
- * rate stale, so that case clears it first and re-looks it up. `previous` is
- * `undefined` on the very first run (a resumed Quotation's saved rate must
- * survive boot untouched).
+ * An existing rate is left alone — but switching from one non-INR currency to
+ * another (or from INR's pinned 1) makes the old rate stale, so that case
+ * clears it first and re-looks it up. `previous` is `undefined` on the very
+ * first run (a resumed Quotation's saved rate must survive boot untouched).
+ *
+ * Still needed even though `conversion_rate` has no input anywhere in the
+ * wizard any more (client spec, 2026-09-17): the value is submitted with the
+ * header, and a currency picked on Items & Pricing before the Exim step has
+ * ever run a freight preview would otherwise reach the Quotation at 0.
  */
 watch(
   () => quotationHeaderFrm.value?.doc?.currency,
@@ -822,7 +879,6 @@ watch(
     const frm = quotationHeaderFrm.value
     if (!frm || !currency) return
     const token = ++conversionRateToken
-    conversionRateHint.value = ''
     if (String(currency).toUpperCase() === 'INR') {
       if (Number(frm.doc.conversion_rate) !== 1) await frm.set_value('conversion_rate', 1)
       return
@@ -831,14 +887,12 @@ watch(
     if (switched) await frm.set_value('conversion_rate', 0)
     if (Number(frm.doc.conversion_rate) > 0) return
     let rate = 0
-    let source = ''
     try {
       const own = await call(
         'hitech_costing.hitech_costing.doctype.currency_exchange_master.currency_exchange_master.lookup_exchange_rate',
         { currency, purpose: 'Item', date: headerTransactionDate() }
       )
       rate = Number(own?.exchange_rate) || 0
-      if (rate > 0) source = 'item'
     } catch {
       rate = 0
     }
@@ -851,7 +905,6 @@ watch(
             transaction_date: headerTransactionDate()
           })
         )
-        if (rate > 0) source = 'erpnext'
       } catch {
         rate = 0
       }
@@ -861,18 +914,13 @@ watch(
     // a restored localStorage draft applied right after `currency` (see
     // `applyDraftToFrms`), must win over ERPNext's lookup.
     if (Number(frm.doc.conversion_rate) > 0) return
-    if (rate > 0) {
-      await frm.set_value('conversion_rate', rate)
-      // Say which of the two sources this came from: the quarterly rate is
-      // the controlled one, a live ERPNext rate is not, and the difference
-      // decides what the customer is billed.
-      conversionRateHint.value =
-        source === 'erpnext'
-          ? `No ${currency} Item rate in the Currency Exchange Master for this quarter — using ERPNext's own ${rate} for now. Add the quarter's rate and this will follow it.`
-          : ''
-    } else {
-      conversionRateHint.value = `No ${currency} → INR rate in the Currency Exchange Master for this quarter, and none in ERPNext for ${formatDate(headerTransactionDate())} — enter the Exchange Rate by hand.`
-    }
+    // Which of the two sources the rate came from (quarterly master vs.
+    // ERPNext's live lookup) used to be reported in `conversionRateHint`
+    // under the Exchange Rate input. That input is gone (see this group's
+    // header), so only the value itself is applied now; the freight preview
+    // reasserts the quarterly Item rate over it anyway, and the Items &
+    // Pricing Item-rate line is where a missing quarter is called out.
+    if (rate > 0) await frm.set_value('conversion_rate', rate)
   }
 )
 
@@ -2832,10 +2880,12 @@ watch(() => props.quotation, load)
               </button>
             </div>
 
-            <!-- Currency for this quote, offered here as well as on Exim --
-                 see `ITEMS_CURRENCY_FIELDS`. The item is priced on this step,
-                 so this is where the currency decision belongs; the same
-                 field on Exim keeps the CIF/DAP legs' inputs together. -->
+            <!-- Currency for this quote -- see `ITEMS_CURRENCY_FIELDS`. The
+                 item is priced on this step, so this is where the currency
+                 decision belongs. It was a second control alongside Exim's
+                 own currency trio until the client spec of 2026-09-17
+                 removed that block; this is now the only place the quote's
+                 currency is chosen, so don't move or gate it. -->
             <div class="qw-items-currency">
               <WizardStep :frm="quotationHeaderFrm" :fields="ITEMS_CURRENCY_FIELDS" read-only-filter="exclude" />
               <p v-if="!quoteIsForeignCurrency" class="qw-derived__hint qw-items-currency__note">
@@ -3117,53 +3167,35 @@ watch(() => props.quotation, load)
             <p v-if="quotationName" class="qw-step-lede">
               Editing freight &amp; Incoterm details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
             </p>
-            <!-- Currency picker — the quote's own currency trio (real core
-                 Quotation fields, see `CURRENCY_FIELDS`). Sits above the
-                 Incoterm/freight inputs because `transaction_date` decides
-                 which quarter's Currency Exchange Master rates the freight
-                 engine converts the CIF/DAP legs with, and `currency` is
-                 what the Item Deal Value (FC) figure below is priced in. -->
-            <WizardStep :frm="quotationHeaderFrm" :fields="CURRENCY_FIELDS" read-only-filter="exclude" />
-            <p v-if="conversionRateHint" class="qw-derived__warning" style="margin-top: 8px;">{{ conversionRateHint }}</p>
-            <!-- Which rate the Exchange Rate field is actually carrying. The
-                 quarterly Item rate is the controlled one and is what the
-                 customer's quote converts at; anything else is not, and the
-                 difference decides what they are billed. -->
-            <p
-              v-else-if="quoteIsForeignCurrency && itemExchangeRateChip && !itemExchangeRateChip.missing"
-              class="qw-items-currency__note"
-              :class="conversionRateIsQuarterly ? 'qw-derived__hint' : 'qw-derived__warning'"
-            >
-              <template v-if="conversionRateIsQuarterly">
-                Exchange Rate is this quarter's <strong>Item</strong> rate ({{ itemExchangeRateChip.when }}), so the
-                customer's quote and Item Deal Value convert at the same rate.
-              </template>
-              <template v-else>
-                Exchange Rate is <strong>{{ quotationHeaderFrm?.doc?.conversion_rate }}</strong>, but this quarter's
-                <strong>Item</strong> rate is {{ itemExchangeRateChip.value }} ({{ itemExchangeRateChip.when }}) —
-                saving will apply the quarterly rate, so the quote converts at the controlled one.
-              </template>
-            </p>
-            <!-- One chip per exchange-rate purpose (CIF / DAP / Item) for the
-                 chosen currency + date's quarter — see
-                 `runExchangeRateLookup()`. Only for a non-INR quote; INR
-                 never needs converting. -->
-            <div v-if="quoteIsForeignCurrency" class="qw-fx-chips">
-              <span v-if="exchangeRateChipsPending && !exchangeRateChips.length" class="qw-fx-chips__pending">
-                Looking up {{ quoteCurrency }} exchange rates…
-              </span>
-              <span
-                v-for="chip in exchangeRateChips"
-                :key="chip.key"
-                class="qw-fx-chip"
-                :class="{ 'qw-fx-chip--missing': chip.missing }"
-                :title="chip.missing ? `No Currency Exchange Master rate for ${chip.label} — that leg will be costed at ₹0` : ''"
-              >
-                <span class="qw-fx-chip__k">{{ chip.label }}:</span>
-                <span class="qw-fx-chip__v">{{ chip.value }}</span>
-              </span>
+            <!-- The standalone Currency / Exchange Rate / Transaction Date
+                 block that used to head this step is gone (client spec,
+                 2026-09-17): the freight table below states what each leg
+                 converts FROM and AT in its own From and Ex. rate columns, so
+                 repeating the trio here only invited a second, conflicting
+                 answer. Currency is now chosen once, on Items & Pricing (see
+                 `ITEMS_CURRENCY_FIELDS`), and `conversion_rate` /
+                 `transaction_date` still ride along on this same frm —
+                 see `CURRENCY_FIELDS`' own note for why the list survives
+                 without a control. The CIF / DAP / Item rate chips went with
+                 it; the Items & Pricing Item-rate line is where a missing
+                 quarterly rate gets reported now, and the
+                 `hitech_exchange_rate_flags` block below still calls out any
+                 leg the engine had to cost at ₹0. -->
+
+            <!-- Quotation Date, alone (client request, 17 Sep 2026). It went
+                 out with the currency trio above, but it is the one field of
+                 the three an estimator has to set by hand: it picks the
+                 quarter, and the quarter picks the freight rate row AND the
+                 exchange rates. Quoting a past or future quarter is only this
+                 field. Kept as its own block, with its own note, so it can't
+                 be missed -- see `EXIM_DATE_FIELDS`. -->
+            <div class="qw-exim-date">
+              <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
+              <p class="qw-exim-date__note">
+                Sets the quarter used for the freight rate and the exchange rates below.
+              </p>
             </div>
-            <div class="qw-fx-divider" />
+
             <WizardStep :frm="quotationHeaderFrm" :fields="visibleEximFields" read-only-filter="exclude" />
             <WizardStep
               :frm="quotationHeaderFrm"
@@ -3243,9 +3275,15 @@ watch(() => props.quotation, load)
                   </tbody>
                 </table>
               </div>
+              <!-- Names the fields the rate is actually matched on, which
+                   changed with the backend's new keying: Customer + Freight
+                   Region + the quarter of the quotation date. Port of
+                   Discharge only breaks ties between rows that already
+                   matched, so telling the estimator to go and set it (as this
+                   hint did until 2026-09-17) sent them to the wrong field. -->
               <p v-else class="qw-derived__hint qw-items-currency__note">
-                No freight legs yet — pick an Incoterm and a Port of Discharge with a matching International Freight
-                Rate Master row.
+                No freight legs yet — pick an Incoterm and a Freight Region with a matching International Freight Rate
+                Master row for this customer and quarter.
               </p>
 
               <!-- The per-container chain behind each Amount, so the figures
@@ -3254,9 +3292,9 @@ watch(() => props.quotation, load)
                 Amount = base rate per container × {{ freightRateChain.containers }}
                 {{ freightRateChain.containers === 1 ? 'container' : 'containers' }} ×
                 <strong>{{ freightRateChain.factor }}</strong> rate factor<template v-if="freightRateChain.containerType">
-                  for {{ freightRateChain.containerType }}</template>. CIF base
-                {{ money(freightRateChain.cifBase, freightRateChain.currency) }}<template v-if="freightRateChain.dapBase">, DAP
-                base {{ money(freightRateChain.dapBase, freightRateChain.currency) }}</template>.
+                  for {{ freightRateChain.containerType }}</template>.<template v-for="(base, i) in freightRateChain.bases" :key="base.label">{{ i ? ',' : '' }}
+                  {{ base.label }} base {{ money(base.amount, freightRateChain.currency) }}</template><template
+                  v-if="freightRateChain.bases.length">.</template>
               </p>
 
               <div class="qw-freight-total">
@@ -4256,52 +4294,38 @@ watch(() => props.quotation, load)
   color: #E63946;
 }
 
-/* Exim step: the CIF / DAP / Item exchange-rate chips next to the currency
-   picker, and the `hitech_exchange_rate_flags` warning block below the rail
-   (see `runExchangeRateLookup()` / `exchangeRateFlags`). */
-.qw-fx-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
+/* Exim step: the divider above the Freight Cost block, and the
+   `hitech_exchange_rate_flags` warning block below it (see
+   `exchangeRateFlags`).
 
-.qw-fx-chips__pending {
-  font: 500 12px/1 'Raleway', system-ui, sans-serif;
-  color: var(--qw-faint);
-}
-
-.qw-fx-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--qw-border);
-  background: var(--qw-row-border);
-  font: 600 11.5px/1 'IBM Plex Mono', monospace;
-  color: var(--qw-text);
-}
-
-.qw-fx-chip__k {
-  color: var(--qw-muted);
-  font-weight: 500;
-}
-
-.qw-fx-chip--missing {
-  background: rgba(230, 57, 70, .08);
-  border-color: #E63946;
-  color: #E63946;
-}
-
-.qw-fx-chip--missing .qw-fx-chip__k {
-  color: #E63946;
-}
-
+   The `.qw-fx-chip*` rules that used to sit here styled the CIF / DAP / Item
+   exchange-rate chips beside the Exim currency picker; both went with that
+   block (client spec, 2026-09-17), so the rules went too rather than being
+   left as dead CSS. `runExchangeRateLookup()` itself still runs -- the Items
+   & Pricing Item-rate line reads it as plain text, not chips. */
 .qw-fx-divider {
   height: 1px;
   background: var(--qw-border);
   margin: 18px 0 16px;
+}
+
+/* Quotation Date's own block on the Exim step: a single control plus the one
+   line explaining what the date decides. Boxed rather than inline with the
+   rest of the Exim fields because the whole point of re-adding it is that it
+   should be hard to walk past (client request, 17 Sep 2026). */
+.qw-exim-date {
+  padding: 14px 16px 4px;
+  margin: 0 0 18px;
+  border: 1px solid var(--qw-border);
+  border-radius: 8px;
+  background: #FBFCFD;
+  max-width: 420px;
+}
+
+.qw-exim-date__note {
+  margin: 2px 0 10px;
+  font: 400 13px/18px 'Raleway', system-ui, sans-serif;
+  color: var(--qw-muted);
 }
 
 .qw-fx-flags {
