@@ -275,7 +275,7 @@ const itemExchangeRateChip = computed(() => exchangeRateChips.value.find((chip) 
 // (client spec, 2026-09-17) — with no Exchange Rate input on screen there is
 // no hand-typed value left to disagree with, since the freight preview
 // applies the quarterly Item rate to `conversion_rate` itself (see
-// `FREIGHT_PREVIEW_RESULT_FIELDS`) and the backend does the same on save.
+// `runFreightPreview`) and the backend does the same on save.
 
 /** Only 'customer' is unlocked until it's complete; everything else needs at
  *  least one item to exist. No manual bookkeeping — always derived. */
@@ -672,61 +672,29 @@ const FREIGHT_PREVIEW_HEADER_FIELDS = [
   'currency',
   'transaction_date'
 ]
-/** What `preview_freight` hands back — applied onto `quotationHeaderFrm.doc`
- *  via `set_value` (same idiom every other computed value in this file
- *  applies through), so the Exim step's read-only "Calculated" rail
- *  (the second `WizardStep read-only-filter="only"` pass) reflects it right
- *  away, exactly as if a real save had just come back from the server. None
- *  of these overlap `FREIGHT_PREVIEW_HEADER_FIELDS` above, so applying them
- *  can't re-trigger this same preview in a loop. */
-const FREIGHT_PREVIEW_RESULT_FIELDS = [
-  'hitech_containers_estimated',
-  'hitech_containers_applied',
-  'hitech_freight_rate_source',
-  'hitech_total_freight_cost',
-  'hitech_freight_inr_per_kg',
-  'hitech_total_gross_weight_kg',
-  'hitech_insurance_cost',
-  'hitech_fob_cost_applied',
-  'hitech_region_margin_applied',
-  // Currency Conversion outputs — see `EXIM_FIELDS`' own comment on these.
-  'hitech_freight_currency',
-  'hitech_cif_leg_native',
-  'hitech_cif_exchange_rate',
-  'hitech_cif_leg_inr',
-  'hitech_dap_addon_native',
-  'hitech_dap_exchange_rate',
-  'hitech_dap_addon_inr',
-  // Handover charge (EXW / FCA / FAS only) — same native/rate/INR trio as the
-  // CIF leg, plus the per-container base rate the chain line needs. Without
-  // the base rate here the chain line can't be checked on a quote where
-  // handover is the ONLY leg, which is exactly the EXW case.
-  'hitech_handover_base_rate',
-  'hitech_handover_native',
-  'hitech_handover_exchange_rate',
-  'hitech_handover_inr',
-  'hitech_item_deal_value_inr',
-  'hitech_item_exchange_rate',
-  'hitech_item_deal_value_fc',
-  // The Freight Cost table's traceability fields: the per-container chain
-  // behind each Amount, and what each destination-side extra actually
-  // contributed. Without these the table shows a bare figure and its rows
-  // stop adding up to the total.
-  'hitech_freight_container_type',
-  'hitech_freight_rate_factor',
-  'hitech_cif_base_rate',
-  'hitech_dap_base_rate',
-  'hitech_destination_inland_applied',
-  'hitech_unloading_applied',
-  'hitech_import_duty_applied',
-  // The engine puts the quarter's Item rate on the Quotation's own
-  // `conversion_rate` (backend `_apply_item_rate_to_conversion_rate`), so the
-  // customer's quote converts at the controlled quarterly rate rather than a
-  // live market one. Applying it here keeps the Exchange Rate input showing
-  // what a save would really store.
-  'conversion_rate',
-  'hitech_exchange_rate_flags'
-]
+/** Which fields of `preview_freight`'s result must NOT be written back.
+ *
+ *  Everything else in the result is applied onto `quotationHeaderFrm.doc` via
+ *  `set_value` (the same idiom every other computed value in this file applies
+ *  through), so the Exim step reflects it right away, exactly as if a real save
+ *  had just come back from the server.
+ *
+ *  This used to be an allow-LIST of result fields, hand-kept in step with the
+ *  backend's `PREVIEW_RESULT_FIELDS`. It drifted, twice, and the second time
+ *  shipped: `hitech_fallback_freight_applied` was added to the engine but not
+ *  to the list, so the preview's 0 was never applied and a quote that had
+ *  previously fallen back kept showing a stale "Fallback formula" row of its
+ *  old amount -- on a quote that had since matched a real master rate. The
+ *  table then disagreed with its own total by exactly that amount (client
+ *  report, 17 Sep 2026).
+ *
+ *  So it is a deny-list now, and a short one. The backend decides what it
+ *  returns (`PREVIEW_RESULT_FIELDS`, derived from the engine's own
+ *  `_RESET_DEFAULTS`), and everything it sends gets applied. The only thing
+ *  that must be held back is a field this preview itself reads as INPUT --
+ *  writing one of those would re-trigger the preview in a loop.
+ */
+const FREIGHT_PREVIEW_INPUT_FIELDS = new Set(FREIGHT_PREVIEW_HEADER_FIELDS)
 
 const freightPreviewPending = ref(false)
 const freightPreviewError = ref('')
@@ -778,8 +746,9 @@ async function runFreightPreview() {
     if (token !== freightPreviewToken) return
     const frm = quotationHeaderFrm.value
     if (!frm || !result) return
-    for (const fieldname of FREIGHT_PREVIEW_RESULT_FIELDS) {
-      if (fieldname in result) await frm.set_value(fieldname, result[fieldname])
+    for (const fieldname of Object.keys(result)) {
+      if (FREIGHT_PREVIEW_INPUT_FIELDS.has(fieldname)) continue
+      await frm.set_value(fieldname, result[fieldname])
     }
     freightPreviewError.value = ''
   } catch (e) {
