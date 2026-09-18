@@ -339,14 +339,20 @@ onMounted(load)
                 <td style="padding:14px 18px; color:#334155;">{{ r.product || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.transaction_date ? formatDate(r.transaction_date) : '—' }}</td>
                 <td style="padding:14px 18px; text-align:right; color:#334155;">{{ money(r.grand_total) }}</td>
+                <!-- Past Draft, the Quotation's own docstatus is the only status worth
+                     showing — the derived pill describes the costing worksheet pipeline,
+                     not the quote, so "Draft" sitting next to "Submitted" just read as a
+                     contradiction. -->
                 <td style="padding:14px 18px;">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                    <span v-else style="color:#94A0AE; font-size:13px;">—</span>
+                    <template v-if="r.docstatus === 0">
+                      <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
+                      <span v-else style="color:#94A0AE; font-size:13px;">—</span>
+                    </template>
                     <span :style="docstatusBadge(r.docstatus).style">{{ docstatusBadge(r.docstatus).label }}</span>
                   </div>
                 </td>
-                <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">Open →</td>
+                <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">{{ r.docstatus === 0 ? 'Open →' : 'View →' }}</td>
               </tr>
               <tr v-if="!pageRows.length && !loading">
                 <td colspan="7" style="padding:44px 18px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;">
