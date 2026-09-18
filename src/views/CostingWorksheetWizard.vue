@@ -1821,7 +1821,16 @@ function makeItem(frm, key, line = null) {
     unlockedSteps: initialUnlockedSteps(frm),
     stepError: '',
     saving: false,
-    submitState: frm.docstatus === 1 ? 'succeeded' : 'pending',
+    // Costing Worksheet is not a submittable DocType (no `is_submittable` in
+    // its JSON -- see `submit_worksheet`'s own docstring), so `frm.docstatus`
+    // is 0 on every worksheet that has ever existed. Seeding this from
+    // docstatus meant `submitAll()`'s "already succeeded, skip it" guard
+    // could never fire, and resuming a mapped Quotation re-submitted a
+    // worksheet the backend had already mapped -- `submit_and_map` requires
+    // status Draft, so it threw "Cannot submit a worksheet with status
+    // Quoted" and the item showed as Failed. `quotation`/`status` are the
+    // real signal: `map_to_quotation` db_sets both together.
+    submitState: frm.doc?.quotation || frm.doc?.status === 'Quoted' ? 'succeeded' : 'pending',
     submitError: '',
     // Wizard-only overrides for this item's Quotation line — not Costing
     // Worksheet fields, just carried through to `submit_and_map`. Quantity
