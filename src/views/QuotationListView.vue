@@ -23,7 +23,7 @@ import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { formRouteFor, defaultListActionRouteFor } from '@/lib/frappeRouting'
 import { STATUS_STAGES } from '@/lib/home'
-import { worksheetStatusStyle } from '@/utils/styles'
+import { worksheetStatusStyle, docstatusBadge } from '@/utils/styles'
 import { money, formatDate } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
 
@@ -339,18 +339,27 @@ onMounted(load)
                 <td style="padding:14px 18px; color:#334155;">{{ r.product || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.transaction_date ? formatDate(r.transaction_date) : '—' }}</td>
                 <td style="padding:14px 18px; text-align:right; color:#334155;">{{ money(r.grand_total) }}</td>
-                <!-- The costing flow never submits its Quotation — costing_worksheet.py
-                     inserts it and marks the *worksheet* "Quoted" — so docstatus is 0 on
-                     every row and a Draft/Submitted badge here would be permanent noise.
-                     The worksheet-derived pipeline status is the only status this list
-                     can meaningfully show. -->
+                <!-- While the Quotation is still Draft its own docstatus says nothing an
+                     estimator needs (it would read "Draft" on every row), so the cell shows
+                     the worksheet-derived pipeline status instead. Once it is submitted or
+                     cancelled that flips: the Quotation's own state is now the fact that
+                     matters, and the worksheet's costing stage alongside it only read as a
+                     contradiction. The wizard is unreachable past Draft too
+                     (`QuotationOpenView` routes it to the review screen, and the backend's
+                     `_guard_against_edit_after_submit` freezes the linked worksheets), so
+                     the row says View rather than Open. -->
                 <td style="padding:14px 18px;">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                    <span v-else style="color:#94A0AE; font-size:13px;">—</span>
+                    <template v-if="r.docstatus === 0">
+                      <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
+                      <span v-else style="color:#94A0AE; font-size:13px;">—</span>
+                    </template>
+                    <span v-else :style="docstatusBadge(r.docstatus).style">{{ docstatusBadge(r.docstatus).label }}</span>
                   </div>
                 </td>
-                <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">Open →</td>
+                <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">
+                  {{ r.docstatus === 0 ? 'Open →' : 'View →' }}
+                </td>
               </tr>
               <tr v-if="!pageRows.length && !loading">
                 <td colspan="7" style="padding:44px 18px; text-align:center; color:#94A0AE; font-size:14px; font-weight:600;">

@@ -2609,9 +2609,72 @@ async function submitAll() {
   draftMode.value = null
 }
 
+/** Finishing is a two-step now: the button only opens the confirmation
+ *  below, because the confirm's "Submit quotation" is the point of no
+ *  return -- see `confirmFinishQuotation()`. */
+const finishConfirmOpen = ref(false)
+const finishSubmitting = ref(false)
+
 function finishQuotation() {
   if (!quotationName.value) return
-  router.push(`/quotation/${encodeURIComponent(quotationName.value)}/review`)
+  finishSubmitting.value = false
+  finishConfirmOpen.value = true
+}
+
+/** The dismiss path: does nothing at all, leaves the review step exactly as
+ *  it was. Ignored mid-call so a stray Escape or scrim click can't hide a
+ *  submit that is already in flight. */
+function cancelFinishQuotation() {
+  if (finishSubmitting.value) return
+  finishConfirmOpen.value = false
+}
+
+/** Escape closes it, same as the 3D dialog -- the panel itself may not hold
+ *  focus, so this is a window-level capture rather than a panel keydown. */
+function onFinishConfirmKeydown(event) {
+  if (event.key === 'Escape') cancelFinishQuotation()
+}
+watch(finishConfirmOpen, (open) => {
+  if (open) window.addEventListener('keydown', onFinishConfirmKeydown, true)
+  else window.removeEventListener('keydown', onFinishConfirmKeydown, true)
+})
+onBeforeUnmount(() => window.removeEventListener('keydown', onFinishConfirmKeydown, true))
+
+/**
+ * Submits the Quotation itself -- the step this costing flow never took.
+ *
+ * `submit_and_map` only ever INSERTS the Quotation and flips each worksheet
+ * to Quoted; the Quotation is left at docstatus 0 forever, so up to this
+ * point nothing is actually final -- it is still an editable draft and every
+ * worksheet behind it can still be reopened here. The Quotation's docstatus
+ * is the real audit boundary: the backend's
+ * `_guard_against_edit_after_submit` freezes a Costing Worksheet off its
+ * linked Quotation being submitted, so THIS call is what turns the whole set
+ * read-only. Hence the confirmation in front of it -- past here ERPNext's
+ * only way back is cancel + amend, not an edit.
+ */
+async function confirmFinishQuotation() {
+  if (!quotationName.value || finishSubmitting.value) return
+  finishSubmitting.value = true
+  submitAllError.value = ''
+  try {
+    const result = await call('hitech_costing.quotation.submit_quotation', { name: quotationName.value })
+    // Keep the wizard's own copy of the docstatus honest even though we route
+    // away immediately -- `activeItemLocked` reads it, so coming back into
+    // this same session (browser Back) shows the items read-only instead of
+    // offering edits the backend would now reject.
+    quotationDocstatus.value = result?.docstatus ?? 1
+    finishConfirmOpen.value = false
+    router.push(`/quotation/${encodeURIComponent(result?.name ?? quotationName.value)}/review`)
+  } catch (e) {
+    // Same presentation the Submit action already uses for its own failures:
+    // the backend's message (already thrown / already submitted / no items)
+    // lands on the step and the user stays right where they were.
+    submitAllError.value = e?.message ?? String(e)
+    finishConfirmOpen.value = false
+  } finally {
+    finishSubmitting.value = false
+  }
 }
 
 onMounted(load)
@@ -3456,10 +3519,74 @@ watch(() => props.quotation, load)
             >
               {{ submitPhase === 'running' ? 'Submitting…' : submitPhase === 'partial-failure' ? 'Retry' : 'Submit' }}
             </button>
-            <button v-else type="button" class="qw-next-btn" @click="finishQuotation">Finish quotation →</button>
+            <button
+              v-else
+              type="button"
+              class="qw-next-btn"
+              :disabled="finishSubmitting"
+              @click="finishQuotation"
+            >
+              Finish quotation →
+            </button>
           </div>
         </section>
       </div>
+
+      <!-- Confirmation for "Finish quotation". Rendered inside .qw-wizard (not
+           teleported like ContainerFit3D) so the qw-* palette custom properties
+           declared on the root still cascade into it; `position: fixed` centres
+           it regardless of where it sits in the tree. -->
+      <Transition name="qw-confirm">
+        <div v-if="finishConfirmOpen" class="qw-confirm-scrim" @click="cancelFinishQuotation" />
+      </Transition>
+      <Transition name="qw-confirm">
+        <div
+          v-if="finishConfirmOpen"
+          class="qw-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="qw-confirm-title"
+          :aria-busy="finishSubmitting"
+          tabindex="-1"
+        >
+          <header class="qw-confirm__head">
+            <div>
+              <div class="qw-confirm__eyebrow">Finish quotation</div>
+              <h2 id="qw-confirm-title" class="qw-confirm__title">Submit {{ quotationName }}?</h2>
+            </div>
+            <button
+              type="button"
+              class="qw-confirm__close"
+              title="Close"
+              aria-label="Close"
+              :disabled="finishSubmitting"
+              @click="cancelFinishQuotation"
+            >
+              ✕
+            </button>
+          </header>
+
+          <div class="qw-confirm__body">
+            <p>
+              This submits Quotation <strong>{{ quotationName }}</strong> and makes it read-only. It can no longer be
+              reopened or edited in this wizard, and the {{ items.length }}
+              costing sheet{{ items.length === 1 ? '' : 's' }} behind it are frozen with it.
+            </p>
+            <p class="qw-confirm__warn">
+              This cannot be undone here — a submitted quotation can only be cancelled and amended in ERPNext.
+            </p>
+          </div>
+
+          <footer class="qw-confirm__foot">
+            <button type="button" class="qw-ghost-btn" :disabled="finishSubmitting" @click="cancelFinishQuotation">
+              Cancel
+            </button>
+            <button type="button" class="qw-next-btn" :disabled="finishSubmitting" @click="confirmFinishQuotation">
+              {{ finishSubmitting ? 'Submitting…' : 'Submit quotation' }}
+            </button>
+          </footer>
+        </div>
+      </Transition>
 
       <ChildRowDrawer :frm="activeItem?.frm ?? null" :root="wizardEl" :read-only="activeItemLocked" />
       <ContainerFit3D
@@ -4437,6 +4564,123 @@ watch(() => props.quotation, load)
 .qw-next-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* "Finish quotation" confirmation — same scrim/panel shape and z-index band
+   as ContainerFit3D's dialog (cf3d-scrim / .cf3d), in this page's palette. */
+.qw-confirm-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 70;
+}
+
+.qw-confirm {
+  position: fixed;
+  z-index: 71;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, 94vw);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--qw-border);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(11, 52, 101, 0.28);
+  font-family: 'Raleway', system-ui, sans-serif;
+  color: var(--qw-text);
+  outline: none;
+  overflow: hidden;
+}
+
+.qw-confirm__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--qw-border);
+}
+
+.qw-confirm__eyebrow {
+  font: 500 11px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--qw-faint);
+  margin-bottom: 6px;
+}
+
+.qw-confirm__title {
+  margin: 0;
+  font: 800 19px/1.25 'Raleway', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+  color: var(--qw-text);
+}
+
+.qw-confirm__close {
+  background: transparent;
+  border: none;
+  color: var(--qw-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.qw-confirm__close:hover:not(:disabled) {
+  color: var(--qw-primary-dark);
+}
+
+.qw-confirm__close:disabled {
+  color: var(--qw-faint);
+  cursor: not-allowed;
+}
+
+.qw-confirm__body {
+  padding: 16px 20px 4px;
+}
+
+.qw-confirm__body p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--qw-body);
+}
+
+.qw-confirm__body strong {
+  color: var(--qw-text);
+}
+
+.qw-confirm__warn {
+  font-weight: 600;
+  /* Same red .qw-step-error uses, so a warning here and an error on the step
+     below read as the same voice. */
+  color: #e63946;
+}
+
+.qw-confirm__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px 18px;
+}
+
+.qw-confirm-enter-active,
+.qw-confirm-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.qw-confirm-enter-from,
+.qw-confirm-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qw-confirm-enter-active,
+  .qw-confirm-leave-active {
+    transition: none;
+  }
 }
 
 /* Re-tint the SDK-rendered form controls (WizardStep -> controlFor(...)) to

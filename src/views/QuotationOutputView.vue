@@ -55,11 +55,31 @@ function row(label, value) {
 }
 
 /** A `row()` the template renders as a red warning block instead of a plain
- *  value — for `hitech_exchange_rate_flags`, whose text means "this leg was
- *  costed at ₹0 because a quarter's rate is missing". */
+ *  value — for `hitech_exchange_rate_flags`. */
 function warningRow(label, value) {
   const r = row(label, value)
   return r ? { ...r, warning: true } : null
+}
+
+/** `hitech_exchange_rate_flags` reads like one thing but is a bucket for two
+ *  unrelated warnings, both appended by `exim.py`'s `_add_flag`:
+ *
+ *    - a missing Currency Exchange Master rate, where the affected leg really
+ *      was costed at ₹0 and the quote is wrong;
+ *    - no International Freight Rate Master row, where the freight simply fell
+ *      back to the formula instead of a negotiated rate — nothing is ₹0.
+ *
+ *  The heading used to be hardcoded to the first, so a fallback notice was
+ *  presented to the estimator as a ₹0 alarm. Derive it from what the field
+ *  actually says instead. */
+function flagsLabel(flags) {
+  const text = String(flags || '')
+  const missingRate = text.includes('Currency Exchange Master')
+  const fallback = text.includes('International Freight Rate Master')
+  if (missingRate && fallback) return 'Pricing warnings'
+  if (missingRate) return 'Exchange rate missing — affected legs costed at ₹0'
+  if (fallback) return 'Freight priced by the fallback formula, not a negotiated rate'
+  return 'Pricing warning'
 }
 
 /** The quote's own currency (`currency` on the Quotation, INR unless the
@@ -196,7 +216,8 @@ const eximRows = computed(() => {
  *  result, and the item deal value in INR / the quote currency. Empty
  *  figures are skipped like everywhere else on this page — except
  *  `hitech_exchange_rate_flags`, which is the one thing that must NOT be
- *  quietly dropped: it means a leg was costed at ₹0 for want of a rate. */
+ *  quietly dropped: it means the quote is priced on something other than the
+ *  figures shown (see `flagsLabel` for the two cases). */
 const currencyRows = computed(() => {
   if (!doc.value) return []
   const d = doc.value
@@ -219,7 +240,7 @@ const currencyRows = computed(() => {
     row('Item deal value (INR)', d.hitech_item_deal_value_inr ? money(d.hitech_item_deal_value_inr) : null),
     row('Item exchange rate', fx(d.hitech_item_exchange_rate)),
     row(`Item deal value (${qc})`, d.hitech_item_deal_value_fc ? money(d.hitech_item_deal_value_fc, qc) : null),
-    warningRow('Exchange rate missing — affected legs costed at ₹0', d.hitech_exchange_rate_flags)
+    warningRow(flagsLabel(d.hitech_exchange_rate_flags), d.hitech_exchange_rate_flags)
   ].filter(Boolean)
 })
 
