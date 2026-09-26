@@ -27,7 +27,7 @@ const PAGES = [
   { label: 'Home', route: '/', icon: 'layout-dashboard', keywords: 'home dashboard overview' },
   { label: 'Costing Worksheets', route: '/ui/Costing Worksheet', icon: 'calculator', keywords: 'worksheet worksheets costing quote quotation' },
   { label: 'Masters', route: '/masters', icon: 'database', keywords: 'tank type material paint rate masters' },
-  { label: 'Costing Settings', route: '/form/Costing Settings/Costing Settings', icon: 'settings', keywords: 'settings rates scrap bands complexity' },
+  { label: 'Costing Settings', route: '/form/Costing Settings/Costing Settings', icon: 'settings', keywords: 'settings rates scrap processing complexity' },
   { label: 'Packing Settings', route: '/form/Packing Settings/Packing Settings', icon: 'package', keywords: 'packing settings gap pallet thickness container' },
   { label: 'Currency Exchange Rates', route: '/list/Currency Exchange Master', icon: 'coins', keywords: 'currency exchange rate master cif dap item quarter usd eur forex' },
   { label: 'International Freight Rates', route: '/list/International Freight Rate Master', icon: 'ship', keywords: 'international freight rate master sea air sector port container' },

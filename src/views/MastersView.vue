@@ -3,7 +3,7 @@ import LucideIcon from '@/components/LucideIcon.vue'
 
 /** Standalone (non-child-table) setup doctypes from the hitech_costing app. */
 const MASTERS = [
-  { doctype: 'Tank Type', label: 'Tank Types', desc: 'Base tank definitions and their derived labour rates.', icon: 'container', bg: '#EFF6FF', fg: '#2563EB' },
+  { doctype: 'Tank Type', label: 'Tank Types', desc: 'Base tank definitions, their derived labour rate and their per-kg processing rates.', icon: 'container', bg: '#EFF6FF', fg: '#2563EB' },
   { doctype: 'Costing Department', label: 'Costing Departments', desc: 'Departments used to group processing costs.', icon: 'building-2', bg: '#F5F3FF', fg: '#7C3AED' },
   { doctype: 'Paint Make', label: 'Paint Makes', desc: 'Approved paint brands/makes.', icon: 'paintbrush', bg: '#ECFDF5', fg: '#059669' },
   { doctype: 'Paint System Rate', label: 'Paint System Rates', desc: 'Price per sqm by paint make, method and DFT band.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
@@ -23,8 +23,8 @@ const MASTERS = [
     <div style="margin-bottom:22px;">
       <h1 style="margin:0; font-size:26px; font-weight:800; letter-spacing:-.025em;">Masters</h1>
       <div style="font-size:13.5px; color:#64748B; margin-top:5px;">
-        Setup data behind every Costing Worksheet. Scrap rules, processing cost bands and the
-        complexity matrices live inside Costing Settings, not here.
+        Setup data behind every Costing Worksheet. Scrap rules and the complexity matrices live
+        inside Costing Settings, not here; processing rates live on each Tank Type.
       </div>
     </div>
 

@@ -89,6 +89,14 @@ export const ITEM_STEPS = [
       'material_cost_inr_kg',
       'accessory_content_percent',
       'fabrication_class',
+      // The accessory-content classification and its multiplier belong with
+      // the weights they're derived from, which is why they sit here next to
+      // Labour Cost — but they do NOT scale it. Labour Cost (INR/kg) is now
+      // the bare `labour_rate_inr_per_kg` from the Product Line step;
+      // `fabrication_multiplier` is instead folded (together with
+      // `order_complexity_multiplier`) into `complexity_uplift_percent`,
+      // which the backend applies once to the grand total on the Commercials
+      // step. Nothing on this step is multiplied by it.
       'fabrication_multiplier'
     ]
   },
@@ -117,11 +125,22 @@ export const ITEM_STEPS = [
       'complexity_ratings',
       'order_complexity_score',
       'order_complexity_class',
+      // Still a real, computed classification output — but it no longer
+      // scales processing. It's summed with `fabrication_multiplier` into
+      // `complexity_uplift_percent` and applied once to the grand total (see
+      // the Commercials step).
       'order_complexity_multiplier',
       // "Processing and Labour" on the real DocType: its own Section Break,
-      // but every field in it is read_only (computed from the complexity
-      // multiplier above and step 1's labour rate) — no input of its own to
-      // warrant a step, so it rides along here as more calculated values.
+      // but every field in it is read_only — no input of its own to warrant
+      // a step, so it rides along here as more calculated values.
+      //
+      // Nothing here is multiplied by anything any more: the four
+      // consumable/utility rates are copied straight off the item's Tank
+      // Type (its own `*_inr` fields, which replaced the retired Processing
+      // Cost Band table on Costing Settings),
+      // `total_processing_cost_inr_kg` is their plain sum, and
+      // `labour_cost_inr_kg` is just `labour_rate_inr_per_kg` from the
+      // Product Line step. The worksheet fieldnames below are unchanged.
       'packaging_consumable_inr_kg',
       'processing_consumable_inr_kg',
       'repair_maintenance_inr_kg',
@@ -150,6 +169,16 @@ export const ITEM_STEPS = [
       // step, so its calculated-values rail is where "what does this item's
       // costing actually come out to" belongs, same numbers the old
       // (now page-level) Review & Submit step used to show.
+      //
+      // `complexity_uplift_percent` is read_only and backend-computed
+      // (`(order_complexity_multiplier - 1) + (fabrication_multiplier - 1)`,
+      // as a percent); it's listed immediately before Total FG Cost, the
+      // same order the DocType declares, because it is the one thing that
+      // multiplies it — every cost line above is summed, then this uplift is
+      // applied once. Without it on screen the rail shows a Total FG Cost
+      // that doesn't add up from the lines the estimator just filled in.
+      // Displayed only — never recomputed here.
+      'complexity_uplift_percent',
       'total_fg_cost_inr_kg',
       'pure_margin_inr_kg',
       'pure_margin_percent',
