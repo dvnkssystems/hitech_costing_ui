@@ -75,7 +75,15 @@ import {
   installWorkflowActions
 } from '@/lib/frmCompat'
 import { installDeskApis, installAmend, takePendingDoc } from '@/lib/mappedDoc'
-import { money, decimal, formatDate, timeAgo } from '@/utils/format'
+import {
+  money,
+  float,
+  percent,
+  integer,
+  formatDate,
+  timeAgo,
+  CURRENCY_PRECISION
+} from '@/utils/format'
 
 const DOCTYPE = 'Costing Worksheet'
 const HEADER_DOCTYPE = 'Quotation'
@@ -368,10 +376,11 @@ function reviewDisplayValue(df, raw, fieldname) {
     case 'Currency':
       return money(raw)
     case 'Float':
+      return float(raw)
     case 'Percent':
-      return decimal(raw)
+      return percent(raw)
     case 'Int':
-      return Number(raw).toLocaleString()
+      return integer(raw)
     case 'Check':
       return raw ? 'Yes' : 'No'
     case 'Date':
@@ -952,7 +961,10 @@ async function runExchangeRateLookup() {
         label: `${currency} ${purpose} ${when}`,
         when,
         rate: missing ? null : Number(rate),
-        value: missing ? 'no rate' : Number(rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
+        // An exchange rate is a Float on Currency Exchange Master, so it reads
+        // at the site's float precision (6) — the quarter's rate is quoted to
+        // more than 4 decimals often enough to matter on a CIF leg.
+        value: missing ? 'no rate' : float(rate),
         missing
       }
     })
@@ -1013,11 +1025,12 @@ const activeItemHasDerived = computed(
  */
 const activeItemLocked = computed(() => Boolean(quotationName.value) && quotationDocstatus.value === 1)
 /**
- * The "Calculated" rail's rows — formatted like `sectionRows` (₹ currency,
- * 2dp) rather than `WizardStep`'s SDK controls, which bind the raw doc value
- * straight to a number input with no rounding (a step with several chained
- * float divisions, e.g. Commercials' totals, would otherwise show something
- * like "233.91004000000004" instead of "₹233.91").
+ * The "Calculated" rail's rows — formatted like `sectionRows` (fieldtype-
+ * driven: ₹ currency at 4dp, Float/Percent at 6dp, see utils/format) rather
+ * than `WizardStep`'s SDK controls, which bind the raw doc value straight to a
+ * number input with no rounding (a step with several chained float divisions,
+ * e.g. Commercials' totals, would otherwise show something like
+ * "233.91004000000004" instead of "₹233.9100").
  *
  * Used to skip `sectionRows`'s `fieldState(...).visible` check outright: every
  * field `derivedFieldnames` selected was `read_only` with no `depends_on`
@@ -1364,9 +1377,14 @@ const containerLogisticsRows = computed(() => {
 })
 
 /** Display helpers for the Container / Logistics rows and per-container
- *  table -- two-decimal %, whole-ish kg, Indian digit grouping. */
+ *  table -- two-decimal %, whole-ish kg, Indian digit grouping.
+ *
+ *  Both deliberately stay narrow while costing figures widened to the site's
+ *  4dp/6dp precision: these are packing geometry, not money. A container is
+ *  "83.47% full" -- the sixth decimal of a utilization ratio is millimetres of
+ *  air, and the kg here is a shipment weight, read at a glance. */
 function formatPercent(value) {
-  return `${Number(value || 0).toFixed(2)}%`
+  return percent(value, 2)
 }
 function formatKg(value) {
   return `${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 })} kg`
@@ -2394,15 +2412,16 @@ function autoLoadComplexityQuestions(item) {
  *  IEEE-754 noise out past a dozen digits (`1208.68864223999999`) — invisible
  *  everywhere else because every other display goes through `money()`'s
  *  rounding, but this is a straight `set_value` into a *live, editable*
- *  Currency field, whose input shows the raw doc value verbatim. `flt(…, 2)`
- *  (Frappe's own float-round, same as the Currency fieldtype's own default
- *  precision) is what the real desk form's Currency control applies before
- *  ever displaying a value — do the same here before it ever reaches the field. */
+ *  Currency field, whose input shows the raw doc value verbatim.
+ *  `flt(…, CURRENCY_PRECISION)` (Frappe's own float-round, at the site's
+ *  `currency_precision`) is what the real desk form's Currency control applies
+ *  before ever displaying a value — do the same here before it ever reaches
+ *  the field. */
 function autoPrefillDealPrice(item) {
   if (!item || item.activeStepIndex !== COMMERCIALS_STEP_INDEX) return
   const doc = item.frm.doc
   if (Number(doc.deal_price_fg_inr_per_kg) > 0) return
-  const cost = flt(doc.total_fg_cost_inr_kg, 2)
+  const cost = flt(doc.total_fg_cost_inr_kg, CURRENCY_PRECISION)
   if (cost > 0) item.frm.set_value('deal_price_fg_inr_per_kg', cost)
 }
 

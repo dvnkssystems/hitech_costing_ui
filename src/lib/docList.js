@@ -1,5 +1,9 @@
 import { call } from './frappe'
 import { db } from './frappeDb'
+import { numberByFieldtype } from '@/utils/format'
+
+/** Fieldtypes `formatCell` hands to `numberByFieldtype` rather than stringify. */
+const NUMERIC_FIELDTYPES = new Set(['Currency', 'Float', 'Percent', 'Int'])
 
 export const LIST_PAGE_SIZE = 20
 
@@ -144,16 +148,18 @@ export async function fetchDocList(doctype, { columns = [], filters = [], search
   return { rows: list, total: total ?? list.length, exactTotal: total !== null }
 }
 
-/** Render a cell without pulling in the SDK's control machinery. */
+/**
+ * Render a cell without pulling in the SDK's control machinery.
+ *
+ * Numbers go through `numberByFieldtype`, so a list column carries the same
+ * precision the site's System Settings give the desk: Currency 4dp, Float and
+ * Percent 6dp, Int a bare count. No currency glyph — a list column is headed
+ * by its own label, and the one caller that knows the currency
+ * (`DocListView`'s Number Cards) prefixes the code itself.
+ */
 export function formatCell(value, fieldtype) {
   if (value === null || value === undefined || value === '') return '—'
   if (fieldtype === 'Check') return value ? 'Yes' : 'No'
-  if (fieldtype === 'Currency' || fieldtype === 'Float') {
-    return Number(value).toLocaleString(undefined, {
-      minimumFractionDigits: 4,
-      maximumFractionDigits: 4
-    })
-  }
-  if (fieldtype === 'Int') return Number(value).toLocaleString()
+  if (NUMERIC_FIELDTYPES.has(fieldtype)) return numberByFieldtype(value, fieldtype)
   return String(value)
 }

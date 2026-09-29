@@ -5,7 +5,7 @@ import { useSessionStore } from '@/stores/session'
 import { hasBackend } from '@/lib/frappe'
 import { fetchHomeStats, QUOTATION_PIPELINE_STAGES } from '@/lib/home'
 import { formRouteFor } from '@/lib/frappeRouting'
-import { formatDate, moneyCompact } from '@/utils/format'
+import { formatDate, moneyCompact, integer, percent } from '@/utils/format'
 import { worksheetStatusStyle } from '@/utils/styles'
 import LucideIcon from '@/components/LucideIcon.vue'
 
@@ -30,9 +30,16 @@ const greetingName = computed(() => {
   return name.includes('@') ? name.split('@')[0] : name.split(' ')[0]
 })
 
-const n = (value) => (Number(value) || 0).toLocaleString()
+const n = (value) => integer(value)
+/**
+ * Dashboard percentages stay at 1dp on purpose — these are headline tiles
+ * ("Avg margin 23.4%"), not costing figures, and the full 6dp the site's
+ * float precision allows belongs on the worksheet rail where the number is
+ * actually reconciled. The digits are an explicit argument to the shared
+ * helper so the narrowing is a decision, not an accident.
+ */
 const pct = (value, digits = 1) =>
-  value === null || value === undefined ? '—' : `${Number(value).toFixed(digits)}%`
+  value === null || value === undefined ? '—' : percent(value, digits)
 
 /** Placeholder stages so the pipeline keeps its shape before data lands. */
 const emptyPipeline = QUOTATION_PIPELINE_STAGES.map((s) => ({ ...s, count: 0, share: 0 }))
@@ -56,7 +63,7 @@ const cards = computed(() => {
         !growth || growth.pct === null
           ? { text: `${n(growth?.current)} created this month`, icon: 'clock', color: '#64748B' }
           : {
-              text: `${growth.pct >= 0 ? '+' : ''}${growth.pct.toFixed(1)}%`,
+              text: `${growth.pct >= 0 ? '+' : ''}${pct(growth.pct)}`,
               suffix: 'vs last month',
               icon: 'trending-up',
               color: growth.pct >= 0 ? '#107830' : '#E63946'

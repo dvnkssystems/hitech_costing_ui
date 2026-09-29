@@ -21,7 +21,7 @@ import { listRouteFor, formRouteFor } from '@/lib/frappeRouting'
 import { printRecord } from '@/lib/rowActions'
 import { STATUS_STAGES } from '@/lib/home'
 import { worksheetStatusStyle } from '@/utils/styles'
-import { money, decimal, formatDate } from '@/utils/format'
+import { money, decimal, float, percent, formatDate } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
 
 const props = defineProps({
@@ -100,7 +100,7 @@ const orderRows = computed(() => {
     row('Currency', d.currency),
     row(
       'Conversion rate',
-      d.conversion_rate && quoteCurrency.value !== 'INR' ? `1 ${quoteCurrency.value} = ${decimal(d.conversion_rate)} INR` : null
+      d.conversion_rate && quoteCurrency.value !== 'INR' ? `1 ${quoteCurrency.value} = ${float(d.conversion_rate)} INR` : null
     ),
     row('Date', d.transaction_date ? formatDate(d.transaction_date) : null),
     row('Valid till', d.valid_till ? formatDate(d.valid_till) : null)
@@ -124,7 +124,7 @@ const totalsRows = computed(() => {
   const d = doc.value
   return [
     row('Total', d.total !== undefined ? money(d.total) : null),
-    row('Discount', d.additional_discount_percentage ? `${decimal(d.additional_discount_percentage)} %` : null),
+    row('Discount', d.additional_discount_percentage ? percent(d.additional_discount_percentage) : null),
     row('Net total', d.net_total !== undefined ? money(d.net_total) : null),
     row('Grand total', d.grand_total !== undefined ? money(d.grand_total) : null)
   ].filter(Boolean)
@@ -135,7 +135,7 @@ const taxRows = computed(() => {
   return taxes.map((t) => ({
     key: t.name ?? t.account_head,
     label: t.description || t.account_head,
-    rate: t.rate !== undefined ? `${decimal(t.rate)} %` : '—',
+    rate: t.rate !== undefined ? percent(t.rate) : '—',
     amount: money(t.tax_amount)
   }))
 })
@@ -180,13 +180,13 @@ const eximRows = computed(() => {
     row('Port of discharge', d.hitech_port_of_discharge),
     row('Pre-carriage by', d.hitech_pre_carriage_by),
     row('Place of pre-carrier', d.hitech_place_of_pre_carrier),
-    row('Insurance %', d.hitech_insurance_percent ? `${decimal(d.hitech_insurance_percent)} %` : null),
+    row('Insurance %', d.hitech_insurance_percent ? percent(d.hitech_insurance_percent) : null),
     row('Insurance value', d.hitech_insurance_value ? money(d.hitech_insurance_value) : null),
     row('Insurance cost', d.hitech_insurance_cost ? money(d.hitech_insurance_cost) : null),
     row('Destination inland cost', d.hitech_destination_inland_cost ? money(d.hitech_destination_inland_cost) : null),
     row('Unloading cost at destination', d.hitech_unloading_cost_at_destination ? money(d.hitech_unloading_cost_at_destination) : null),
     row('Import duty / tax', d.hitech_import_duty_tax ? money(d.hitech_import_duty_tax) : null),
-    row('Total gross weight (kg)', d.hitech_total_gross_weight_kg ? decimal(d.hitech_total_gross_weight_kg) : null),
+    row('Total gross weight (kg)', d.hitech_total_gross_weight_kg ? float(d.hitech_total_gross_weight_kg) : null),
     checkRow('Partial shipment', d.hitech_partial_shipment),
     checkRow('Trans-shipment', d.hitech_trans_shipment),
     row('Sector', d.hitech_sector),
@@ -223,7 +223,8 @@ const currencyRows = computed(() => {
   const d = doc.value
   const fc = freightCurrency.value
   const qc = quoteCurrency.value
-  const fx = (value) => (value ? decimal(value) : null)
+  // Exchange rates are Floats, not money -- 6dp (see utils/format).
+  const fx = (value) => (value ? float(value) : null)
   return [
     row('Freight currency', d.hitech_freight_currency),
     // The handover leg (EXW/FCA/FOB/FAS) converts under the CIF rate — it has

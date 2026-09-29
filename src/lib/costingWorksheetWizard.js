@@ -30,6 +30,8 @@
  * gate.
  */
 
+import { float, percent } from '@/utils/format'
+
 export const SHARED_STEP = {
   key: 'customer',
   title: 'Customer & Order',
@@ -533,7 +535,11 @@ export function volumesSplitError(frm) {
   const total = Number(frm.doc?.total_weight_kg) || 0
   const split = tank + accessory
   if (Math.abs(split - total) < 0.005) return ''
-  return `Tank Weight (${tank.toFixed(2)} kg) + Accessory Weight (${accessory.toFixed(2)} kg) = ${split.toFixed(2)} kg, which does not match Total Finished Weight (${total.toFixed(2)} kg) from the Volumes table. Fix the split before continuing.`
+  // Weights are Floats, so they read at the site's float precision (6dp,
+  // trailing zeros trimmed) rather than 2dp: the tolerance above is 0.005, and
+  // at 2dp a message could otherwise print two numbers that look identical and
+  // still refuse to move on.
+  return `Tank Weight (${float(tank)} kg) + Accessory Weight (${float(accessory)} kg) = ${float(split)} kg, which does not match Total Finished Weight (${float(total)} kg) from the Volumes table. Fix the split before continuing.`
 }
 
 /** Mirrors the backend's submit-time check (`costing_worksheet.py`,
@@ -544,9 +550,11 @@ export function volumesSplitError(frm) {
 export const MIN_PURE_MARGIN_PERCENT = 20
 
 export function pureMarginError(frm) {
-  const percent = Number(frm.doc?.pure_margin_percent) || 0
-  if (percent >= MIN_PURE_MARGIN_PERCENT) return ''
-  return `Pure Margin % (${percent.toFixed(2)}%) is below the minimum required margin of ${MIN_PURE_MARGIN_PERCENT}%. Increase Deal Price - FG or reduce cost before continuing.`
+  const margin = Number(frm.doc?.pure_margin_percent) || 0
+  if (margin >= MIN_PURE_MARGIN_PERCENT) return ''
+  // Same reason as `volumesSplitError`: a margin of 19.999951% is below the
+  // floor and must not read as "20.00%".
+  return `Pure Margin % (${percent(margin)}) is below the minimum required margin of ${MIN_PURE_MARGIN_PERCENT}%. Increase Deal Price - FG or reduce cost before continuing.`
 }
 
 /* ── Taxes & Charges step ────────────────────────────────────────────────── */

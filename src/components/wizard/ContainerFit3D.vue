@@ -284,6 +284,12 @@ function splitArgs() {
   }
 }
 
+/* Display helpers for the packing scene's labels. These stay narrow on
+ * purpose: the site's 4dp currency / 6dp float precision (see utils/format) is
+ * for costed money and per-kg rates, and nothing on this panel is either --
+ * `mm()` is a physical dimension (whole millimetres), `kg()` a shipment
+ * weight, `pct()` a fill ratio. "1,199.999998 mm" would be a regression, not
+ * more precision. */
 function mm(value) {
   return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }

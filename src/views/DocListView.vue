@@ -25,6 +25,7 @@ import {
 import LucideIcon from '@/components/LucideIcon.vue'
 import RowActions from '@/components/RowActions.vue'
 import { printRecord } from '@/lib/rowActions'
+import { decimal, integer } from '@/utils/format'
 import { call } from '@/lib/frappe'
 import { msgprint } from '@frappe-vue-sdk/vue'
 
@@ -84,11 +85,11 @@ function cardValue(card) {
 
   // A Count is a tally; every other function is a quantity, and the card says
   // in which currency.
-  if (card.function === 'Count') return Number(value).toLocaleString()
+  if (card.function === 'Count') return integer(value)
 
-  const amount = card.show_full_number
-    ? Number(value).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
-    : formatCell(value, 'Currency')
+  // `show_full_number` only means "don't abbreviate" — the precision is the
+  // site's currency precision either way (see utils/format).
+  const amount = card.show_full_number ? decimal(value) : formatCell(value, 'Currency')
 
   return card.currency ? `${card.currency} ${amount}` : amount
 }
@@ -117,9 +118,7 @@ const statFor = (group, option) => stats.value?.groups?.[group.key]?.[option.key
 function statText(group, option) {
   const value = statFor(group, option)
   if (value === undefined) return ''
-  return isMetric(option)
-    ? formatCell(value, 'Currency')
-    : Number(value).toLocaleString()
+  return isMetric(option) ? formatCell(value, 'Currency') : integer(value)
 }
 
 function choose(group, optionKey) {
@@ -612,7 +611,7 @@ onMounted(load)
           style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-top:1px solid #EAEEF3; flex-wrap:wrap; gap:10px;"
         >
           <span style="font-size:13px; color:#64748B;">
-            Showing {{ rows.length }} of {{ total.toLocaleString() }}{{ exactTotal ? '' : '+' }}
+            Showing {{ rows.length }} of {{ integer(total) }}{{ exactTotal ? '' : '+' }}
           </span>
           <div style="display:flex; gap:6px; align-items:center;">
             <button
