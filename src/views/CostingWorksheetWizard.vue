@@ -2801,7 +2801,7 @@ watch(() => props.quotation, load)
                 longer be edited.
               </p>
 
-              <div class="qw-step-layout">
+              <div class="qw-step-layout" :class="{ 'qw-step-layout--rail': activeItemHasDerived }">
                 <div class="qw-step-main">
                   <template v-for="(step, i) in ITEM_STEPS" :key="step.key">
                     <div v-show="i === activeItem.activeStepIndex" class="qw-step-card">
@@ -3766,8 +3766,11 @@ watch(() => props.quotation, load)
   margin-top: 22px;
 }
 
+/* The second track exists only while the Calculated rail does. A step with
+   nothing derived (Product Line) would otherwise keep 300px of empty column
+   beside its card. */
 @media (min-width: 1080px) {
-  .qw-step-layout {
+  .qw-step-layout--rail {
     grid-template-columns: minmax(0, 1fr) 300px;
   }
 }
