@@ -22,6 +22,7 @@ import {
 import { installDeskApis, installAmend, seedPendingDoc, takePendingDoc } from '@/lib/mappedDoc'
 import DocConnections from '@/components/DocConnections.vue'
 import LucideIcon from '@/components/LucideIcon.vue'
+import TankTypeLabourPanel from '@/components/TankTypeLabourPanel.vue'
 
 /**
  * DocTypes whose workflow transition buttons `FormToolbar` should render, and
@@ -313,6 +314,7 @@ watch([() => props.doctype, () => props.name], load)
             <div style="min-width:0; font-size:14px; font-weight:600; line-height:1.45;" v-html="headline.html" />
           </div>
           <FormSections :frm="frm" :layout-name="formLayout" />
+          <TankTypeLabourPanel v-if="doctype === 'Tank Type' && savedName" :key="savedName" :frm="frm" :name="savedName" />
         </form>
 
         <!-- Child table rows open here rather than inside the grid — see

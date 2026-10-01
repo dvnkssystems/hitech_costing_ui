@@ -1008,7 +1008,7 @@ const activeItemHasDerived = computed(
   () =>
     activeItem.value &&
     activeItemStep.value &&
-    activeItemStep.value.key !== 'product' && // Facility/Effective Labour Rate rail hidden here, per request
+    activeItemStep.value.key !== 'product' && // Effective Labour Rate rail hidden here, per request
     hasDerivedFields(activeItemStep.value, activeItem.value.frm)
 )
 
@@ -1895,7 +1895,7 @@ async function addItem(seedDoc) {
   // (`{ ...defaults, ...initialDoc }`), which lands the raw value on
   // `frm.doc` but never runs the field's own change trigger — exactly the
   // "silently no-ops forever" trap `bootFrm()`'s own comment on `docstatus`
-  // describes. Tank Type's trigger is what derives Facility/Labour Rate for
+  // describes. Tank Type's trigger is what derives Labour Rate for
   // this step, so seeding it that way leaves those blank until the estimator
   // re-touches the field by hand. `applyMappedDoc` in mappedDoc.js hits the
   // same trap and already solves it the same way.
@@ -2143,7 +2143,7 @@ function flushDraftSave() {
  *  session -- `set_value` throughout, not a plain object merge, for the same
  *  reason `addItem()`'s own `seedDoc` loop does (see its comment): a merge
  *  lands the raw value but skips the field's change trigger, leaving derived
- *  fields (Facility/Labour Rate off Tank Type, address display text, etc.)
+ *  fields (Labour Rate off Tank Type, address display text, etc.)
  *  blank until the estimator re-touches the field by hand. `items[0]` already
  *  exists (this runs after `addItem(seed)`); any further draft items create
  *  their own tab first. */

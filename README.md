@@ -91,6 +91,22 @@ the real workbook (see `hitech_costing`'s `docs/cost-model.md`). The dashboard
 and worksheet screens show whatever is in the DocType — treat computed margins
 as illustrative, not a real quote, until that's replaced.
 
+## Tank Type labour setup
+
+Saved Tank Type forms include a Labour setup panel. Edit the product line's
+departments and worker counts, or the shared average monthly cost per worker,
+then use **Save labour setup**. The panel updates the existing Costing Department
+and Costing Settings records rather than creating a second set of settings.
+Changing the shared employee cost recalculates every product line's derived rate.
+Production capacity remains editable in the main Tank Type form; save those
+changes before saving the labour panel. Permissions are checked for each source
+record, and concurrent changes require refreshing the panel before saving.
+
+The panel shows the calculated rate alongside any client-maintained Labour Item
+Price. Worksheets prefer their manual override, then the Item Price, then the
+calculated rate. Facility has been removed from the Hitech forms and navigation;
+the standalone worksheet form no longer offers a Submit button.
+
 ## Build
 
 ```
