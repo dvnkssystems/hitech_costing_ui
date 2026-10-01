@@ -51,6 +51,17 @@ export const useAppStore = defineStore('app', {
       }
     },
 
+    /** Close without touching the remembered choice — used on narrow screens,
+     *  where the sidebar is a temporary overlay rather than a layout decision. */
+    closeSidebar() {
+      this.sidebarOpen = false
+    },
+
+    /** Back to whatever the user last chose on a screen with room for it. */
+    restoreSidebar() {
+      this.sidebarOpen = readStoredSidebar()
+    },
+
     // ---- notifications ----
     async loadNotifications() {
       if (!hasBackend) return

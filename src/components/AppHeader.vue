@@ -182,9 +182,7 @@ const initials = computed(() =>
 </script>
 
 <template>
-  <header
-    style="height:66px; flex:none; background:#fff; border-bottom:1px solid #EAEEF3; display:flex; align-items:center; gap:16px; padding:0 28px;"
-  >
+  <header class="app-header">
     <button
       @click="app.toggleSidebar()"
       :title="sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'"
@@ -196,7 +194,7 @@ const initials = computed(() =>
       <LucideIcon :name="sidebarOpen ? 'panel-left-close' : 'panel-left'" />
     </button>
 
-    <div ref="searchRef" style="position:relative; flex:1; max-width:420px;">
+    <div ref="searchRef" style="position:relative; flex:1; min-width:0; max-width:420px;">
       <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#94A3B8; font-size:17px;">
         <LucideIcon name="search" />
       </span>
@@ -225,6 +223,7 @@ const initials = computed(() =>
       <span
         v-else
         aria-hidden="true"
+        class="app-header__kbd"
         style="position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:600; color:#94A3B8; background:#fff; border:1px solid #E6EBF1; border-radius:6px; padding:2px 6px; pointer-events:none;"
         >⌘K</span
       >
@@ -322,7 +321,7 @@ const initials = computed(() =>
         </template>
       </div>
     </div>
-    <div style="flex:1;"></div>
+    <div class="app-header__spacer"></div>
     <div ref="bellRef" style="position:relative;">
       <button
         @click="app.toggleNotifications()"
@@ -464,3 +463,25 @@ const initials = computed(() =>
     </div>
   </header>
 </template>
+
+<style scoped>
+.app-header {
+  height: 66px;
+  flex: none;
+  background: #fff;
+  border-bottom: 1px solid #EAEEF3;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 28px;
+}
+.app-header__spacer { flex: 1; }
+
+/* Phone widths: the search box takes the room the spacer was holding, and the
+   keyboard hint goes — there is no ⌘K on a touch screen. */
+@media (max-width: 640px) {
+  .app-header { gap: 10px; padding: 0 14px; }
+  .app-header__spacer { display: none; }
+  .app-header__kbd { display: none; }
+}
+</style>
