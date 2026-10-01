@@ -5,7 +5,10 @@ const QUOTATION_DOCTYPE = 'Quotation'
 
 const iso = (d) => d.toISOString().slice(0, 10)
 
-function monthBounds(offset = 0) {
+/** First and last day of a calendar month, `offset` months from this one.
+ *  Exported so the dashboard's drill-down filters on the same boundary the
+ *  count above it was taken at. */
+export function monthBounds(offset = 0) {
   const now = new Date()
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1))
   const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0))
@@ -62,6 +65,21 @@ async function worksheetStatusByQuotation(names) {
     if (!current || (idx !== -1 && idx < current.idx)) statusFor.set(w.quotation, { idx, status: w.status })
   }
   return statusFor
+}
+
+/**
+ * Names of the Quotations sitting in one `QUOTATION_PIPELINE_STAGES` bucket —
+ * the same weakest-link rule `quotationPipeline()` counts by, so the list a
+ * pipeline bar opens holds exactly the quotations the bar counted.
+ */
+export async function quotationNamesInStage(stageKey) {
+  const stage = QUOTATION_PIPELINE_STAGES.find((s) => s.key === stageKey)
+  if (!stage) return []
+
+  const rows = await db.get_list(QUOTATION_DOCTYPE, { fields: ['name'], limit_page_length: 0 })
+  const names = (rows ?? []).map((r) => r.name)
+  const statusFor = await worksheetStatusByQuotation(names)
+  return names.filter((name) => stage.match(statusFor.get(name)?.status ?? null))
 }
 
 /** Month-over-month change in Quotations created, as a percentage. */

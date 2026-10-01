@@ -16,9 +16,9 @@ import {
   rowIsInactive,
   formatCell,
   parseListFilters,
-  describeFilter,
   LIST_PAGE_SIZE
 } from '@/lib/docList'
+import { describeListFilter, isDerivedFilter, resolveListFilters } from '@/lib/derivedFilters'
 import {
   fetchListLayout,
   fetchLayoutList,
@@ -201,7 +201,7 @@ function choose(group, optionKey) {
 const filters = computed(() => parseListFilters(route.query))
 
 const filterSummary = computed(() =>
-  filters.value.map((filter) => describeFilter(filter))
+  filters.value.map((filter) => describeListFilter(props.doctype, filter))
 )
 
 const filtered = computed(() => filterSummary.value.length > 0 || Boolean(search.value.trim()))
@@ -353,11 +353,17 @@ async function load() {
       // lands the columns, the identity verdict and the rows in one tick.
     }
 
+    // A derived filter (`?costing_status=Quoted` on Quotation) names no real
+    // column; it becomes the record names it stands for before anything is
+    // asked of the server. Plain filters pass through untouched.
+    const serverFilters = await resolveListFilters(doctype, filters.value)
+    if (requestId !== loadRequest) return // superseded while awaiting
+
     // The stored layout projects server-side; without one the client still has
     // to name the fields it wants.
     const result = layoutForRequest
       ? await fetchLayoutList(doctype, {
-          filters: filters.value,
+          filters: serverFilters,
           selections: selectionsForRequest,
           card: selectedCard.value,
           search: search.value,
@@ -369,7 +375,7 @@ async function load() {
         })
       : await fetchDocList(doctype, {
           columns: columnsForRequest,
-          filters: filters.value,
+          filters: serverFilters,
           search: search.value,
           page: page.value,
           searchFields: identityForRequest.searchFields,
@@ -409,7 +415,7 @@ async function load() {
 
     // Independent of the selection, so it rides along rather than blocking.
     if (filterGroups.value.length || cards.value.length) {
-      fetchListStats(doctype, { filters: filters.value, search: search.value }).then((fresh) => {
+      fetchListStats(doctype, { filters: serverFilters, search: search.value }).then((fresh) => {
         if (requestId === loadRequest) stats.value = fresh
       })
     }
@@ -517,7 +523,10 @@ async function runAction(action, row) {
  */
 function create() {
   const defaults = Object.fromEntries(
-    filters.value.filter(([, op]) => op === '=').map(([field, , value]) => [field, value])
+    filters.value
+      // A derived filter is not a field — nothing to prefill a new record with.
+      .filter((filter) => filter[1] === '=' && !isDerivedFilter(props.doctype, filter))
+      .map(([field, , value]) => [field, value])
   )
   if (Object.keys(defaults).length) {
     seedPendingDoc(props.doctype, { doctype: props.doctype, ...defaults })

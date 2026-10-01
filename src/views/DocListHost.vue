@@ -32,8 +32,21 @@ onMounted(async () => {
 
 const layoutName = computed(() => listLayoutFor(map.value, props.doctype))
 
+/**
+ * Query params a bespoke list reads for itself, so they do not count as
+ * "conditions it cannot express". `QuotationListView` turns `costing_status`
+ * into its status tab; on a site that maps Quotation to the generic list
+ * instead, `DocListView` resolves the same param through `derivedFilters.js`.
+ */
+const OWN_FILTERS = {
+  QuotationListView: ['costing_status']
+}
+
 /** A drill-down: the URL names conditions the bespoke screen cannot express. */
-const filtered = computed(() => parseListFilters(route.query).length > 0)
+const filtered = computed(() => {
+  const own = OWN_FILTERS[layoutName.value] ?? []
+  return parseListFilters(route.query).some(([fieldname]) => !own.includes(fieldname))
+})
 
 /**
  * Null until the map arrives, and null for unmapped DocTypes — both mean

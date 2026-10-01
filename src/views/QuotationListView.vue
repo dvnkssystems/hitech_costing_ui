@@ -17,12 +17,12 @@
  * Reasonable while the quotation count stays in the hundreds; if it grows
  * much further this should become a backend report instead.
  */
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { formRouteFor, defaultListActionRouteFor } from '@/lib/frappeRouting'
-import { STATUS_STAGES } from '@/lib/home'
+import { STATUS_STAGES, QUOTATION_PIPELINE_STAGES } from '@/lib/home'
 import { worksheetStatusStyle, docstatusBadge } from '@/utils/styles'
 import { money, formatDate } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
@@ -31,6 +31,7 @@ const DOCTYPE = 'Quotation'
 const PAGE_SIZE = 20
 
 const router = useRouter()
+const route = useRoute()
 const live = computed(() => hasBackend)
 
 const loading = ref(false)
@@ -38,22 +39,37 @@ const error = ref('')
 const allRows = ref([])
 const owners = ref([]) // [{ name, label }], from linked User records
 const search = ref('')
-const activeTab = ref('All')
+/**
+ * One tab per dashboard pipeline stage, matched by the stage's own rule — so
+ * the tab a pipeline bar opens holds exactly the quotations the bar counted
+ * (a quote with no worksheet yet is a Draft in both places).
+ */
+const TABS = [
+  { key: 'All', label: 'All' },
+  ...QUOTATION_PIPELINE_STAGES.map((stage) => ({
+    key: stage.key,
+    // "Rejected" is a UI label over the worksheet's "Lost" status — there's no
+    // separate Rejected status anywhere in the data model.
+    label: stage.key === 'Lost' ? 'Rejected' : stage.label,
+    match: stage.match
+  }))
+]
+
+/**
+ * The tab lives in the URL as `?costing_status=<stage>` — the same derived
+ * filter the generic list understands (`derivedFilters.js`) — so a dashboard
+ * drill-down lands on its tab, and a refresh or the back button keeps it.
+ */
+const tabFromRoute = () => {
+  const stage = route.query.costing_status
+  return TABS.some((t) => t.key === stage) ? stage : 'All'
+}
+const activeTab = ref(tabFromRoute())
 const filterProduct = ref('All')
 const filterBranch = ref('All')
 const filterOwner = ref('All')
 const filterModified = ref('any')
 const page = ref(1)
-
-const TABS = [
-  { key: 'All', label: 'All' },
-  { key: 'Draft', label: 'Draft', match: (s) => s === 'Draft' },
-  { key: 'Pending approval', label: 'Pending approval', match: (s) => s === 'Pending BU Head' || s === 'Pending CFO' },
-  { key: 'Approved', label: 'Approved', match: (s) => s === 'Approved' },
-  // "Rejected" is a UI label over the worksheet's "Lost" status — there's no
-  // separate Rejected status anywhere in the data model.
-  { key: 'Rejected', label: 'Rejected', match: (s) => s === 'Lost' }
-]
 
 const MODIFIED_RANGES = [
   { key: 'any', label: 'Any time' },
@@ -163,7 +179,7 @@ const filteredRows = computed(() => {
 
 function clearAll() {
   search.value = ''
-  activeTab.value = 'All'
+  pickTab('All')
   filterProduct.value = 'All'
   filterBranch.value = 'All'
   filterOwner.value = 'All'
@@ -178,9 +194,18 @@ const pageRows = computed(() => {
 })
 
 function pickTab(key) {
-  activeTab.value = key
-  page.value = 1
+  if (key === activeTab.value) return
+  // The URL is the source of truth; the watcher below moves the tab.
+  const { costing_status: _dropped, ...rest } = route.query
+  router.replace({ query: key === 'All' ? rest : { ...rest, costing_status: key } })
 }
+watch(
+  () => route.query.costing_status,
+  () => {
+    activeTab.value = tabFromRoute()
+    page.value = 1
+  }
+)
 function goPage(target) {
   page.value = Math.min(Math.max(1, target), pageCount.value)
 }
