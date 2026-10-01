@@ -5,10 +5,9 @@
  * itself carries no approval status of its own (see `QuotationOutputView.vue`'s
  * doc comment on why that's derived rather than a real field).
  *
- * Only renders once the backend's `Custom UI Doctype Layout` record for
- * `Quotation` has its `list` field set to `QuotationListView` (see
- * `src/lib/layouts.js`) — until then `DocListHost.vue` keeps using the
- * generic `DocListView`.
+ * Mapped to `Quotation` in `src/lib/layouts.js`. `DocListHost.vue` still hands
+ * the route to the generic `DocListView` when the URL carries a field filter
+ * this screen cannot express.
  *
  * Filtering/paging is done client-side over the full Quotation + linked-
  * worksheet result set, not server-side pages: a status tab is a filter on a
