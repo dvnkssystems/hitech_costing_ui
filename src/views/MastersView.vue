@@ -5,9 +5,9 @@ import LucideIcon from '@/components/LucideIcon.vue'
 const MASTERS = [
   { doctype: 'Tank Type', label: 'Tank Types', desc: 'Base tank definitions, their derived labour rate and their per-kg processing rates.', icon: 'container', bg: '#EFF6FF', fg: '#2563EB' },
   { doctype: 'Costing Department', label: 'Costing Departments', desc: 'Departments used to group processing costs.', icon: 'building-2', bg: '#F5F3FF', fg: '#7C3AED' },
-  { doctype: 'Paint Make', label: 'Paint Makes', desc: 'Approved paint brands/makes.', icon: 'paintbrush', bg: '#ECFDF5', fg: '#059669' },
-  { doctype: 'Paint System Rate', label: 'Paint System Rates', desc: 'Price per sqm by paint make, method and DFT band.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
-  { doctype: 'DFT Range', label: 'DFT Ranges', desc: 'Dry film thickness bands used by Paint System Rates and the Paint System step.', icon: 'layers', bg: '#FFF7ED', fg: '#EA580C' },
+  { doctype: 'Item', label: 'Items', desc: 'Paint brands, their thickness variants and other costing items.', icon: 'paintbrush', bg: '#ECFDF5', fg: '#059669' },
+  { doctype: 'Item Price', label: 'Item Prices', desc: 'Buying prices, including paint rates per square metre.', icon: 'palette', bg: '#FEF2F2', fg: '#DC2626' },
+  { doctype: 'Item Attribute', label: 'Item Attributes', desc: 'DFT thickness values and their Internal/External paint rules.', icon: 'layers', bg: '#FFF7ED', fg: '#EA580C' },
   { doctype: 'Order Complexity Question', label: 'Order Complexity Questions', desc: 'Questions used to score order complexity.', icon: 'list-checks', bg: '#F1F5F9', fg: '#475569' },
   { doctype: 'Quotation Term', label: 'Terms & Conditions', desc: 'The Quotation Wizard\'s Terms & Conditions checklist entries.', icon: 'file-check', bg: '#FEFCE8', fg: '#CA8A04' },
   { doctype: 'Currency Exchange Master', label: 'Currency Exchange Rates', desc: 'Quarterly CIF / DAP / Item exchange rates the freight engine converts native-currency legs to INR with.', icon: 'coins', bg: '#FFFBEB', fg: '#B45309' },

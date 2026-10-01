@@ -146,7 +146,7 @@ function setWrapper(fieldname) {
           <template v-if="isVisible(df.fieldname)">
             <div :class="{ 'job-grid-wide': isWide(df) }">
               <component
-                :is="controlFor(df.fieldtype)"
+                :is="controlFor(df.fieldtype === 'Autocomplete' && ['dft_internal', 'dft_external'].includes(df.fieldname) ? 'Select' : df.fieldtype)"
                 :ref="setWrapper(df.fieldname)"
                 :frm="frm"
                 :fieldname="df.fieldname"
