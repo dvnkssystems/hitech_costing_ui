@@ -18,7 +18,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { listRouteFor, formRouteFor } from '@/lib/frappeRouting'
-import { printRecord } from '@/lib/rowActions'
+import { printRecord, downloadRecordPdf } from '@/lib/rowActions'
 import { STATUS_STAGES } from '@/lib/home'
 import { worksheetStatusStyle } from '@/utils/styles'
 import { money, decimal, float, percent, formatDate } from '@/utils/format'
@@ -304,6 +304,19 @@ function onPrint() {
   printRecord('Quotation', props.name)
 }
 
+// The PDF the customer receives: the Quotation's default print format,
+// rendered by the server.
+const downloading = ref(false)
+async function onDownload() {
+  if (downloading.value) return
+  downloading.value = true
+  try {
+    await downloadRecordPdf('Quotation', props.name)
+  } finally {
+    downloading.value = false
+  }
+}
+
 onMounted(load)
 watch(() => props.name, load)
 </script>
@@ -464,6 +477,20 @@ watch(() => props.name, load)
           class="hv2"
         >
           <LucideIcon name="printer" /> Print
+        </button>
+        <button
+          type="button"
+          @click="onDownload"
+          :disabled="downloading"
+          :style="{
+            display: 'flex', alignItems: 'center', gap: '8px', height: '44px', padding: '0 20px',
+            borderRadius: '11px', background: '#0B3465', border: 'none', fontSize: '14px', fontWeight: '600',
+            color: '#fff', cursor: downloading ? 'wait' : 'pointer', fontFamily: 'inherit',
+            opacity: downloading ? '.7' : '1'
+          }"
+          class="hv1"
+        >
+          <LucideIcon name="file-down" /> {{ downloading ? 'Preparing PDF…' : 'Download PDF' }}
         </button>
         <button
           type="button"

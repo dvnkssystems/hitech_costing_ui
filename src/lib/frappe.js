@@ -93,8 +93,21 @@ async function toError(response) {
   // ("frappe.exceptions.AuthenticationError"). Prefer the former and keep the
   // latter only as a last resort.
   const plainMessage = typeof payload?.message === 'string' ? payload.message : null
+  // An uncaught server error (a 500) arrives with `exception: ""` and the
+  // reason only at the foot of its traceback. An empty string is not "no
+  // message", so it must not win over the lines after it — that produced an
+  // error dialog with nothing in it.
+  const tracebackLine = (() => {
+    try {
+      const trace = JSON.parse(payload?.exc ?? '[]')[0] ?? ''
+      return String(trace).trim().split('\n').filter((line) => line.trim()).pop() ?? null
+    } catch {
+      return null
+    }
+  })()
   const message = stripHtml(
-    serverMessage ?? plainMessage ?? payload?.exception ?? `${response.status} ${response.statusText}`
+    [serverMessage, plainMessage, payload?.exception, tracebackLine].find((text) => text && String(text).trim()) ??
+      `${response.status} ${response.statusText}`
   )
 
   const error = new Error(message)
@@ -189,6 +202,20 @@ export async function call(method, args = {}) {
   // The SDK's transport contract: resolve to the already-unwrapped value.
   const value = payload?.message !== undefined ? payload.message : payload
   return method === 'frappe.desk.search.search_link' ? readableSearchResults(value) : value
+}
+
+/**
+ * GET a whitelisted method that answers with a file rather than JSON — a
+ * server-rendered PDF. Same session and same error shapes as `call()`.
+ */
+export async function fetchBlob(method, params = {}) {
+  const query = new URLSearchParams(params).toString()
+  const response = await fetch(`/api/method/${method}${query ? `?${query}` : ''}`, {
+    credentials: 'include',
+    headers: { ...authHeaders() }
+  })
+  if (!response.ok) throw await toError(response)
+  return response.blob()
 }
 
 /**

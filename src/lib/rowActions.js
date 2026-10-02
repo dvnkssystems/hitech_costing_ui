@@ -5,7 +5,7 @@
  * forward — so they are described once here rather than retyped per screen.
  * `RowActions` decides how they look; this decides what they are.
  */
-import { openPrintView } from './print'
+import { downloadPdf, openPrintView } from './print'
 import { msgprint } from '@frappe-vue-sdk/vue'
 
 export const VIEW = { key: 'open', label: 'View', icon: 'eye', color: 'slate' }
@@ -40,5 +40,14 @@ export function printRecord(doctype, name) {
     openPrintView(doctype, name)
   } catch (e) {
     msgprint(e?.message ?? String(e), 'Could not open the print view')
+  }
+}
+
+/** Download one record's PDF; a failure is reported the way `printRecord` does. */
+export async function downloadRecordPdf(doctype, name) {
+  try {
+    await downloadPdf(doctype, name)
+  } catch (e) {
+    msgprint(e?.message || 'The server could not produce the PDF.', 'Could not download the PDF')
   }
 }

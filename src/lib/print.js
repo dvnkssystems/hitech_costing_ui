@@ -18,7 +18,7 @@
  * the same relative path resolves without any proxy.
  */
 
-import { hasBackend } from './frappe'
+import { fetchBlob, hasBackend } from './frappe'
 
 const PRINTVIEW_PATH = '/printview'
 
@@ -63,4 +63,41 @@ export function openPrintView(doctype, name, options = {}) {
     // Not worth failing the print over; the target is our own origin anyway.
   }
   return view
+}
+
+/**
+ * Download a document's PDF, rendered by the server with its print format.
+ *
+ * Fetched rather than linked to: a plain `<a download>` would save whatever
+ * came back, so a permission error or a failed render would land on disk as a
+ * broken "quotation.pdf". Fetching first means a failure is an error the
+ * caller can show, and only a real PDF is ever saved.
+ *
+ * `format` is omitted by default for the same reason as in `printViewUrl`:
+ * the server then uses the DocType's own default print format.
+ */
+export async function downloadPdf(doctype, name, { format = null, noLetterhead = false } = {}) {
+  if (!doctype || !name) {
+    throw new Error('Nothing to download — save the document first.')
+  }
+  if (!hasBackend) {
+    throw new Error('Downloading a PDF needs a Frappe backend. Set VITE_FRAPPE_URL in .env.')
+  }
+
+  const params = { doctype, name, no_letterhead: noLetterhead ? '1' : '0' }
+  if (format) params.format = format
+  const blob = await fetchBlob('frappe.utils.print_format.download_pdf', params)
+  if (blob.type && !blob.type.includes('pdf')) {
+    throw new Error('The server did not return a PDF for this document.')
+  }
+
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${name}.pdf`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  // Revoked on the next tick: the click only queues the save.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
