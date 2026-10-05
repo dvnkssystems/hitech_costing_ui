@@ -63,6 +63,7 @@ EXIM_DATE_FIELDS,
   MIN_PURE_MARGIN_PERCENT
 } from '@/lib/costingWorksheetWizard'
 import { call, metaFetcher, hasBackend } from '@/lib/frappe'
+import { downloadRecordPdf } from '@/lib/rowActions'
 import { db } from '@/lib/frappeDb'
 import { installFormEnhancements } from '@/lib/formEnhance'
 import { installRouting, renderTextEditorsAsHtml, listRouteFor } from '@/lib/frappeRouting'
@@ -2634,6 +2635,21 @@ async function submitAll() {
 const finishConfirmOpen = ref(false)
 const finishSubmitting = ref(false)
 
+/** The Quotation's PDF, as it stands on the server right now -- available as
+ *  soon as there is a Quotation to print, so a draft can be read through (or
+ *  sent for an internal check) before "Finish quotation" locks it. The print
+ *  format marks an unsubmitted copy as a draft. */
+const pdfDownloading = ref(false)
+async function downloadQuotationPdf() {
+  if (!quotationName.value || pdfDownloading.value) return
+  pdfDownloading.value = true
+  try {
+    await downloadRecordPdf('Quotation', quotationName.value)
+  } finally {
+    pdfDownloading.value = false
+  }
+}
+
 function finishQuotation() {
   if (!quotationName.value) return
   finishSubmitting.value = false
@@ -3529,24 +3545,35 @@ watch(() => props.quotation, load)
 
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button
-              v-if="!allSucceeded"
-              type="button"
-              class="qw-next-btn"
-              :disabled="!canSubmit"
-              @click="submitAll"
-            >
-              {{ submitPhase === 'running' ? 'Submitting…' : submitPhase === 'partial-failure' ? 'Retry' : 'Submit' }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="qw-next-btn"
-              :disabled="finishSubmitting"
-              @click="finishQuotation"
-            >
-              Finish quotation →
-            </button>
+            <div class="qw-footer__actions">
+              <button
+                v-if="quotationName"
+                type="button"
+                class="qw-back-btn"
+                :disabled="pdfDownloading"
+                @click="downloadQuotationPdf"
+              >
+                {{ pdfDownloading ? 'Preparing PDF…' : 'Download PDF' }}
+              </button>
+              <button
+                v-if="!allSucceeded"
+                type="button"
+                class="qw-next-btn"
+                :disabled="!canSubmit"
+                @click="submitAll"
+              >
+                {{ submitPhase === 'running' ? 'Submitting…' : submitPhase === 'partial-failure' ? 'Retry' : 'Submit' }}
+              </button>
+              <button
+                v-else
+                type="button"
+                class="qw-next-btn"
+                :disabled="finishSubmitting"
+                @click="finishQuotation"
+              >
+                Finish quotation →
+              </button>
+            </div>
           </div>
         </section>
       </div>
@@ -4547,6 +4574,13 @@ watch(() => props.quotation, load)
   justify-content: space-between;
   gap: 10px;
   box-shadow: 0 -2px 8px rgba(38, 38, 38, 0.05);
+}
+
+.qw-footer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .qw-back-btn {
