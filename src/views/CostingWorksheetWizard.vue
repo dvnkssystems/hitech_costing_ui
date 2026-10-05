@@ -1074,6 +1074,20 @@ function derivedRows(frm, fieldnames) {
     })
     .filter(Boolean)
 }
+/**
+ * The worksheet's Rate Warnings, one per line. Rates are set by quarter, and
+ * the backend reads them for the job's date; when a rate was not valid on that
+ * date it uses the nearest one and says so here (see `item_rates.py`). Shown
+ * above every costing step, since the estimator may never open the one step a
+ * given rate belongs to.
+ */
+const activeItemRateWarnings = computed(() =>
+  String(activeItem.value?.frm?.doc?.rate_warnings ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+)
+
 const activeItemDerivedRows = computed(() =>
   activeItem.value && activeItemStep.value
     ? derivedRows(activeItem.value.frm, derivedFieldnames(activeItemStep.value, activeItem.value.frm))
@@ -2817,6 +2831,15 @@ watch(() => props.quotation, load)
                 longer be edited.
               </p>
 
+              <div v-if="activeItemRateWarnings.length" class="qw-rate-warning" role="status">
+                <div class="qw-rate-warning__title">
+                  <LucideIcon name="triangle-alert" /> Check these rates before quoting
+                </div>
+                <ul>
+                  <li v-for="line in activeItemRateWarnings" :key="line">{{ line }}</li>
+                </ul>
+              </div>
+
               <div class="qw-step-layout" :class="{ 'qw-step-layout--rail': activeItemHasDerived }">
                 <div class="qw-step-main">
                   <template v-for="(step, i) in ITEM_STEPS" :key="step.key">
@@ -4554,6 +4577,31 @@ watch(() => props.quotation, load)
   color: var(--qw-primary-dark);
   border-style: dashed;
   border-color: var(--qw-primary);
+}
+
+/* Amber, not the red of .qw-step-error: the job is costed, with a rate that
+   needs a second look, rather than blocked. */
+.qw-rate-warning {
+  margin-top: 18px;
+  padding: 12px 16px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.qw-rate-warning__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.qw-rate-warning ul {
+  margin: 6px 0 0;
+  padding-left: 22px;
 }
 
 .qw-step-error {
