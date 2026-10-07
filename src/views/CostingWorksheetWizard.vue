@@ -1088,6 +1088,17 @@ const activeItemRateWarnings = computed(() =>
     .filter(Boolean)
 )
 
+/**
+ * Why the last recalculation was refused, if it was -- the DocType script
+ * (`costing_worksheet.js`, `recalculate()`) keeps it on the doc as
+ * `__recalc_error`. A refused pairing, say a paint make at a thickness it
+ * does not sell, otherwise shows only as a passing alert while every derived
+ * figure on screen stays at its last good value; this holds the reason on
+ * the step until a recalculation succeeds, and `itemNext()` will not save
+ * past it.
+ */
+const activeItemRecalcError = computed(() => String(activeItem.value?.frm?.doc?.__recalc_error ?? '').trim())
+
 const activeItemDerivedRows = computed(() =>
   activeItem.value && activeItemStep.value
     ? derivedRows(activeItem.value.frm, derivedFieldnames(activeItemStep.value, activeItem.value.frm))
@@ -2465,6 +2476,12 @@ async function itemNext() {
     item.stepError = 'Fill in the required fields before continuing.'
     return
   }
+  // Before the margin check: a margin computed from stale figures is not the
+  // problem to report when the figures could not be recomputed at all.
+  if (activeItemRecalcError.value) {
+    item.stepError = activeItemRecalcError.value
+    return
+  }
   if (step.key === 'volumes') {
     const splitError = volumesSplitError(item.frm)
     if (splitError) {
@@ -2830,6 +2847,11 @@ watch(() => props.quotation, load)
                 This Costing Worksheet's Quotation (<strong>{{ quotationName }}</strong>) has been submitted and can no
                 longer be edited.
               </p>
+
+              <div v-if="activeItemRecalcError" class="qw-rate-warning qw-rate-warning--error" role="alert">
+                <div class="qw-rate-warning__title"><LucideIcon name="triangle-alert" /> This item cannot be costed as entered</div>
+                <p class="qw-rate-warning__text">{{ activeItemRecalcError }}</p>
+              </div>
 
               <div v-if="activeItemRateWarnings.length" class="qw-rate-warning" role="status">
                 <div class="qw-rate-warning__title">
@@ -4602,6 +4624,17 @@ watch(() => props.quotation, load)
 .qw-rate-warning ul {
   margin: 6px 0 0;
   padding-left: 22px;
+}
+
+.qw-rate-warning__text {
+  margin: 6px 0 0;
+}
+
+/* Red: unlike a rate warning, the figures on screen are not this item's. */
+.qw-rate-warning--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
 }
 
 .qw-step-error {
