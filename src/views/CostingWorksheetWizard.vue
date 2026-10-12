@@ -920,11 +920,12 @@ watch(
  * The quote's currency, set automatically now that Items & Pricing has no
  * Currency picker (client, 2026-10-12): the customer's own Default Currency
  * when it has one, else the currency the matched freight rate is quoted in,
- * else INR. Re-runs when either input changes; never touches a submitted
- * quotation, and leaves a saved one's currency alone on open. The `currency` watcher further up then looks up the rate.
+ * else INR. Re-runs when either input changes on a new quote; a saved one
+ * keeps its currency unless the customer is changed, and a submitted one is
+ * never touched. The `currency` watcher further up then looks up the rate.
  */
 const customerCurrencyCache = new Map()
-/** What a saved quotation's currency inputs were when it was opened. */
+/** Which customer a saved quotation was opened with. */
 const autoCurrencyBaseline = new WeakMap()
 let autoCurrencyToken = 0
 // Same lock rule as `activeItemLocked`, which is declared further down and so
@@ -940,14 +941,16 @@ watch(
     const token = ++autoCurrencyToken
     if (!header || quotationSubmitted()) return
     // Opening a saved quotation is not a reason to change its currency — it
-    // keeps what it was saved with until the customer or the matched freight
-    // rate actually changes here. The baseline is taken once the customer is
-    // known, because `load()` publishes the header before the order frm.
+    // keeps what it was saved with until the CUSTOMER changes here. Only the
+    // customer: the freight currency is refilled by the live freight preview
+    // right after load (it can be blank on the saved doc), so treating that
+    // as a change flipped a saved USD quote to the customer's EUR default.
+    // The baseline is taken once the customer is known, because `load()`
+    // publishes the header before the order frm.
     if (quotationName.value && header.doc?.currency) {
       if (!customer) return
-      const inputs = `${customer}|${freightCurrency || ''}`
-      if (!autoCurrencyBaseline.has(header)) autoCurrencyBaseline.set(header, inputs)
-      if (autoCurrencyBaseline.get(header) === inputs) return
+      if (!autoCurrencyBaseline.has(header)) autoCurrencyBaseline.set(header, customer)
+      if (autoCurrencyBaseline.get(header) === customer) return
     }
     let customerCurrency = ''
     if (customer) {
