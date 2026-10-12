@@ -33,6 +33,7 @@ import { fieldState, useFrmRemote, confirm } from '@frappe-vue-sdk/vue'
 import ChildRowDrawer from '@/components/ChildRowDrawer.vue'
 import WizardStep from '@/components/wizard/WizardStep.vue'
 import WizardProgress from '@/components/wizard/WizardProgress.vue'
+import ExchangeRateMissingBanner from '@/components/wizard/ExchangeRateMissingBanner.vue'
 // Lazy: pulls in three.js (~600KB) and nobody needs it until they click
 // "View container load in 3D", so keep it out of the wizard's own chunk.
 import { containerBreakdown, containerOverridesPayload, numberOrNull } from '@/lib/containerLoad.js'
@@ -49,7 +50,6 @@ import {
   EXIM_HIDDEN_FIELDS,
 EXIM_DATE_FIELDS,
   CURRENCY_FIELDS,
-  ITEMS_CURRENCY_FIELDS,
   EXIM_FLAGS_FIELD,
   EXIM_ITEM_DEAL_VALUE_FIELDS,
   TERMS_FIELDS,
@@ -165,7 +165,18 @@ const visibleAddressFields = computed(() => ADDRESS_FIELDS)
 // `hitech_mode_of_transport` is mirrored from the items' own Mode of
 // Transport (set on Items & Pricing) by the watcher further down, same idea
 // as `hitech_region` -- so it isn't asked for a second time here either.
-const EXIM_STEP_EXCLUDED_FIELDS = new Set(['hitech_region', 'named_place', 'hitech_mode_of_transport'])
+// The manual exchange-rate overrides (CIF / DAP rate and the currency they're
+// for) are off this step on request (client, 2026-10-12): a missing quarterly
+// rate is fixed in Exchange Rates, not typed into the quote — the warning
+// block under the freight table says so.
+const EXIM_STEP_EXCLUDED_FIELDS = new Set([
+  'hitech_region',
+  'named_place',
+  'hitech_mode_of_transport',
+  'hitech_cif_exchange_rate_override',
+  'hitech_dap_exchange_rate_override',
+  'hitech_exchange_rate_override_currency'
+])
 const visibleEximFields = computed(() => EXIM_FIELDS.filter((fieldname) => !EXIM_STEP_EXCLUDED_FIELDS.has(fieldname)))
 /** The Exim step's Calculated rail — every `EXIM_FIELDS` entry except
  *  `hitech_exchange_rate_flags`, which is a Small Text the engine fills only
@@ -905,6 +916,54 @@ watch(
   { immediate: true }
 )
 
+/**
+ * The quote's currency, set automatically now that Items & Pricing has no
+ * Currency picker (client, 2026-10-12): the customer's own Default Currency
+ * when it has one, else the currency the matched freight rate is quoted in,
+ * else INR. Re-runs when either input changes; never touches a submitted
+ * quotation, and leaves a saved one's currency alone on open. The `currency` watcher further up then looks up the rate.
+ */
+const customerCurrencyCache = new Map()
+/** What a saved quotation's currency inputs were when it was opened. */
+const autoCurrencyBaseline = new WeakMap()
+let autoCurrencyToken = 0
+// Same lock rule as `activeItemLocked`, which is declared further down and so
+// can't be read by this immediate watcher during setup.
+const quotationSubmitted = () => Boolean(quotationName.value) && quotationDocstatus.value === 1
+watch(
+  [
+    () => quotationHeaderFrm.value,
+    () => orderFrm.value?.doc?.customer,
+    () => quotationHeaderFrm.value?.doc?.hitech_freight_currency
+  ],
+  async ([header, customer, freightCurrency]) => {
+    const token = ++autoCurrencyToken
+    if (!header || quotationSubmitted()) return
+    // Opening a saved quotation is not a reason to change its currency — it
+    // keeps what it was saved with until the customer or the matched freight
+    // rate actually changes here. The baseline is taken once the customer is
+    // known, because `load()` publishes the header before the order frm.
+    if (quotationName.value && header.doc?.currency) {
+      if (!customer) return
+      const inputs = `${customer}|${freightCurrency || ''}`
+      if (!autoCurrencyBaseline.has(header)) autoCurrencyBaseline.set(header, inputs)
+      if (autoCurrencyBaseline.get(header) === inputs) return
+    }
+    let customerCurrency = ''
+    if (customer) {
+      if (!customerCurrencyCache.has(customer)) {
+        const row = await db.get_value('Customer', customer, 'default_currency').catch(() => null)
+        customerCurrencyCache.set(customer, row?.default_currency || '')
+      }
+      customerCurrency = customerCurrencyCache.get(customer)
+    }
+    if (token !== autoCurrencyToken || header !== quotationHeaderFrm.value || quotationSubmitted()) return
+    const target = customerCurrency || freightCurrency || 'INR'
+    if (header.doc?.currency !== target) await header.set_value('currency', target)
+  },
+  { immediate: true }
+)
+
 /** Defaults the manual Exchange Rate's Currency to the currency the matched
  *  freight rate is quoted in (USD on most rows), so the estimator only has
  *  to type the rate. Never overwrites a currency they picked. */
@@ -1141,6 +1200,47 @@ async function runExchangeRateLookup() {
     if (token === exchangeRateToken) exchangeRateChipsPending.value = false
   }
 }
+/**
+ * Every exchange rate this quote needs and doesn't have, one line each, for
+ * `ExchangeRateMissingBanner`. Two sources: the quote currency's Item rate
+ * (looked up here), and the freight legs' CIF / DAP rates, which only the
+ * engine knows about and reports in `hitech_exchange_rate_flags`. That field
+ * also carries non-rate notes (a missing freight-master row), which stay in
+ * the Exim step's own flags block — only the exchange-rate lines come here.
+ */
+const EXCHANGE_RATE_FLAG = /^No (\w+) exchange rate for (.+?) \((.+?)\)/
+const exchangeRateFlagLines = computed(() =>
+  exchangeRateFlags.value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => EXCHANGE_RATE_FLAG.test(line))
+)
+const missingExchangeRates = computed(() => {
+  const out = []
+  const chip = itemExchangeRateChip.value
+  if (quoteIsForeignCurrency.value && chip?.missing) out.push(`${quoteCurrency.value} → INR (Item) for ${chip.when}`)
+  for (const line of exchangeRateFlagLines.value) {
+    const [, purpose, when, pair] = line.match(EXCHANGE_RATE_FLAG)
+    out.push(`${pair} (${purpose}) for ${when}`)
+  }
+  return [...new Set(out)]
+})
+/** The Exim flags block keeps whatever ISN'T a missing exchange rate. */
+const otherFreightFlags = computed(() =>
+  exchangeRateFlags.value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !EXCHANGE_RATE_FLAG.test(line))
+    .join('\n')
+)
+/** "I've added it — check again": the rate was added in another tab, so ask
+ *  for both lookups again rather than making the estimator reload. */
+const exchangeRateRecheckPending = computed(() => exchangeRateChipsPending.value || freightPreviewPending.value)
+function recheckExchangeRates() {
+  runExchangeRateLookup()
+  runFreightPreview()
+}
+
 /** 400ms of quiet before firing — same window as `scheduleFreightPreview()`. */
 function scheduleExchangeRateLookup() {
   clearTimeout(exchangeRateDebounce)
@@ -2759,6 +2859,10 @@ const canSubmit = computed(
  */
 async function submitAll() {
   if (!canSubmit.value) return
+  if (missingExchangeRates.value.length) {
+    submitAllError.value = `Please set the exchange rate first: ${missingExchangeRates.value.join('; ')}.`
+    return
+  }
   if (incompleteItems.value.length) {
     const names = incompleteItems.value.map(({ label }) => label).join(', ')
     submitAllError.value = `Finish these items' Commercials step before submitting: ${names}.`
@@ -3005,6 +3109,10 @@ async function loadDuplicate(dup) {
 
 function finishQuotation() {
   if (!quotationName.value) return
+  if (missingExchangeRates.value.length) {
+    submitAllError.value = `Please set the exchange rate first: ${missingExchangeRates.value.join('; ')}.`
+    return
+  }
   finishSubmitting.value = false
   finishConfirmOpen.value = true
 }
@@ -3285,6 +3393,12 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'pricing'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">03</span>Items & Pricing</h2>
+            <ExchangeRateMissingBanner
+              v-if="missingExchangeRates.length"
+              :missing="missingExchangeRates"
+              :checking="exchangeRateRecheckPending"
+              @recheck="recheckExchangeRates"
+            />
             <div class="qw-pricing-table-wrap">
               <table class="qw-quotation-items qw-pricing-table">
                 <thead>
@@ -3361,34 +3475,10 @@ watch(() => props.quotation, load)
               </button>
             </div>
 
-            <!-- Currency for this quote -- see `ITEMS_CURRENCY_FIELDS`. The
-                 item is priced on this step, so this is where the currency
-                 decision belongs. It was a second control alongside Exim's
-                 own currency trio until the client spec of 2026-09-17
-                 removed that block; this is now the only place the quote's
-                 currency is chosen, so don't move or gate it. -->
-            <div class="qw-items-currency">
-              <WizardStep :frm="quotationHeaderFrm" :fields="ITEMS_CURRENCY_FIELDS" read-only-filter="exclude" />
-              <p v-if="!quoteIsForeignCurrency" class="qw-derived__hint qw-items-currency__note">
-                Priced in INR, so there is nothing to convert. Pick the customer's currency to also see this item's
-                value in it, converted at the <strong>Item</strong> rate from the Currency Exchange Master.
-              </p>
-              <p v-else-if="itemExchangeRateChip" class="qw-items-currency__note" :class="itemExchangeRateChip.missing ? 'qw-derived__warning' : 'qw-derived__hint'">
-                <template v-if="itemExchangeRateChip.missing">
-                  No exchange rate for <strong>{{ itemExchangeRateChip.when }}</strong> ({{ quoteCurrency }} → INR) — enter an
-                  Exchange Rate above, or add a {{ itemExchangeRateChip.when }} rate in Exchange Rates.
-                </template>
-                <template v-else>
-                  Item rate: <strong>{{ itemExchangeRateChip.value }}</strong> ₹ per {{ quoteCurrency }} ·
-                  {{ itemExchangeRateChip.when }} — what this quote converts at.<template v-if="!itemExchangeRateChip.manual">
-                  Type an Exchange Rate above to override it.</template> Freight legs use their own CIF / DAP rates, see
-                  the Exim step.
-                </template>
-              </p>
-              <p v-else-if="exchangeRateChipsPending" class="qw-derived__hint qw-items-currency__note">
-                Looking up the {{ quoteCurrency }} Item rate…
-              </p>
-            </div>
+            <!-- No Currency / Exchange Rate controls here any more (client,
+                 2026-10-12): the quote's currency is set automatically (see
+                 the auto-currency watcher), and a missing rate is reported by
+                 the banner at the top of this step. -->
 
             <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
             <div class="qw-totals-grid qw-items-totals-grid">
@@ -3661,6 +3751,12 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'exim'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Exim / Incoterms</h2>
+            <ExchangeRateMissingBanner
+              v-if="missingExchangeRates.length"
+              :missing="missingExchangeRates"
+              :checking="exchangeRateRecheckPending"
+              @recheck="recheckExchangeRates"
+            />
             <!-- The standalone Currency / Exchange Rate / Transaction Date
                  block that used to head this step is gone (client spec,
                  2026-09-17): the freight table below states what each leg
@@ -3772,11 +3868,11 @@ watch(() => props.quotation, load)
             <!-- `hitech_exchange_rate_flags`, pulled out of the rail above
                  (see `eximRailFields`): non-empty means a quarter's rate is
                  missing and that leg was costed at 0 INR, never 1:1. -->
-            <div v-if="exchangeRateFlags" class="qw-fx-flags">
+            <div v-if="otherFreightFlags" class="qw-fx-flags">
               <span class="qw-fx-flags__title">
-                <LucideIcon name="triangle-alert" /> Rate missing for this quarter — affected legs are costed at ₹0
+                <LucideIcon name="triangle-alert" /> Missing rate configuration
               </span>
-              <span class="qw-derived__warning qw-fx-flags__text">{{ exchangeRateFlags }}</span>
+              <span class="qw-derived__warning qw-fx-flags__text">{{ otherFreightFlags }}</span>
             </div>
             <!-- The Item Deal Value figures moved to Items & Pricing, where
                  the item is priced (EXIM_HIDDEN_FIELDS), so this tab no
@@ -3850,6 +3946,12 @@ watch(() => props.quotation, load)
 
         <!-- 07 · Review & submit -->
         <section v-else-if="activePageStep === 'review'">
+          <ExchangeRateMissingBanner
+            v-if="missingExchangeRates.length"
+            :missing="missingExchangeRates"
+            :checking="exchangeRateRecheckPending"
+            @recheck="recheckExchangeRates"
+          />
           <div v-for="sec in reviewSections" :key="sec.key" class="qw-review-card">
             <div class="qw-review-card__head">
               <span class="qw-review-card__n">{{ sec.n }}</span>
