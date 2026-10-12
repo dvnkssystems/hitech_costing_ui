@@ -225,7 +225,7 @@ export function searchFieldsOf(meta, lead = leadFieldOf(meta)) {
   add(lead)
   for (const declared of String(meta?.search_fields ?? '').split(',')) add(declared.trim())
 
-  return out.slice(0, 3)
+  return out.slice(0, 6)
 }
 
 /**
@@ -360,6 +360,32 @@ export function orderByOf(meta) {
 }
 
 /**
+ * The fields a list offers as filter controls above its rows.
+ *
+ * Frappe's own answer: whatever the DocType flags `in_standard_filter`, the
+ * same set the desk puts in its filter bar. Select and Link only — those are
+ * the ones a person picks a value for; a free-text field is what the search
+ * box is for.
+ */
+export function standardFiltersOf(meta) {
+  return usableFields(meta)
+    .filter((f) => f.in_standard_filter && (f.fieldtype === 'Select' || f.fieldtype === 'Link'))
+    .map((f) => ({
+      fieldname: f.fieldname,
+      label: f.label || f.fieldname,
+      fieldtype: f.fieldtype,
+      // Select: its choices. Link: the DocType to search.
+      options:
+        f.fieldtype === 'Select'
+          ? String(f.options ?? '')
+              .split('\n')
+              .map((o) => o.trim())
+              .filter(Boolean)
+          : f.options
+    }))
+}
+
+/**
  * Which columns to show.
  *
  * Frappe's own answer is `in_list_view`, so use that first. Plenty of DocTypes
@@ -372,7 +398,15 @@ export function orderByOf(meta) {
  * possible duplicate of the ID — that is `visibleColumnsFor`'s job, and only
  * after the data has shown it really is one.
  */
+/** Lists that genuinely need more than the default 5 columns — a rate master
+ *  is read by comparing its figures side by side, not by opening each row. */
+const LIST_COLUMN_LIMITS = {
+  'International Freight Rate Master': 9
+}
+const DEFAULT_LIST_COLUMN_LIMIT = 5
+
 export function listColumns(meta) {
+  const limit = LIST_COLUMN_LIMITS[meta?.name] ?? DEFAULT_LIST_COLUMN_LIMIT
   const usable = usableFields(meta)
   const lead = leadFieldOf(meta)
   const flagged = usable.filter((f) => f.in_list_view)
@@ -382,7 +416,7 @@ export function listColumns(meta) {
   const leadField = lead ? usable.find((f) => f.fieldname === lead) : null
   if (leadField) chosen.push(leadField)
   for (const field of pool) {
-    if (chosen.length >= 5) break
+    if (chosen.length >= limit) break
     if (field.fieldname !== lead) chosen.push(field)
   }
 

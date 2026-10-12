@@ -75,7 +75,7 @@ import {
   restoreOnloadCustomButtons,
   installWorkflowActions
 } from '@/lib/frmCompat'
-import { installDeskApis, installAmend, takePendingDoc } from '@/lib/mappedDoc'
+import { installDeskApis, installAmend, takePendingDoc, seedPendingDoc } from '@/lib/mappedDoc'
 import {
   money,
   float,
@@ -152,7 +152,21 @@ const visibleAddressFields = computed(() => ADDRESS_FIELDS)
  *  `fieldState` check. No client-side filtering left to do here; kept as a
  *  computed (rather than inlined) for the same reason `visibleAddressFields`
  *  above is, in case cross-frm filtering is ever needed again. */
-const visibleEximFields = computed(() => EXIM_FIELDS)
+// `hitech_region` is excluded here (but stays in `EXIM_FIELDS` itself, which
+// draft autosave/restore, duplicate-quote copying and the live freight
+// preview all still read from) -- in this wizard it is kept in sync with the
+// Customer & Order step's own `region` (SHARED_STEP, one value for the whole
+// quotation) by the watcher below, so there is no separate control for the
+// estimator to fill in twice. The real field is untouched: a bare desk edit
+// of an existing Quotation outside the wizard still sees and can edit it
+// directly, same as before.
+// `named_place` (a core ERPNext Quotation field, never read by the freight
+// engine) is likewise dropped from the step on request, 2026-10-12.
+// `hitech_mode_of_transport` is mirrored from the items' own Mode of
+// Transport (set on Items & Pricing) by the watcher further down, same idea
+// as `hitech_region` -- so it isn't asked for a second time here either.
+const EXIM_STEP_EXCLUDED_FIELDS = new Set(['hitech_region', 'named_place', 'hitech_mode_of_transport'])
+const visibleEximFields = computed(() => EXIM_FIELDS.filter((fieldname) => !EXIM_STEP_EXCLUDED_FIELDS.has(fieldname)))
 /** The Exim step's Calculated rail — every `EXIM_FIELDS` entry except
  *  `hitech_exchange_rate_flags`, which is a Small Text the engine fills only
  *  when a quarter's exchange rate is MISSING (that leg is then 0 INR, never
@@ -207,13 +221,15 @@ const freightLegRows = computed(() => {
   // the seller hands the goods over before the main carriage. On every other
   // Incoterm the engine returns 0 and `add()`'s skip-an-empty-leg rule keeps
   // the row out, so the Incoterm rules stay in the engine, not here.
-  // No master rate matched, so the whole amount is the fallback formula's.
-  // It goes in FIRST and in INR: there is no leg, no currency and no rate
-  // behind it, and the row exists so the table reconciles to the banner
-  // instead of showing a total nothing adds up to (client report,
+  // No master rate matched, so the whole amount is whatever Total Freight
+  // Cost Override carries (0 if that's unset too — the engine no longer
+  // estimates a figure of its own here, see `_international_freight()`,
+  // 2026-10-12). It goes in FIRST and in INR: there is no leg, no currency
+  // and no rate behind it, and the row exists so the table reconciles to the
+  // banner instead of showing a total nothing adds up to (client report,
   // 2026-09-17). On the master-rate path the engine leaves it at 0 and
   // `add()`'s skip-an-empty-leg rule keeps it out.
-  add('Fallback formula (no master rate)', doc.hitech_fallback_freight_applied, 'INR', 1, doc.hitech_fallback_freight_applied)
+  add('Manual override (no master rate)', doc.hitech_fallback_freight_applied, 'INR', 1, doc.hitech_fallback_freight_applied)
   add('Handover charge', doc.hitech_handover_native, native, doc.hitech_handover_exchange_rate, doc.hitech_handover_inr)
   add('CIF', doc.hitech_cif_leg_native, native, doc.hitech_cif_exchange_rate, doc.hitech_cif_leg_inr)
   add('DAP add-on', doc.hitech_dap_addon_native, native, doc.hitech_dap_exchange_rate, doc.hitech_dap_addon_inr)
@@ -277,7 +293,15 @@ const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
 /** The Item leg of `exchangeRateChips` -- the rate the Item Deal Value below
  *  the totals is actually priced at, shown next to that figure so it can be
  *  checked without opening the Exim step. */
-const itemExchangeRateChip = computed(() => exchangeRateChips.value.find((chip) => chip.key === 'Item') ?? null)
+const itemRateOverride = computed(() => Number(quotationHeaderFrm.value?.doc?.hitech_item_exchange_rate_override) || 0)
+/** A manual Exchange Rate on Items & Pricing wins over the quarter's master
+ *  Item rate, same as the backend (`_rate_for` / `_apply_item_rate_to_conversion_rate`). */
+const itemExchangeRateChip = computed(() => {
+  if (itemRateOverride.value > 0) {
+    return { key: 'Item', value: float(itemRateOverride.value), rate: itemRateOverride.value, missing: false, manual: true, when: 'entered manually' }
+  }
+  return exchangeRateChips.value.find((chip) => chip.key === 'Item') ?? null
+})
 // `conversionRateIsQuarterly` lived here: it compared the header's
 // `conversion_rate` against this quarter's Item rate to warn when the two
 // disagreed. Dropped with the Exim step's Currency / Exchange Rate block
@@ -342,7 +366,8 @@ const saveState = computed(() => {
   if (submitPhase.value === 'partial-failure') return 'Submit failed — see Review & Submit'
   const n = items.value.length
   if (!n) return 'No items yet'
-  return `${n} item${n === 1 ? '' : 's'} · not submitted yet`
+  const copied = duplicatedFrom.value && !quotationName.value ? `Copy of ${duplicatedFrom.value} · ` : ''
+  return `${copied}${n} item${n === 1 ? '' : 's'} · not submitted yet`
 })
 
 function pick(obj, keys) {
@@ -428,7 +453,8 @@ const reviewSections = computed(() => [
     // ...) like the rest of this section — added manually instead.
     rows: [
       { label: 'Type', value: quotationHeaderFrm.value?.doc?.custom_type },
-      ...sectionRows(orderFrm.value, SHARED_STEP.fields)
+      ...sectionRows(orderFrm.value, SHARED_STEP.fields),
+      ...sectionRows(quotationHeaderFrm.value, EXIM_DATE_FIELDS)
     ]
   },
   { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
@@ -449,10 +475,10 @@ const reviewSections = computed(() => [
     // the exception: it has its own control on the step again, so it heads
     // the summary too, or the summary would hide the field that decides
     // which quarter everything below it was priced in.
-    rows: sectionRows(quotationHeaderFrm.value, [
-      ...EXIM_DATE_FIELDS,
-      ...visibleEximFields.value.filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
-    ])
+    rows: sectionRows(
+      quotationHeaderFrm.value,
+      visibleEximFields.value.filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
+    )
   },
   { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
 ])
@@ -529,6 +555,20 @@ const showContainersRequiredColumn = computed(() =>
  *  multi-currency support either, so the "(Company Currency)" figures match
  *  their plain counterparts too — same as ERPNext shows when currency ==
  *  company currency. */
+/** INR -> quote currency rate for showing figures in the customer's currency
+ *  (USD etc.): the manual Exchange Rate when set, else the quarter's Item
+ *  rate. 0 when the quote is in INR or no rate exists yet. */
+const quoteRate = computed(() => {
+  if (!quoteIsForeignCurrency.value) return 0
+  const rate = Number(itemExchangeRateChip.value?.rate) || 0
+  return rate > 0 ? rate : 0
+})
+/** `amountInr` shown in the quote's currency, or '' when there's nothing to convert. */
+function inQuoteCurrency(amountInr) {
+  if (!(quoteRate.value > 0)) return ''
+  return money((Number(amountInr) || 0) / quoteRate.value, quoteCurrency.value)
+}
+
 const itemsSummary = computed(() => {
   const totalQuantity = itemsPricingRows.value.reduce((sum, row) => sum + row.quantity, 0)
   const total = itemsPricingRows.value.reduce((sum, row) => sum + row.finalAmountRaw, 0)
@@ -608,28 +648,43 @@ function toggleTerm(entry) {
 }
 const termsSelectedCount = computed(() => termChecklist.value.filter((t) => t.row?.selected).length)
 
+
 /**
- * Taxes/Address/Terms edits made while attached to an already-existing
- * Quotation (`quotationName` set) need their own save: `submitAll()` only
- * ever applies `quotationHeaderFrm`'s staged fields onto a Quotation it's
- * creating for the FIRST time — see its
- * `...(quotationName.value ? {} : { quotation_header: header })` — so once a
- * Quotation already exists, nothing else ever persists this frm. All three
- * steps edit the same `quotationHeaderFrm`, so one save covers whichever of
- * them are currently dirty.
+ * The Save button in every step's footer: persists whatever is saveable right
+ * now, without moving to the next step.
+ *  - Every item's Costing Worksheet that isn't submitted (new ones are created
+ *    as drafts, existing ones updated) -- unchanged ones are skipped.
+ *  - The Quotation header (Address, Exim, Terms, currency...) once a Quotation
+ *    exists. A brand-new quote has no Quotation to write to until Submit on
+ *    Review creates it; its header stays in the local draft until then.
+ * Nothing to save once the Quotation is submitted (`activeItemLocked`).
  */
-const headerSaving = ref(false)
-const headerSaveError = ref('')
-async function saveQuotationHeader() {
-  if (!quotationHeaderFrm.value) return
-  headerSaving.value = true
-  headerSaveError.value = ''
+const stepSaving = ref(false)
+const stepSaveError = ref('')
+const stepSaveMessage = ref('')
+let stepSaveMessageTimer = null
+async function saveProgress() {
+  if (stepSaving.value || activeItemLocked.value) return
+  stepSaving.value = true
+  stepSaveError.value = ''
+  stepSaveMessage.value = ''
   try {
-    await quotationHeaderFrm.value.save()
+    for (const item of items.value) {
+      if (item.frm.docstatus === 1) continue
+      if (!item.frm.is_new() && !item.frm.is_dirty?.()) continue
+      await item.frm.save()
+      markSaved(item.frm)
+    }
+    if (quotationName.value && quotationHeaderFrm.value) await quotationHeaderFrm.value.save()
+    stepSaveMessage.value = quotationName.value
+      ? `Saved to ${quotationName.value}`
+      : 'Costing sheets saved — the Quotation itself is created when you Submit on Review'
+    clearTimeout(stepSaveMessageTimer)
+    stepSaveMessageTimer = setTimeout(() => (stepSaveMessage.value = ''), 4000)
   } catch (e) {
-    headerSaveError.value = e?.message ?? String(e)
+    stepSaveError.value = e?.message ?? String(e)
   } finally {
-    headerSaving.value = false
+    stepSaving.value = false
   }
 }
 
@@ -680,7 +735,19 @@ const FREIGHT_PREVIEW_HEADER_FIELDS = [
   // (what `hitech_item_deal_value_fc` is expressed in) and the date whose
   // quarter picks the Currency Exchange Master rates for the CIF/DAP legs.
   'currency',
-  'transaction_date'
+  'transaction_date',
+  // Manual overrides, read only when the automatic path they stand in for
+  // finds nothing -- see `_rate_for()`'s `override` param and
+  // `_international_freight()`'s own override check in exim.py. Left out of
+  // this list, the live preview silently ignores anything typed into them:
+  // the override reaches a real save (the whole `quotationHeaderFrm.doc` is
+  // sent then) but the Freight Summary on screen never reacts until that
+  // save round-trip, which reads as "the override field does nothing".
+  'hitech_cif_exchange_rate_override',
+  'hitech_dap_exchange_rate_override',
+  'hitech_item_exchange_rate_override',
+  'hitech_total_freight_cost_override',
+  'hitech_exchange_rate_override_currency'
 ]
 /** Which fields of `preview_freight`'s result must NOT be written back.
  *
@@ -805,6 +872,91 @@ watch(() => orderFrm.value?.doc?.customer, scheduleFreightPreview)
 watch(() => orderFrm.value?.doc?.company, scheduleFreightPreview)
 watch(() => buildFreightPreviewItems(), scheduleFreightPreview, { deep: true })
 
+/** Keeps the Exim step's `hitech_region` (Domestic/Export, what the freight
+ *  engine actually reads) mirroring the Customer & Order step's own `region`
+ *  (`SHARED_STEP` — filled once, the same value for every item on this
+ *  quotation) — see `visibleEximFields`'s own doc comment for why the Exim
+ *  step no longer shows a separate control for it. `immediate: true` so a
+ *  brand-new quotation picks up `region`'s own default (Domestic) right away,
+ *  not only on the next change. */
+watch(
+  () => orderFrm.value?.doc?.region,
+  (region) => {
+    if (!quotationHeaderFrm.value || !region) return
+    if (quotationHeaderFrm.value.doc?.hitech_region === region) return
+    quotationHeaderFrm.value.set_value('hitech_region', region)
+  },
+  { immediate: true }
+)
+
+/** Mirrors Items & Pricing's Mode of Transport (each Costing Worksheet's own
+ *  `mode_of_transport`) onto the Quotation's `hitech_mode_of_transport`, so
+ *  it is chosen once, per item, and never re-entered on the Exim step. A
+ *  quotation ships as one consignment, so the first item that has a mode
+ *  set decides it. */
+watch(
+  [() => items.value.map((item) => item.frm?.doc?.mode_of_transport), () => quotationHeaderFrm.value],
+  ([modes]) => {
+    const header = quotationHeaderFrm.value
+    const mode = modes.find(Boolean)
+    if (!header || !mode || header.doc?.hitech_mode_of_transport === mode) return
+    header.set_value('hitech_mode_of_transport', mode)
+  },
+  { immediate: true }
+)
+
+/** Defaults the manual Exchange Rate's Currency to the currency the matched
+ *  freight rate is quoted in (USD on most rows), so the estimator only has
+ *  to type the rate. Never overwrites a currency they picked. */
+watch(
+  () => quotationHeaderFrm.value?.doc?.hitech_freight_currency,
+  (currency) => {
+    const header = quotationHeaderFrm.value
+    if (!header || !currency || currency === 'INR' || header.doc?.hitech_exchange_rate_override_currency) return
+    header.set_value('hitech_exchange_rate_override_currency', currency)
+  },
+  { immediate: true }
+)
+
+/** Keeps Freight Region (`hitech_freight_region`) in step with the selected
+ *  customer's own International Freight Rate Master row(s) — the Region on
+ *  that row is the one the rate was negotiated for, so it is the only value
+ *  that can ever price this customer.
+ *
+ *  - Customer has rate rows in exactly the region already on the quote:
+ *    left alone.
+ *  - Current value matches none of the customer's rows (blank, or stale from
+ *    a previous customer / a wrong pick): replaced with the customer's
+ *    region, preferring a row for this quote's own quarter.
+ *  - Customer has rows in several regions and the current value is one of
+ *    them: left alone, so the estimator can still choose between them.
+ *  - Customer has no rate row at all: nothing to fill from, field left as is.
+ */
+async function syncFreightRegionFromRateMaster() {
+  const customer = orderFrm.value?.doc?.customer
+  const header = quotationHeaderFrm.value
+  if (!customer || !header || !live.value) return
+  const rows = await db.get_list('International Freight Rate Master', {
+    filters: { customer },
+    fields: ['region', 'quarter', 'year'],
+    limit_page_length: 0
+  })
+  const regions = [...new Set((rows ?? []).map((r) => r.region).filter(Boolean))]
+  if (!regions.length) return
+  const current = header.doc?.hitech_freight_region
+  if (current && regions.includes(current)) return
+  const date = new Date(header.doc?.transaction_date || todayIso())
+  const quarter = `Q${Math.floor(date.getMonth() / 3) + 1}`
+  const year = String(date.getFullYear())
+  const thisQuarter = rows.find((r) => r.quarter === quarter && String(r.year) === year && r.region)
+  header.set_value('hitech_freight_region', thisQuarter?.region || regions[0])
+}
+watch(
+  [() => orderFrm.value?.doc?.customer, () => quotationHeaderFrm.value, () => quotationHeaderFrm.value?.doc?.transaction_date],
+  syncFreightRegionFromRateMaster,
+  { immediate: true }
+)
+
 /* ── Exchange rates for the quote's currency ─────────────────────────────── */
 /* Was "Currency picker (top of the Exim step)" until the client spec of
    2026-09-17 removed that block. The currency control now lives on Items &
@@ -909,6 +1061,22 @@ watch(
     if (rate > 0) await frm.set_value('conversion_rate', rate)
   }
 )
+
+/** A manual Exchange Rate on Items & Pricing is what the quote converts at:
+ *  push it onto `conversion_rate` straight away (the freight preview and the
+ *  backend apply the same rule). Clearing it falls back to the quarter's
+ *  master Item rate. */
+watch(itemRateOverride, (rate, previous) => {
+  const frm = quotationHeaderFrm.value
+  if (!frm || !quoteIsForeignCurrency.value) return
+  if (rate > 0) {
+    if (Number(frm.doc.conversion_rate) !== rate) frm.set_value('conversion_rate', rate)
+    return
+  }
+  if (!previous) return
+  const master = exchangeRateChips.value.find((chip) => chip.key === 'Item')?.rate
+  if (master > 0) frm.set_value('conversion_rate', master)
+})
 
 /**
  * The three compact "USD CIF Q3 2026: 84.50" chips next to the currency
@@ -1837,8 +2005,13 @@ function uid() {
  * relocked to just Product Line.
  */
 function initialUnlockedSteps(frm) {
+  if (frm.is_new()) return new Set([0])
+  return stepsUnlockedByData(frm)
+}
+/** The walk itself, without `initialUnlockedSteps`' new-doc short-circuit —
+ *  a duplicated item is new but already carries every step's data. */
+function stepsUnlockedByData(frm) {
   const unlocked = new Set([0])
-  if (frm.is_new()) return unlocked
   for (let i = 0; i < ITEM_STEPS.length; i++) {
     unlocked.add(i)
     if (!stepIsComplete(frm, ITEM_STEPS[i], fieldState)) break
@@ -1983,6 +2156,7 @@ function removeItem(key) {
 const DRAFT_STORAGE_KEY = 'hitech-costing:quotation-draft'
 const DRAFT_HEADER_FIELDS = [
   ...TYPE_FIELDS,
+  'hitech_item_exchange_rate_override',
   ...TAX_FIELDS,
   ...ADDRESS_FIELDS,
   ...CURRENCY_FIELDS,
@@ -2232,6 +2406,7 @@ async function load() {
   submitPhase.value = 'idle'
   submitAllError.value = ''
   draftMode.value = null
+  duplicatedFrom.value = null
 
   if (!live.value) {
     error.value = 'No Frappe backend configured. Set VITE_FRAPPE_URL in .env to use the wizard.'
@@ -2240,7 +2415,12 @@ async function load() {
   }
 
   try {
-    if (props.quotation) {
+    // Parked by `duplicateQuotation()` just before it routed here; only a
+    // bare `/wizard/costing-worksheet` (a brand-new session) can take it.
+    const duplicate = props.quotation || props.name ? null : takePendingDoc(DUPLICATE_SEED_KEY)
+    if (duplicate) {
+      await loadDuplicate(duplicate)
+    } else if (props.quotation) {
       // Resuming an existing Quotation — boot its REAL header frm (not a
       // throwaway) so Taxes/Address/Terms show what's actually staged, then
       // discover every Costing Worksheet already mapped onto it and load each
@@ -2284,7 +2464,13 @@ async function load() {
       // Type runs through (see TYPE_FIELDS in costingWorksheetWizard.js).
       const headerSeed = takePendingDoc(HEADER_DOCTYPE)
       quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
-        initialDoc: { doctype: HEADER_DOCTYPE, custom_type: 'Tank', ...headerSeed },
+        // `transaction_date` has a real "Today" default on the Quotation
+        // DocType itself, but a hand-seeded `initialDoc` here doesn't reliably
+        // pick that up (see `todayIso()`'s own doc comment) — without this the
+        // Exim step's Date control showed blank until the estimator picked one
+        // by hand, even though every exchange-rate/freight-quarter lookup
+        // already silently fell back to today anyway via `headerTransactionDate()`.
+        initialDoc: { doctype: HEADER_DOCTYPE, custom_type: 'Tank', transaction_date: todayIso(), ...headerSeed },
         scripts: [addressQueryScript]
       })
 
@@ -2681,6 +2867,142 @@ async function downloadQuotationPdf() {
   }
 }
 
+/* ── Duplicate ───────────────────────────────────────────────────────────── */
+/**
+ * "Duplicate" starts a brand-new, unsaved quotation pre-filled from this one:
+ * the same header (taxes, address, Exim, terms) and a copy of every costing
+ * sheet behind it, quantities and line descriptions included. Nothing is
+ * written to the server here — the copy is parked with `seedPendingDoc` and
+ * the wizard re-opens as a fresh `/wizard/costing-worksheet` session, so the
+ * estimator saves each item and submits exactly as for any new quotation,
+ * and the backend's `submit_and_map` creates a new Quotation for it.
+ *
+ * Each worksheet goes through the SDK's `frm.copy_doc()` (Frappe's own
+ * copy rule: `no_copy` fields and identity dropped, child rows re-keyed), and
+ * `quotation`/`status` are dropped on top of that so a copy can never arrive
+ * already looking mapped — `makeItem()` would read it as submitted.
+ * `transaction_date` is left to default to today, so the copy's exchange
+ * rates come from the current quarter rather than the original's.
+ */
+const DUPLICATE_SEED_KEY = 'Quotation (duplicate)'
+const DUPLICATE_DROPPED_FIELDS = new Set([
+  'name',
+  'owner',
+  'creation',
+  'modified',
+  'modified_by',
+  'docstatus',
+  'idx',
+  'doctype',
+  'parent',
+  'parenttype',
+  'parentfield',
+  'quotation',
+  'status'
+])
+const duplicatedFrom = ref(null)
+/** Only where `quotationHeaderFrm` holds the Quotation's real header: a
+ *  single worksheet opened by name boots a throwaway one, which would copy
+ *  across blank. */
+const canDuplicate = computed(() => Boolean(quotationName.value) && !singleItemMode.value)
+
+/** Splits a copied doc into plain fields (fed to `bootFrm`'s `initialDoc`)
+ *  and child rows (replayed through `add_child`, which gives each row a
+ *  fresh name in the new doc's locals). Undefined values are dropped so they
+ *  don't override the DocType's own defaults in the `initialDoc` merge. */
+function duplicatePayload(frm, doc) {
+  const clean = (source) =>
+    Object.fromEntries(
+      Object.entries(source).filter(
+        ([key, value]) => value !== undefined && !key.startsWith('__') && !DUPLICATE_DROPPED_FIELDS.has(key)
+      )
+    )
+  const fields = {}
+  const tables = {}
+  for (const [fieldname, value] of Object.entries(clean(doc))) {
+    const fieldtype = frm.fields_dict?.[fieldname]?.df?.fieldtype
+    if (fieldtype === 'Table' || fieldtype === 'Table MultiSelect') {
+      tables[fieldname] = (Array.isArray(value) ? value : []).map(clean)
+    } else {
+      fields[fieldname] = value
+    }
+  }
+  return { fields, tables }
+}
+function addDuplicatedRows(frm, tables) {
+  for (const [fieldname, rows] of Object.entries(tables ?? {})) {
+    for (const row of rows) frm.add_child(fieldname, row)
+  }
+}
+
+const duplicating = ref(false)
+async function duplicateQuotation() {
+  if (!canDuplicate.value || !quotationHeaderFrm.value || duplicating.value) return
+  // The copy opens as the one "New Quotation" session the autosave tracks,
+  // so an unsaved draft already sitting there would be overwritten.
+  const pendingDraft = readDraft(DRAFT_STORAGE_KEY)
+  if (pendingDraft) {
+    const proceed = await confirmAsync(
+      `Duplicating replaces your unsaved New Quotation draft from ${timeAgo(pendingDraft.savedAt) || 'earlier'}. Continue?`
+    )
+    if (!proceed) return
+  }
+  duplicating.value = true
+  try {
+    clearDraft(DRAFT_STORAGE_KEY)
+    const headerFrm = quotationHeaderFrm.value
+    const headerFieldnames = DRAFT_HEADER_FIELDS.filter((fieldname) => fieldname !== 'transaction_date')
+    seedPendingDoc(DUPLICATE_SEED_KEY, {
+      from: quotationName.value,
+      order: pick(orderFrm.value?.doc, SHARED_FIELDNAMES),
+      header: duplicatePayload(headerFrm, pick(headerFrm.copy_doc(), headerFieldnames)),
+      items: items.value.map((item) => ({
+        ...duplicatePayload(item.frm, item.frm.copy_doc()),
+        quantity: normalizedQuantity(item),
+        description: item.description
+      }))
+    })
+    await router.push('/wizard/costing-worksheet')
+  } finally {
+    duplicating.value = false
+  }
+}
+
+/** `load()`'s counterpart for a parked duplicate — see `duplicateQuotation()`.
+ *  Booted like a brand-new session (separate throwaway `orderFrm`, unique
+ *  placeholder names) and autosaved as one, but every item arrives filled in,
+ *  so each item's steps are unlocked as far as its data goes. */
+async function loadDuplicate(dup) {
+  // Rows go in before the frm is published: the Terms checklist watcher
+  // seeds default terms into an empty table the moment it sees a new header.
+  const header = await bootFrm(HEADER_DOCTYPE, {
+    initialDoc: { custom_type: 'Tank', ...dup.header.fields, doctype: HEADER_DOCTYPE },
+    scripts: [addressQueryScript]
+  })
+  addDuplicatedRows(header, dup.header.tables)
+  quotationHeaderFrm.value = header
+
+  orderFrm.value = await bootFrm(DOCTYPE, {
+    initialDoc: { ...dup.order, doctype: DOCTYPE, name: `New Costing Worksheet (order-${uid()})` },
+    scripts: itemScripts(DOCTYPE)
+  })
+  for (const source of dup.items) {
+    const key = uid()
+    const frm = await bootFrm(DOCTYPE, {
+      initialDoc: { ...source.fields, doctype: DOCTYPE, name: `New Costing Worksheet (${key})` },
+      scripts: itemScripts(DOCTYPE)
+    })
+    addDuplicatedRows(frm, source.tables)
+    const item = makeItem(frm, key, { qty: source.quantity, description: source.description })
+    item.unlockedSteps = stepsUnlockedByData(frm)
+    items.value = [...items.value, item]
+  }
+  activeItemKey.value = items.value[0]?.key ?? null
+  activePageStep.value = 'customer'
+  duplicatedFrom.value = dup.from
+  draftMode.value = 'new'
+}
+
 function finishQuotation() {
   if (!quotationName.value) return
   finishSubmitting.value = false
@@ -2791,18 +3113,40 @@ watch(() => props.quotation, load)
             <h2 class="qw-step-title"><span class="qw-step-title__n">01</span>Customer & Order</h2>
             <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
               <WizardStep :frm="orderFrm" :fields="SHARED_STEP.fields" read-only-filter="exclude" />
+              <!-- Quotation Date (moved here from Exim / Incoterms, 2026-10-12):
+                   it's the quote's own date and picks the quarter for the
+                   freight rate and the exchange rates, so it's set up front
+                   with the rest of the order. See `EXIM_DATE_FIELDS`. -->
+              <div class="qw-exim-date" style="margin-top: 14px;">
+                <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
+                <p class="qw-exim-date__note">
+                  Sets the quarter used for the freight rate and the exchange rates.
+                </p>
+              </div>
             </fieldset>
           </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" disabled>← Back</button>
-            <button
-              type="button"
-              class="qw-next-btn"
-              :disabled="activeItemLocked || !stepIsComplete(orderFrm, SHARED_STEP, fieldState)"
-              @click="pageNext"
-            >
-              Next
-            </button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button
+                type="button"
+                class="qw-next-btn"
+                :disabled="activeItemLocked || !stepIsComplete(orderFrm, SHARED_STEP, fieldState)"
+                @click="pageNext"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </section>
 
@@ -2907,9 +3251,21 @@ watch(() => props.quotation, load)
 
               <div v-if="activeItem.stepError" class="qw-step-error">{{ activeItem.stepError }}</div>
 
+              <p v-if="!activeItem.stepError && stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
+              <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
               <div class="qw-footer">
                 <button type="button" :disabled="activeItem.activeStepIndex === 0" @click="itemBack" class="qw-back-btn">
                   ← Back
+                </button>
+                <div class="qw-footer__actions">
+                <button
+                  v-if="activeItem.activeStepIndex !== COMMERCIALS_STEP_INDEX"
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItem.saving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
                 </button>
                 <button
                   type="button"
@@ -2919,6 +3275,7 @@ watch(() => props.quotation, load)
                 >
                   {{ activeItem.saving ? 'Saving…' : activeItem.activeStepIndex === COMMERCIALS_STEP_INDEX ? 'Save item' : 'Next' }}
                 </button>
+                </div>
               </div>
             </div>
           </template>
@@ -2928,10 +3285,6 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'pricing'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">03</span>Items & Pricing</h2>
-            <p class="qw-step-lede">
-              One line per item. Weight and built-up cost come from that item's own costing sheet. Add a description
-              and quantity to price multiple units of the same design — final amount is total deal value × quantity.
-            </p>
             <div class="qw-pricing-table-wrap">
               <table class="qw-quotation-items qw-pricing-table">
                 <thead>
@@ -2954,7 +3307,7 @@ watch(() => props.quotation, load)
                 <tbody>
                   <tr v-for="row in itemsPricingRows" :key="row.key">
                     <td class="qw-pricing-table__label">{{ row.label }}</td>
-                    <td class="qw-pricing-table__num">{{ row.dealPrice }}</td>
+                    <td class="qw-pricing-table__num">{{ row.dealPrice }}<span v-if="quoteRate" class="qw-pricing-table__fx">{{ inQuoteCurrency(row.item.frm.doc.deal_price_fg_inr_per_kg) }}/kg</span></td>
                     <td>
                       <input
                         type="number"
@@ -2968,8 +3321,8 @@ watch(() => props.quotation, load)
                     <td class="qw-pricing-table__num">{{ row.weight }}</td>
                     <td class="qw-pricing-table__num">{{ row.builtUpCost }}</td>
                     <td class="qw-pricing-table__num">{{ row.marginPercent }}</td>
-                    <td class="qw-pricing-table__num">{{ row.totalDealValue }}</td>
-                    <td class="qw-pricing-table__num qw-pricing-table__final">{{ row.finalAmount }}</td>
+                    <td class="qw-pricing-table__num">{{ row.totalDealValue }}<span v-if="quoteRate" class="qw-pricing-table__fx">{{ inQuoteCurrency(row.item.frm.doc.total_deal_value) }}</span></td>
+                    <td class="qw-pricing-table__num qw-pricing-table__final">{{ row.finalAmount }}<span v-if="quoteRate" class="qw-pricing-table__fx">{{ inQuoteCurrency(row.finalAmountRaw) }}</span></td>
                     <td>
                       <input
                         type="text"
@@ -3022,13 +3375,14 @@ watch(() => props.quotation, load)
               </p>
               <p v-else-if="itemExchangeRateChip" class="qw-items-currency__note" :class="itemExchangeRateChip.missing ? 'qw-derived__warning' : 'qw-derived__hint'">
                 <template v-if="itemExchangeRateChip.missing">
-                  No <strong>Item</strong> exchange rate for {{ quoteCurrency }} in {{ itemExchangeRateChip.when }} —
-                  add one in the Currency Exchange Master, or this item's converted value stays ₹0.
+                  No exchange rate for <strong>{{ itemExchangeRateChip.when }}</strong> ({{ quoteCurrency }} → INR) — enter an
+                  Exchange Rate above, or add a {{ itemExchangeRateChip.when }} rate in Exchange Rates.
                 </template>
                 <template v-else>
                   Item rate: <strong>{{ itemExchangeRateChip.value }}</strong> ₹ per {{ quoteCurrency }} ·
-                  {{ itemExchangeRateChip.when }} — what this quote converts at. Freight legs use their own CIF / DAP
-                  rates, see the Exim step.
+                  {{ itemExchangeRateChip.when }} — what this quote converts at.<template v-if="!itemExchangeRateChip.manual">
+                  Type an Exchange Rate above to override it.</template> Freight legs use their own CIF / DAP rates, see
+                  the Exim step.
                 </template>
               </p>
               <p v-else-if="exchangeRateChipsPending" class="qw-derived__hint qw-items-currency__note">
@@ -3047,16 +3401,16 @@ watch(() => props.quotation, load)
                 <span class="qw-totals-box__v">{{ itemsSummary.total }}</span>
               </div>
               <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Total</span>
-                <span class="qw-totals-box__v">{{ itemsSummary.total }}</span>
+                <span class="qw-totals-box__k">Total<template v-if="quoteRate"> ({{ quoteCurrency }})</template></span>
+                <span class="qw-totals-box__v">{{ quoteRate ? inQuoteCurrency(itemsSummary.totalRaw) : itemsSummary.total }}</span>
               </div>
               <div class="qw-totals-box">
                 <span class="qw-totals-box__k">Net Total (Company Currency)</span>
                 <span class="qw-totals-box__v">{{ itemsSummary.netTotal }}</span>
               </div>
               <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Net Total</span>
-                <span class="qw-totals-box__v">{{ itemsSummary.netTotal }}</span>
+                <span class="qw-totals-box__k">Net Total<template v-if="quoteRate"> ({{ quoteCurrency }})</template></span>
+                <span class="qw-totals-box__v">{{ quoteRate ? inQuoteCurrency(itemsSummary.totalRaw) : itemsSummary.netTotal }}</span>
               </div>
               <!-- The ERPNext totals above are always in company currency
                    (INR) -- this wizard never converts them itself. For a
@@ -3250,9 +3604,21 @@ watch(() => props.quotation, load)
               </template>
             </div>
           </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            </div>
           </div>
         </section>
 
@@ -3260,9 +3626,6 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'address'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Address & Delivery</h2>
-            <p v-if="quotationName" class="qw-step-lede">
-              Editing delivery details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
-            </p>
             <WizardStep :frm="quotationHeaderFrm" :fields="visibleAddressFields" read-only-filter="exclude" />
             <!-- `address_display`/`shipping_address` are `read_only`, so the
                  "exclude" step above never renders them — same "only" split
@@ -3275,16 +3638,22 @@ watch(() => props.quotation, load)
               read-only-filter="only"
               style="margin-top: 14px;"
             />
-            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
-              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
-                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
-              </button>
-              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
-            </div>
           </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            </div>
           </div>
         </section>
 
@@ -3292,9 +3661,6 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'exim'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">05</span>Exim / Incoterms</h2>
-            <p v-if="quotationName" class="qw-step-lede">
-              Editing freight &amp; Incoterm details on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
-            </p>
             <!-- The standalone Currency / Exchange Rate / Transaction Date
                  block that used to head this step is gone (client spec,
                  2026-09-17): the freight table below states what each leg
@@ -3310,19 +3676,6 @@ watch(() => props.quotation, load)
                  `hitech_exchange_rate_flags` block below still calls out any
                  leg the engine had to cost at ₹0. -->
 
-            <!-- Quotation Date, alone (client request, 17 Sep 2026). It went
-                 out with the currency trio above, but it is the one field of
-                 the three an estimator has to set by hand: it picks the
-                 quarter, and the quarter picks the freight rate row AND the
-                 exchange rates. Quoting a past or future quarter is only this
-                 field. Kept as its own block, with its own note, so it can't
-                 be missed -- see `EXIM_DATE_FIELDS`. -->
-            <div class="qw-exim-date">
-              <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
-              <p class="qw-exim-date__note">
-                Sets the quarter used for the freight rate and the exchange rates below.
-              </p>
-            </div>
 
             <WizardStep :frm="quotationHeaderFrm" :fields="visibleEximFields" read-only-filter="exclude" />
             <WizardStep
@@ -3353,29 +3706,6 @@ watch(() => props.quotation, load)
             </template>
 
             <template v-else>
-              <div class="qw-freight-meta">
-                <div class="qw-freight-meta__cell">
-                  <span class="qw-totals-box__k">Freight Rate Source</span>
-                  <span class="qw-freight-meta__v">{{ quotationHeaderFrm?.doc?.hitech_freight_rate_source || '—' }}</span>
-                </div>
-                <div class="qw-freight-meta__cell">
-                  <span class="qw-totals-box__k">Container Type</span>
-                  <span class="qw-freight-meta__v">{{ quotationHeaderFrm?.doc?.hitech_freight_container_type || '—' }}</span>
-                </div>
-                <div class="qw-freight-meta__cell">
-                  <span class="qw-totals-box__k">Number of Containers</span>
-                  <span class="qw-freight-meta__v">
-                    {{ quotationHeaderFrm?.doc?.hitech_containers_applied || 0 }}
-                    <span
-                      v-if="Number(quotationHeaderFrm?.doc?.hitech_containers_override) > 0"
-                      class="qw-container-split__muted"
-                    >
-                      · entered, estimate was {{ quotationHeaderFrm?.doc?.hitech_containers_estimated || 0 }}
-                    </span>
-                  </span>
-                </div>
-              </div>
-
               <div v-if="freightLegRows.length" class="qw-pricing-table-wrap qw-container-split">
                 <table class="qw-quotation-items qw-pricing-table">
                   <thead>
@@ -3444,7 +3774,7 @@ watch(() => props.quotation, load)
                  missing and that leg was costed at 0 INR, never 1:1. -->
             <div v-if="exchangeRateFlags" class="qw-fx-flags">
               <span class="qw-fx-flags__title">
-                <LucideIcon name="triangle-alert" /> Exchange rate missing — affected legs are costed at ₹0
+                <LucideIcon name="triangle-alert" /> Rate missing for this quarter — affected legs are costed at ₹0
               </span>
               <span class="qw-derived__warning qw-fx-flags__text">{{ exchangeRateFlags }}</span>
             </div>
@@ -3460,16 +3790,22 @@ watch(() => props.quotation, load)
             <p v-else-if="freightPreviewError" class="qw-derived__warning" style="margin-top: 10px;">
               Freight preview unavailable right now ({{ freightPreviewError }}) — figures below may be out of date.
             </p>
-            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
-              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
-                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
-              </button>
-              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
-            </div>
           </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            </div>
           </div>
         </section>
 
@@ -3477,9 +3813,6 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'terms'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">06</span>Terms & Conditions</h2>
-            <p v-if="quotationName" class="qw-step-lede">
-              Editing terms on <strong>{{ quotationName }}</strong> directly — use Save Changes below to apply changes.
-            </p>
             <p class="qw-step-lede">
               {{ termChecklist.length || 26 }} terms, sensible defaults pre-ticked. Selection is per quote.
             </p>
@@ -3496,16 +3829,22 @@ watch(() => props.quotation, load)
               <h3 class="qw-terms-notes__title">Notes & exclusions</h3>
               <WizardStep :frm="quotationHeaderFrm" :fields="TERMS_FIELDS" read-only-filter="exclude" />
             </div>
-            <div v-if="quotationName" style="margin-top: 18px; display: flex; align-items: center; gap: 12px;">
-              <button type="button" class="qw-next-btn" @click="saveQuotationHeader" :disabled="headerSaving">
-                {{ headerSaving ? 'Saving…' : 'Save Changes' }}
-              </button>
-              <span v-if="headerSaveError" class="qw-step-error">{{ headerSaveError }}</span>
-            </div>
           </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
-            <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            </div>
           </div>
         </section>
 
@@ -3591,6 +3930,25 @@ watch(() => props.quotation, load)
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
             <div class="qw-footer__actions">
+              <button
+                v-if="!allSucceeded && !activeItemLocked"
+                type="button"
+                class="qw-back-btn"
+                :disabled="stepSaving"
+                @click="saveProgress"
+              >
+                {{ stepSaving ? 'Saving…' : 'Save' }}
+              </button>
+              <button
+                v-if="canDuplicate"
+                type="button"
+                class="qw-back-btn"
+                :disabled="duplicating"
+                title="Start a new quotation pre-filled from this one"
+                @click="duplicateQuotation"
+              >
+                Duplicate
+              </button>
               <button
                 v-if="quotationName"
                 type="button"
@@ -3980,25 +4338,11 @@ watch(() => props.quotation, load)
   margin: 6px 0 0;
 }
 
-/* Freight Cost block on the Exim step: the three traceability facts above
-   the leg table, and the total banner under it. */
-.qw-freight-meta {
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px 18px;
-}
-
-.qw-freight-meta__cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.qw-freight-meta__v {
-  font: 600 13px/1.35 'IBM Plex Mono', monospace;
-}
-
+/* Freight Cost block on the Exim step: the leg table and the total banner
+   under it. (The Freight Rate Source / Container Type / Number of
+   Containers traceability row that used to sit above the table was removed
+   2026-10-12, client instruction -- it was confusing rather than helpful on
+   the common single-item quote where none of those three vary.) */
 .qw-freight-total {
   margin-top: 12px;
   padding: 12px 16px;
@@ -4134,6 +4478,14 @@ watch(() => props.quotation, load)
 
 .qw-pricing-table__num {
   font: 700 13px/1 'IBM Plex Mono', monospace;
+}
+
+.qw-pricing-table__fx {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--app-muted, #64748b);
 }
 
 .qw-pricing-table__final {

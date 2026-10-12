@@ -33,7 +33,8 @@ const MASTER_NAV = [
   { doctype: 'Quotation Term', label: 'Terms & Conditions', icon: 'file-check' },
   { doctype: 'Item Price Master', label: 'Item Price Master', icon: 'tag' },
   { doctype: 'Currency Exchange Master', label: 'Exchange Rates', icon: 'coins' },
-  { doctype: 'International Freight Rate Master', label: 'Freight Rates', icon: 'ship' },
+  { doctype: 'International Freight Rate Master', label: 'International Freight Rates', icon: 'ship' },
+  { doctype: 'Domestic Freight Rate Master', label: 'Domestic Freight Rates', icon: 'truck' },
   { doctype: 'Container Type', label: 'Container Types', icon: 'container' }
   // Container Fit Plan is a transaction, not a master: it lives under MAIN via
   // the server-side Custom UI Sidebar Item record, next to Quotation.

@@ -16,6 +16,7 @@ import {
   rowIsInactive,
   formatCell,
   parseListFilters,
+  standardFiltersOf,
   LIST_PAGE_SIZE
 } from '@/lib/docList'
 import { describeListFilter, isDerivedFilter, resolveListFilters } from '@/lib/derivedFilters'
@@ -29,6 +30,7 @@ import {
   badgeStyle
 } from '@/lib/listLayout'
 import LucideIcon from '@/components/LucideIcon.vue'
+import LinkPicker from '@/components/LinkPicker.vue'
 import RowActions from '@/components/RowActions.vue'
 import { printRecord } from '@/lib/rowActions'
 import { decimal, integer } from '@/utils/format'
@@ -84,6 +86,8 @@ const identity = ref(blankIdentity())
  *  has no columns doesn't re-resolve them on every page turn. */
 const resolved = ref(false)
 const selections = ref({})
+/** The DocType's `in_standard_filter` fields, drawn as controls by the search box. */
+const standardFilters = ref([])
 const stats = ref({})
 const rows = ref([])
 const total = ref(0)
@@ -200,11 +204,47 @@ function choose(group, optionKey) {
  */
 const filters = computed(() => parseListFilters(route.query))
 
-const filterSummary = computed(() =>
-  filters.value.map((filter) => describeListFilter(props.doctype, filter))
-)
+/** A field with its own control already shows its value there; a chip
+ *  repeating it would just be noise. */
+const filterSummary = computed(() => {
+  const controlled = new Set(standardFilters.value.map((f) => f.fieldname))
+  return filters.value
+    .filter(([fieldname]) => !controlled.has(fieldname))
+    .map((filter) => describeListFilter(props.doctype, filter))
+})
 
-const filtered = computed(() => filterSummary.value.length > 0 || Boolean(search.value.trim()))
+const filtered = computed(() => filters.value.length > 0 || Boolean(search.value.trim()))
+
+/**
+ * A standard filter lives in the URL like every other list filter
+ * (`?customer=Voltamp Sohar`), so it survives a reload, a shared link and Back,
+ * and the existing `filters` watcher reloads the rows.
+ */
+function standardFilterValue(field) {
+  const raw = route.query[field.fieldname]
+  return typeof raw === 'string' ? raw : ''
+}
+function setStandardFilter(field, value) {
+  if ((value || '') === standardFilterValue(field)) return
+  router.replace({ path: route.path, query: { ...route.query, [field.fieldname]: value || undefined } })
+}
+/**
+ * A Link box is free text (see LinkPicker) and reports every keystroke, so it
+ * filters as a partial match (`~like:%volt%`), debounced like the search box —
+ * "Volt" already narrows to Voltamp Sohar, and a picked name still matches
+ * itself. The box shows the bare text back, not the URL encoding.
+ */
+const LIKE_PREFIX = '~like:%'
+function linkFilterText(field) {
+  const raw = standardFilterValue(field)
+  return raw.startsWith(LIKE_PREFIX) && raw.endsWith('%') ? raw.slice(LIKE_PREFIX.length, -1) : raw
+}
+let linkFilterTimer = null
+function setLinkFilter(field, text) {
+  clearTimeout(linkFilterTimer)
+  const term = String(text ?? '').trim()
+  linkFilterTimer = setTimeout(() => setStandardFilter(field, term ? `${LIKE_PREFIX}${term}%` : ''), 300)
+}
 
 const emptyMessage = computed(
   () =>
@@ -334,6 +374,7 @@ async function load() {
     let layoutForRequest = layout.value
     let identityForRequest = identity.value
     let selectionsForRequest = selections.value
+    let standardFiltersForRequest = standardFilters.value
 
     if (!resolved.value) {
       // Meta is wanted either way: the layout decides the columns, meta decides
@@ -349,6 +390,7 @@ async function load() {
       columnsForRequest = stored.fallback ? listColumns(meta) : stored.columns
       identityForRequest = listIdentity(meta)
       selectionsForRequest = defaultSelections(stored.filter_groups)
+      standardFiltersForRequest = standardFiltersOf(meta)
       // Nothing is published to the template yet — see the commit below, which
       // lands the columns, the identity verdict and the rows in one tick.
     }
@@ -406,6 +448,7 @@ async function load() {
       layout.value = layoutForRequest
       columns.value = columnsForRequest
       selections.value = selectionsForRequest
+      standardFilters.value = standardFiltersForRequest
       resolved.value = true
     }
     identity.value = identityFromRows(identityForRequest, result.rows)
@@ -446,6 +489,7 @@ watch(
     layout.value = null
     columns.value = []
     identity.value = blankIdentity()
+    standardFilters.value = []
     resolved.value = false
     rows.value = []
     total.value = 0
@@ -685,8 +729,30 @@ onMounted(load)
           style="display:inline-flex; align-items:center; height:42px; padding:0 12px; border-radius:999px; background:#E9EFF7; color:#0B3465; font-size:12.5px; font-weight:600;"
           >{{ f }}</span
         >
+        <template v-for="field in standardFilters" :key="`sf-${field.fieldname}`">
+          <select
+            v-if="field.fieldtype === 'Select'"
+            :value="standardFilterValue(field)"
+            :aria-label="field.label"
+            @change="setStandardFilter(field, $event.target.value)"
+            style="height:42px; border:1px solid #E6EBF1; border-radius:10px; padding:0 12px; font-size:13.5px; background:#fff; color:#334155; font-family:inherit; cursor:pointer;"
+          >
+            <option value="">All {{ field.label }}</option>
+            <option v-for="option in field.options" :key="option" :value="option">{{ option }}</option>
+          </select>
+          <div v-else style="width:200px;">
+            <LinkPicker
+              :model-value="linkFilterText(field)"
+              :doctype="field.options"
+              :placeholder="field.label"
+              order-by="name asc"
+              dense
+              @update:model-value="setLinkFilter(field, $event)"
+            />
+          </div>
+        </template>
         <button
-          v-if="filterSummary.length"
+          v-if="filters.length"
           @click="clearFilters"
           style="height:42px; padding:0 14px; border-radius:10px; border:1px solid #E6EBF1; background:#fff; color:#475569; font-size:13.5px; font-weight:600; cursor:pointer; font-family:inherit;"
           class="hv2"
@@ -891,7 +957,7 @@ onMounted(load)
                   </div>
                   <div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
                     <button
-                      v-if="filterSummary.length"
+                      v-if="filters.length"
                       @click="clearFilters"
                       style="height:36px; padding:0 14px; border-radius:9px; border:1px solid #E6EBF1; background:#fff; color:#475569; font-size:13.5px; font-weight:600; cursor:pointer; font-family:inherit;"
                       class="hv2"

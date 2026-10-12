@@ -128,6 +128,16 @@ const tankTypes = ref([])
 const loading = ref(false)
 const error = ref('')
 
+/** Tank type tiles, narrowed to the picked product type: a Tank quote only
+ *  ever wants the tank-line records (`Is a Tank Product Line` checked, e.g.
+ *  CRG / Pad / Flatwall), and a Radiator quote only wants the one record
+ *  that isn't (e.g. "Radiator Line") — showing the full list regardless of
+ *  which card is picked let someone start a Radiator quote on a tank line
+ *  and vice versa. */
+const visibleTankTypes = computed(() =>
+  tankTypes.value.filter((t) => (type.value === 'Radiator' ? !t.is_tank : t.is_tank))
+)
+
 const inProgressDraft = ref(readInProgressDraft())
 const draftCustomerLabel = computed(() => inProgressDraft.value?.order?.customer || null)
 const draftSavedAgo = computed(() => (inProgressDraft.value ? timeAgo(inProgressDraft.value.savedAt) || 'a moment ago' : ''))
@@ -159,7 +169,7 @@ async function loadTankTypes() {
   error.value = ''
   try {
     tankTypes.value = await db.get_list('Tank Type', {
-      fields: ['name'],
+      fields: ['name', 'is_tank'],
       limit_page_length: 0,
       order_by: 'name asc'
     })
@@ -212,7 +222,7 @@ onMounted(() => {
       </div>
       <div class="qw-draft-banner__actions">
         <button type="button" class="qw-btn-primary" @click="resumeDraft">Resume</button>
-        <button type="button" class="qw-ghost-btn" @click="discardDraft">Discard &amp; start new</button>
+        <button type="button" class="qw-ghost-btn" @click="discardDraft">Start new</button>
       </div>
     </div>
 
@@ -259,12 +269,12 @@ onMounted(() => {
           </div>
         </div>
         <div v-else-if="loading" class="qw-loading">Loading tank types…</div>
-        <div v-else-if="!tankTypes.length" class="qw-notice">
+        <div v-else-if="!visibleTankTypes.length" class="qw-notice">
           No Tank Type records yet — start blank and pick a tank type inside the wizard.
         </div>
         <div v-else class="qw-tank-grid">
           <button
-            v-for="t in tankTypes"
+            v-for="t in visibleTankTypes"
             :key="t.name"
             type="button"
             class="qw-tank-tile"

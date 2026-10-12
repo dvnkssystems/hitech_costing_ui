@@ -152,13 +152,6 @@ const addressRows = computed(() => {
   ].filter(Boolean)
 })
 
-/** Yes/No formatter for the two Check fields — mirrors `row()`'s own
- *  "drop when empty" contract, but a Check field is `0`/`1` (never blank),
- *  so this only ever returns 'Yes'/'No', never null. */
-function checkRow(label, value) {
-  return row(label, Number(value) ? 'Yes' : 'No')
-}
-
 /** Mirrors `addressRows` above, one `row()` per `EXIM_FIELDS` entry (see
  *  `hitech_costing/setup/install.py`'s `EXIM_FIELDS`, which this must stay in
  *  sync with) — this hand-built read-only view shares no code with the
@@ -187,8 +180,9 @@ const eximRows = computed(() => {
     row('Unloading cost at destination', d.hitech_unloading_cost_at_destination ? money(d.hitech_unloading_cost_at_destination) : null),
     row('Import duty / tax', d.hitech_import_duty_tax ? money(d.hitech_import_duty_tax) : null),
     row('Total gross weight (kg)', d.hitech_total_gross_weight_kg ? float(d.hitech_total_gross_weight_kg) : null),
-    checkRow('Partial shipment', d.hitech_partial_shipment),
-    checkRow('Trans-shipment', d.hitech_trans_shipment),
+    // Partial shipment / Trans-shipment removed from the Exim step
+    // 2026-10-12 (client instruction) -- dropped here too rather than left
+    // to print "No" forever once the field can never be set again.
     row('Sector', d.hitech_sector),
     row('Basic freight', d.hitech_basic_freight ? money(d.hitech_basic_freight) : null),
     row('Containers (estimated)', d.hitech_containers_estimated || null),

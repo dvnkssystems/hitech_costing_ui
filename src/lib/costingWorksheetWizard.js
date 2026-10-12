@@ -270,6 +270,9 @@ export const EXIM_FIELDS = [
   'hitech_port_of_discharge',
   'hitech_pre_carriage_by',
   'hitech_place_of_pre_carrier',
+  // Insurance % / Insurance Value and Partial / Trans-Shipment were removed
+  // 2026-10-12 and are `hidden` on the backend, so they no longer render.
+  // Kept in this list only so old quotations still carry their values.
   'hitech_insurance_percent',
   'hitech_insurance_value',
   'hitech_insurance_cost',
@@ -279,8 +282,26 @@ export const EXIM_FIELDS = [
   'hitech_total_gross_weight_kg',
   'hitech_partial_shipment',
   'hitech_trans_shipment',
+  // `hitech_sector`/`hitech_basic_freight` fed the FOB Cost + Basic Freight +
+  // Region Margin fallback formula `_international_freight()` used to run
+  // when no International Freight Rate Master row matched. Removed
+  // 2026-10-12 -- the engine no longer estimates a freight figure for that
+  // case at all. Both fields stay here (and in the backend's `EXIM_FIELDS`)
+  // purely so a quotation priced by the OLD formula still shows the numbers
+  // it used; their native `depends_on` (`hitech_freight_rate_source=='Fallback
+  // Formula'`) can no longer actually be true on a freshly-calculated quote,
+  // so neither renders any more in practice.
   'hitech_sector',
   'hitech_basic_freight',
+  // The replacement: a manual total, used only when the engine lands on "No
+  // Master Rate" (or this field's own resulting "Manual Override") instead of
+  // a real Freight Rate Master row. See `hitech_total_freight_cost_override`
+  // in exim.py / install.py.
+  'hitech_total_freight_cost_override',
+  // Removed from the freight engine 2026-10-12 (client instruction) and
+  // marked `hidden` on the backend -- stays in this list (same reasoning as
+  // `hitech_sector`/`hitech_basic_freight` above) only so a quotation priced
+  // with it before that date still shows the figure it used.
   'hitech_containers_override',
   'hitech_containers_estimated',
   'hitech_containers_applied',
@@ -301,9 +322,20 @@ export const EXIM_FIELDS = [
   'hitech_freight_currency',
   'hitech_cif_leg_native',
   'hitech_cif_exchange_rate',
+  // Manual rate, used only when `hitech_cif_exchange_rate` above comes back
+  // empty (no Currency Exchange Master row for that currency/quarter) — see
+  // `_rate_for()` in exim.py. An editable field among all these read-only
+  // ones, so it is NOT added to EXIM_FREIGHT_TABLE_FIELDS (that list is the
+  // Freight Cost table's own read-only columns) — it falls through to the
+  // ordinary Exim step field grid instead, same as `hitech_basic_freight`.
+  'hitech_cif_exchange_rate_override',
+  // Which currency that manual rate is for (1 unit = rate INR).
+  'hitech_exchange_rate_override_currency',
   'hitech_cif_leg_inr',
   'hitech_dap_addon_native',
   'hitech_dap_exchange_rate',
+  // Same manual-override pairing as the CIF one above, for the DAP leg.
+  'hitech_dap_exchange_rate_override',
   'hitech_dap_addon_inr',
   // Handover charge — the origin-side leg the seller stops paying at on
   // EXW / FCA / FAS, priced per container in the freight currency and
@@ -447,7 +479,10 @@ export const EXIM_DATE_FIELDS = ['transaction_date']
  * looked simply absent. With the Exim currency block gone (see above) this is
  * no longer a second control but the only one.
  */
-export const ITEMS_CURRENCY_FIELDS = ['currency']
+// `hitech_item_exchange_rate_override` (labelled "Exchange Rate") sits beside
+// it: a manual rate for the quote's currency that overrides the quarter's
+// Item rate when set. Shown only for a non-INR currency (its own depends_on).
+export const ITEMS_CURRENCY_FIELDS = ['currency', 'hitech_item_exchange_rate_override']
 /** The one `EXIM_FIELDS` entry that is NOT rendered as a Calculated-rail
  *  row — see the Exim step's own warning block in CostingWorksheetWizard.vue. */
 export const EXIM_FLAGS_FIELD = 'hitech_exchange_rate_flags'
