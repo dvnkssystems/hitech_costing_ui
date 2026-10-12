@@ -89,6 +89,10 @@ export const ITEM_STEPS = [
       'total_weight_kg',
       'total_material_cost',
       'material_cost_inr_kg',
+      // RM Price feeds Total FG Cost; Yield Cost (the scrap part) comes off the
+      // margin only -- client fix 12 Oct 2026, see costing_worksheet.py.
+      'rm_price_inr_kg',
+      'yield_cost_inr_kg',
       'accessory_content_percent',
       'fabrication_class',
       // The accessory-content classification and its multiplier belong with
