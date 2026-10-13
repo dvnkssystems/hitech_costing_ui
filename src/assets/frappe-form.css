@@ -366,6 +366,24 @@
   box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
 }
 
+/* The wizard holds the red back until a Next / Save attempt (see
+   `showRequired` in CostingWorksheetWizard.vue): an untouched step shouldn't
+   open looking like it already failed. The asterisk still marks the field. */
+.frappe-form.qw-quiet-required .control.reqd-empty > span:first-child {
+  color: inherit;
+}
+.frappe-form.qw-quiet-required .control.reqd-empty input:not([type='checkbox']),
+.frappe-form.qw-quiet-required .control.reqd-empty select,
+.frappe-form.qw-quiet-required .control.reqd-empty textarea {
+  border-color: var(--qw-border, #e6ebf1);
+  background: #fff;
+}
+.frappe-form.qw-quiet-required .control.reqd-empty input:focus,
+.frappe-form.qw-quiet-required .control.reqd-empty select:focus,
+.frappe-form.qw-quiet-required .control.reqd-empty textarea:focus {
+  box-shadow: none;
+}
+
 /* ── Link control ─────────────────────────────────────────────── */
 .frappe-form .link-open-btn {
   color: var(--fv-primary);

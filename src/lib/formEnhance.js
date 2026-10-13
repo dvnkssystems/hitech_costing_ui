@@ -60,6 +60,31 @@ function syncRequired(label, frm) {
   else label.removeAttribute('aria-required')
 }
 
+/* ── Grid cell names ────────────────────────────────────────────────────── */
+
+/**
+ * Child-table cells render bare inputs with no label, so a screen reader (or
+ * any automated check) heard "edit text" for every cell of e.g. the Volumes
+ * table (2026-10-13). Each unnamed input / select / textarea in a table body
+ * gets its column header as `aria-label`. Only fills a missing name, never
+ * overrides one.
+ */
+function nameGridCells(root) {
+  for (const table of root.querySelectorAll('table')) {
+    const headers = [...table.querySelectorAll('thead th')].map((th) => (th.textContent || '').replace(/\s*\*\s*$/, '').trim())
+    if (!headers.some(Boolean)) continue
+    for (const row of table.querySelectorAll('tbody tr')) {
+      ;[...row.children].forEach((cell, i) => {
+        const name = headers[i]
+        if (!name) return
+        for (const input of cell.querySelectorAll('input:not([type="checkbox"]), select, textarea')) {
+          if (!input.getAttribute('aria-label') && !input.id) input.setAttribute('aria-label', name)
+        }
+      })
+    }
+  }
+}
+
 /* ── Link clear button ──────────────────────────────────────────────────── */
 
 /**
@@ -158,6 +183,7 @@ export function installFormEnhancements(root, getFrm) {
     const current = frm()
     for (const label of root.querySelectorAll(CONTROL_SELECTOR)) syncRequired(label, current)
     for (const label of root.querySelectorAll(LINK_SELECTOR)) syncClear(label, current)
+    nameGridCells(root)
   }
 
   const observer = new MutationObserver((records) => {

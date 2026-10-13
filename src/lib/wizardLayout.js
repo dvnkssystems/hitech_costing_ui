@@ -37,6 +37,13 @@ export function createWizardLayout(wizard) {
     return list ? list.filter((row) => !row.hidden).map((row) => row.fieldname) : builtIn
   }
 
+  /** A field's row position in the whole table (null without one), so a step
+   *  drawing several sections can follow the table's order across them. */
+  function position(section, fieldname) {
+    const row = rows(section)?.find((r) => r.fieldname === fieldname)
+    return row && Number.isFinite(row.idx) ? row.idx : null
+  }
+
   /** Fields the record marks Read Only in `section`: shown as read-only even
    *  on an editable card, which otherwise drops read-only fields. */
   function readOnly(section) {
@@ -67,5 +74,5 @@ export function createWizardLayout(wizard) {
     }
   }
 
-  return { state, load, fields, readOnly, editableFields, applyTo }
+  return { state, load, fields, position, readOnly, editableFields, applyTo }
 }

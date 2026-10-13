@@ -57,6 +57,7 @@ EXIM_DATE_FIELDS,
   EXIM_ITEM_DEAL_VALUE_FIELDS,
   TERMS_FIELDS,
   TC_FIELDS,
+  PRICING_HEADER_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
   PAYMENT_FIELDS,
@@ -65,6 +66,9 @@ EXIM_DATE_FIELDS,
   COMMERCIALS_STEP_INDEX,
   stepIsComplete,
   volumesSplitError,
+  costingInputsError,
+  plainError,
+  minDealPriceForMargin,
   pureMarginError,
   MIN_PURE_MARGIN_PERCENT
 } from '@/lib/costingWorksheetWizard'
@@ -90,7 +94,8 @@ import {
   integer,
   formatDate,
   timeAgo,
-  CURRENCY_PRECISION
+  CURRENCY_PRECISION,
+  moneyTotal
 } from '@/utils/format'
 
 const DOCTYPE = 'Costing Worksheet'
@@ -100,7 +105,7 @@ const HEADER_DOCTYPE = 'Quotation'
  *  "Costing Quotation Wizard" record (seeded by hitech_costing's
  *  `setup/wizard_layout.py` with the built-in lists below, so an untouched
  *  record changes nothing). Section keys: customer, customer_dates, item_<step key>,
- *  pricing_container, address, address_display, exim, exim_calculated,
+ *  pricing_container, pricing_header, address, address_display, exim, exim_calculated,
  *  terms_notes, terms_template, payment, payment_schedule. */
 const wizardLayout = createWizardLayout('Costing Quotation Wizard')
 const layoutFields = (section, builtIn) => wizardLayout.fields(section, builtIn)
@@ -141,6 +146,21 @@ const tcLayoutFields = computed(() => layoutFields('terms_template', TC_FIELDS))
 /** Customer & Order's Quotation fields (Date, Valid Till), drawn as boxes
  *  with a note under each — the layout's `customer_dates` section. */
 const orderDateFields = computed(() => layoutFields('customer_dates', [...EXIM_DATE_FIELDS, ...VALIDITY_FIELDS]))
+/** Step 01's fields as runs of one section each, in the layout table's row
+ *  order across both sections (built-in: customer fields, then the dates). */
+const customerStepBlocks = computed(() => {
+  const entries = [
+    ...layoutFields('customer', SHARED_STEP.fields).map((f, i) => ({ section: 'customer', f, idx: wizardLayout.position('customer', f) ?? i })),
+    ...orderDateFields.value.map((f, i) => ({ section: 'customer_dates', f, idx: wizardLayout.position('customer_dates', f) ?? 1000 + i }))
+  ].sort((a, b) => a.idx - b.idx)
+  const blocks = []
+  for (const e of entries) {
+    const last = blocks[blocks.length - 1]
+    if (last && last.section === e.section) last.fields.push(e.f)
+    else blocks.push({ section: e.section, fields: [e.f] })
+  }
+  return blocks
+})
 const ORDER_DATE_NOTES = {
   transaction_date: 'Sets the quarter used for the freight rate and the exchange rates.',
   valid_till: 'The quotation expires after this date.'
@@ -393,6 +413,47 @@ const unlockedPageIndexes = computed(() => {
   return idx
 })
 
+/** Required-but-empty fields stay neutral until the user tries to move on or
+ *  save: a fresh step 01 used to open with Customer already red. Set by any
+ *  Next / Save / Submit attempt, cleared when the step changes. */
+const showRequired = ref(false)
+watch(
+  () => [activePageStep.value, activeItem.value?.activeStepIndex],
+  () => (showRequired.value = false)
+)
+
+/** Step 01's required fields still empty, by label -- what its Next says
+ *  instead of just being greyed out. */
+const customerStepMissing = computed(() => {
+  const frm = orderFrm.value
+  if (!frm) return []
+  return layoutFields('customer', SHARED_STEP.fields)
+    .map((fieldname) => frm.fields_dict?.[fieldname]?.df)
+    .filter((df) => {
+      if (!df) return false
+      try {
+        const state = fieldState(frm, df)
+        return state.visible && state.mandatory && (frm.doc?.[df.fieldname] ?? '') === ''
+      } catch {
+        return false
+      }
+    })
+    .map((df) => df.label || df.fieldname)
+})
+const customerStepError = ref('')
+watch(customerStepMissing, (missing) => {
+  if (!missing.length) customerStepError.value = ''
+})
+function customerStepNext() {
+  showRequired.value = true
+  if (customerStepMissing.value.length) {
+    customerStepError.value = `Please fill in: ${customerStepMissing.value.join(', ')}.`
+    return
+  }
+  customerStepError.value = ''
+  pageNext()
+}
+
 function selectPageStep(i) {
   if (!unlockedPageIndexes.value.has(i)) return
   activePageStep.value = PAGE_STEPS[i].key
@@ -470,7 +531,10 @@ function reviewDisplayValue(df, raw, fieldname) {
     case 'Float':
       return float(raw)
     case 'Percent':
-      return percent(raw)
+      // 2 decimals reads as a percentage (36.857574% didn't). Pure Margin %
+      // keeps every digit: it is checked against the 20% floor, and
+      // 19.999951% must not display as "20.00%".
+      return df.fieldname === 'pure_margin_percent' ? percent(raw) : percent(raw, 2)
     case 'Int':
       return integer(raw)
     case 'Check':
@@ -514,10 +578,14 @@ const termsReviewRows = computed(() => {
   )
 })
 
+/** A step's number as the step bar shows it, so Review's section numbers
+ *  match (they ran 01-05 while the bar ran 01-08: Exim was 05 above, 03 here). */
+const stepNumber = (key) => String(PAGE_STEPS.findIndex((p) => p.key === key) + 1).padStart(2, '0')
+
 const reviewSections = computed(() => [
   {
     key: 'customer',
-    n: '01',
+    n: stepNumber('customer'),
     title: 'Customer & Order',
     // 'Type' isn't a Costing Worksheet field (it lives on the Quotation
     // header, see TYPE_FIELDS) so it can't come from sectionRows(orderFrm,
@@ -528,10 +596,10 @@ const reviewSections = computed(() => [
       ...sectionRows(quotationHeaderFrm.value, orderDateFields.value)
     ]
   },
-  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, layoutFields('address', visibleAddressFields.value)) },
+  { key: 'address', n: stepNumber('address'), title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, layoutFields('address', visibleAddressFields.value)) },
   {
     key: 'exim',
-    n: '03',
+    n: stepNumber('exim'),
     title: 'Exim / Incoterms',
     // Mirrors the tab exactly, which is the point: anything the client had
     // removed from Exim (Item Deal Value trio, FOB Cost, Freight Rate
@@ -551,8 +619,8 @@ const reviewSections = computed(() => [
       layoutFields('exim', visibleEximFields.value).filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
     )
   },
-  { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value },
-  { key: 'payment', n: '05', title: 'Payment Terms', rows: paymentReviewRows.value }
+  { key: 'terms', n: stepNumber('terms'), title: 'Terms & Conditions', rows: termsReviewRows.value },
+  { key: 'payment', n: stepNumber('payment'), title: 'Payment Terms', rows: paymentReviewRows.value }
 ])
 
 function itemLabel(item, i) {
@@ -599,12 +667,17 @@ const itemsPricingRows = computed(() =>
       weight: reviewDisplayValue(df(item, 'total_weight_kg'), doc.total_weight_kg),
       builtUpCost: reviewDisplayValue(df(item, 'total_fg_cost_inr_kg'), doc.total_fg_cost_inr_kg),
       dealPrice: reviewDisplayValue(df(item, 'deal_price_fg_inr_per_kg'), doc.deal_price_fg_inr_per_kg),
-      marginPercent: reviewDisplayValue(df(item, 'pure_margin_percent'), doc.pure_margin_percent),
+      // A headline figure in a table, so 2 decimals (29.37048% read as noise);
+      // the worksheet's own Commercials step shows it in full.
+      marginPercent: percent(doc.pure_margin_percent, 2),
       totalDealValue: reviewDisplayValue(df(item, 'total_deal_value'), doc.total_deal_value),
       quantity,
       finalAmountRaw: finalAmount,
-      finalAmount: money(finalAmount),
+      finalAmount: moneyTotal(finalAmount),
       submitState: item.submitState,
+      // 0 units per container usually means the tank was never sized, not
+      // that it is too big: say which (end-to-end test, 2026-10-13).
+      dimensionsMissing: Boolean(costingInputsError(item.frm, 'dimensions')),
       unitsPerContainer,
       containersRequiredPreview,
       hasContainerOverrides
@@ -638,8 +711,46 @@ const quoteRate = computed(() => {
 /** `amountInr` shown in the quote's currency, or '' when there's nothing to convert. */
 function inQuoteCurrency(amountInr) {
   if (!(quoteRate.value > 0)) return ''
-  return money((Number(amountInr) || 0) / quoteRate.value, quoteCurrency.value)
+  return moneyTotal((Number(amountInr) || 0) / quoteRate.value, quoteCurrency.value)
 }
+
+/** What the customer is quoted, in one place: the items, the freight the Exim
+ *  step worked out (or its override), and the grand total -- in INR, and in
+ *  the quote's own currency when that differs. Shown at the top of Review
+ *  (so nobody submits without seeing the number) and as the Items & Pricing
+ *  totals. Taxes are not computed by this wizard; the quote prints them as
+ *  "As applicable", and so does this. */
+const quoteTotals = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc ?? {}
+  const items = Number(itemsSummary.value?.totalRaw) || 0
+  const override = Number(doc.hitech_total_freight_cost_override) || 0
+  const freight = override > 0 ? override : Number(doc.hitech_total_freight_cost) || 0
+  // ERPNext takes the additional discount off the grand total (items +
+  // the Freight & Logistics charge row) unless told otherwise.
+  const discountPct = Number(doc.additional_discount_percentage) || 0
+  const discount = ((items + freight) * discountPct) / 100
+  const grand = items + freight - discount
+  const foreign = quoteRate.value > 0 ? quoteCurrency.value : ''
+  const fc = (v) => (foreign ? inQuoteCurrency(v) : '')
+  return {
+    rows: [
+      { label: 'Items', inr: moneyTotal(items), fc: fc(items) },
+      ...(discount > 0
+        ? [{ label: `Discount (${percent(discountPct, 2)})`, inr: `−${moneyTotal(discount)}`, fc: fc(discount) ? `−${fc(discount)}` : '' }]
+        : []),
+      {
+        label: override > 0 ? 'Freight & logistics (override)' : 'Freight & logistics',
+        inr: moneyTotal(freight),
+        fc: fc(freight),
+        hint: freight > 0 ? '' : doc.hitech_region === 'Export' ? 'No freight rate found for this customer and quarter' : ''
+      },
+      { label: 'Taxes / duties', inr: 'As applicable', fc: '' }
+    ],
+    grandInr: moneyTotal(grand),
+    grandFc: fc(grand),
+    currency: foreign
+  }
+})
 
 const itemsSummary = computed(() => {
   const totalQuantity = itemsPricingRows.value.reduce((sum, row) => sum + row.quantity, 0)
@@ -659,8 +770,8 @@ const itemsSummary = computed(() => {
 
   return {
     totalQuantity,
-    total: money(total),
-    netTotal: money(total),
+    total: moneyTotal(total),
+    netTotal: moneyTotal(total),
     totalRaw: total,
     showContainers: containerRows.length > 0,
     totalContainersRequired,
@@ -740,6 +851,7 @@ function quotationHeaderPayload() {
     ...TAX_FIELDS,
     TAX_TABLE_FIELD,
     ...ADDRESS_FIELDS,
+    ...PRICING_HEADER_FIELDS,
     ...CURRENCY_FIELDS,
     ...VALIDITY_FIELDS,
     ...EXIM_FIELDS,
@@ -779,7 +891,21 @@ async function saveDraftQuotation() {
     ...(quotationName.value ? { name: quotationName.value } : {})
   })
   if (name) quotationName.value = name
+  rememberQuotationInUrl(name)
   return name
+}
+
+/** Put the draft's ID in the address bar once it has one, so a refresh (or a
+ *  bookmark) reopens this quotation instead of a blank wizard -- the URL used
+ *  to stay /wizard/costing-worksheet (end-to-end test, 2026-10-13). Done with
+ *  history.replaceState, not the router: a route change would re-run `load()`
+ *  and reset the screen mid-session. */
+function rememberQuotationInUrl(name) {
+  if (!name || typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  if (url.searchParams.get('quotation') === name) return
+  url.searchParams.set('quotation', name)
+  window.history.replaceState(window.history.state, '', url.toString())
 }
 
 /** Puts every saved, not-yet-mapped worksheet on the draft Quotation as a
@@ -806,6 +932,7 @@ const stepSaveError = ref('')
 const stepSaveMessage = ref('')
 let stepSaveMessageTimer = null
 async function saveProgress() {
+  showRequired.value = true
   if (stepSaving.value || activeItemLocked.value) return
   stepSaving.value = true
   stepSaveError.value = ''
@@ -837,7 +964,7 @@ async function saveProgress() {
     clearTimeout(stepSaveMessageTimer)
     stepSaveMessageTimer = setTimeout(() => (stepSaveMessage.value = ''), 4000)
   } catch (e) {
-    stepSaveError.value = e?.message ?? String(e)
+    stepSaveError.value = plainError(e)
   } finally {
     stepSaving.value = false
   }
@@ -863,11 +990,15 @@ async function applyTermsTemplate(template) {
     tcError.value = e?.message ?? String(e)
   }
 }
+// Watched together with the frm: a different frm means a quotation was just
+// loaded (keep its own, possibly edited, text). Only a pick on the same frm
+// applies the template -- including the first pick on a brand-new quote,
+// whose value starts out undefined (the old `previous === undefined` guard
+// skipped exactly that one, leaving Term Details empty).
 watch(
-  () => quotationHeaderFrm.value?.doc?.tc_name,
-  (template, previous) => {
-    // First run on load: keep a saved quotation's own (possibly edited) text.
-    if (previous === undefined) return
+  () => [quotationHeaderFrm.value, quotationHeaderFrm.value?.doc?.tc_name],
+  ([frm, template], previous) => {
+    if (!previous || previous[0] !== frm || previous[1] === template) return
     applyTermsTemplate(template)
   }
 )
@@ -905,12 +1036,12 @@ async function applyPaymentTermsTemplate(template) {
     paymentTermsError.value = e?.message ?? String(e)
   }
 }
+// Same frm-paired guard as the Terms template above: skip a load, apply a
+// pick -- the first pick on a new quote included.
 watch(
-  () => quotationHeaderFrm.value?.doc?.payment_terms_template,
-  (template, previous) => {
-    // `previous === undefined` is the first run on load: keep a saved
-    // quotation's own schedule as it is.
-    if (previous === undefined) return
+  () => [quotationHeaderFrm.value, quotationHeaderFrm.value?.doc?.payment_terms_template],
+  ([frm, template], previous) => {
+    if (!previous || previous[0] !== frm || previous[1] === template) return
     applyPaymentTermsTemplate(template)
   }
 )
@@ -1110,6 +1241,11 @@ watch(
 watch(() => orderFrm.value?.doc?.customer, scheduleFreightPreview)
 watch(() => orderFrm.value?.doc?.company, scheduleFreightPreview)
 watch(() => buildFreightPreviewItems(), scheduleFreightPreview, { deep: true })
+// Opening Exim / Incoterms shows current figures (Total Gross Weight read 0
+// until something else re-ran the preview -- end-to-end test, 2026-10-13).
+watch(activePageStep, (step) => {
+  if (step === 'exim' && quotationHeaderFrm.value) scheduleFreightPreview()
+})
 
 /** Keeps the Exim step's `hitech_region` (Domestic/Export, what the freight
  *  engine actually reads) mirroring the Customer & Order step's own `region`
@@ -1124,6 +1260,21 @@ watch(
     if (!quotationHeaderFrm.value || !region) return
     if (quotationHeaderFrm.value.doc?.hitech_region === region) return
     quotationHeaderFrm.value.set_value('hitech_region', region)
+  },
+  { immediate: true }
+)
+
+/** An export quote ships by sea unless someone says otherwise: fill an empty
+ *  Mode of Transport with Sea on every item (it was left blank in testing,
+ *  2026-10-13, so containers and sea freight never computed). Never
+ *  overwrites a mode someone picked. */
+watch(
+  () => [orderFrm.value?.doc?.region, items.value.map((item) => item.frm)],
+  ([region]) => {
+    if (region !== 'Export') return
+    for (const item of items.value) {
+      if (item.frm?.doc && !item.frm.doc.mode_of_transport) item.frm.set_value('mode_of_transport', 'Sea')
+    }
   },
   { immediate: true }
 )
@@ -1576,7 +1727,9 @@ function derivedRows(frm, fieldnames) {
         !Number(frm.doc?.[fieldname] ?? 0)
       ) {
         low = true
-        warning = "Doesn't fit this container"
+        warning = costingInputsError(frm, 'dimensions')
+          ? "Enter the tank's dimensions first (Costing Sheet → Dimensions)"
+          : "Doesn't fit this container"
       }
       return { label: df.label || fieldname, value: reviewDisplayValue(df, frm.doc?.[fieldname]), low, warning }
     })
@@ -2217,6 +2370,41 @@ onBeforeUnmount(() => {
  *
  *  Also skips the filter entirely (every Address, unscoped) before a
  *  customer is picked, rather than filtering to a blank `link_name`. */
+/** Which ports have an international freight rate in each Freight Region
+ *  (International Freight Rate Master rows; Port itself has no region). The
+ *  Port of Discharge picker offers only those ports for the region picked,
+ *  so Europe no longer lists NYC/NFK/SAV (end-to-end test, 2026-10-13). */
+const portsByRegion = ref({})
+async function loadPortsByRegion() {
+  if (!live.value) return
+  try {
+    const rows = await db.get_list('International Freight Rate Master', {
+      fields: ['region', 'port'],
+      limit_page_length: 0
+    })
+    const map = {}
+    for (const r of rows ?? []) {
+      if (!r.region || !r.port) continue
+      ;(map[r.region] ||= new Set()).add(r.port)
+    }
+    portsByRegion.value = Object.fromEntries(Object.entries(map).map(([k, v]) => [k, [...v]]))
+  } catch {
+    portsByRegion.value = {}
+  }
+}
+onMounted(loadPortsByRegion)
+
+function portQueryScript(frappe) {
+  frappe.ui.form.on(HEADER_DOCTYPE, {
+    setup(frm) {
+      frm.set_query('hitech_port_of_discharge', () => {
+        const ports = portsByRegion.value[frm.doc?.hitech_freight_region]
+        return ports?.length ? { filters: [['name', 'in', ports]] } : {}
+      })
+    }
+  })
+}
+
 function addressQueryScript(frappe) {
   frappe.ui.form.on(HEADER_DOCTYPE, {
     setup(frm) {
@@ -2242,10 +2430,14 @@ function addressQueryScript(frappe) {
  *  Only fills a field that's still empty — a resumed Quotation that already
  *  has its own (possibly non-default) address saved is left alone; this is
  *  purely for a brand-new wizard run where the fields start blank. */
+/** How many addresses the picked customer has on file (null = not checked
+ *  yet) -- 0 explains an empty Address step instead of leaving it blank. */
+const customerAddressCount = ref(null)
 watch(
   () => orderFrm.value?.doc?.customer,
   async (customer) => {
     const frm = quotationHeaderFrm.value
+    customerAddressCount.value = null
     if (!customer || !frm) return
     if (frm.doc.customer_address && frm.doc.shipping_address_name) return
     try {
@@ -2257,6 +2449,7 @@ watch(
         fields: ['name', 'is_primary_address', 'is_shipping_address'],
         limit_page_length: 0
       })
+      if (orderFrm.value?.doc?.customer === customer) customerAddressCount.value = addresses.length
       const billing = addresses.find((a) => a.is_primary_address) ?? addresses[0]
       const shipping = addresses.find((a) => a.is_shipping_address) ?? billing
       if (billing && !frm.doc.customer_address) await frm.set_value('customer_address', billing.name)
@@ -2480,7 +2673,7 @@ function removeItem(key) {
       await item.frm.frappe.call('frappe.client.delete', { doctype: DOCTYPE, name: item.frm.doc.name })
       drop()
     } catch (e) {
-      error.value = e?.message ?? String(e)
+      error.value = plainError(e)
     }
   })
 }
@@ -2509,6 +2702,7 @@ const DRAFT_HEADER_FIELDS = [
   'hitech_item_exchange_rate_override',
   ...TAX_FIELDS,
   ...ADDRESS_FIELDS,
+  ...PRICING_HEADER_FIELDS,
   ...CURRENCY_FIELDS,
   ...VALIDITY_FIELDS,
   ...EXIM_FIELDS,
@@ -2808,7 +3002,7 @@ async function load() {
       // every other path here already uses.
       quotationHeaderFrm.value = await bootFrm(HEADER_DOCTYPE, {
         name: props.quotation,
-        scripts: [addressQueryScript]
+        scripts: [addressQueryScript, portQueryScript]
       })
       quotationName.value = props.quotation
       quotationDocstatus.value = quotationHeaderFrm.value.doc.docstatus ?? 0
@@ -2866,7 +3060,7 @@ async function load() {
           valid_till: monthAfterIso(todayIso()),
           ...headerSeed
         },
-        scripts: [addressQueryScript]
+        scripts: [addressQueryScript, portQueryScript]
       })
 
       if (props.name) {
@@ -2935,7 +3129,7 @@ async function load() {
       }
     }
   } catch (e) {
-    error.value = e?.message ?? String(e)
+    error.value = plainError(e)
   } finally {
     loading.value = false
   }
@@ -3072,6 +3266,7 @@ async function itemNext() {
   const item = activeItem.value
   if (!item) return
   item.stepError = ''
+  showRequired.value = true
 
   const step = ITEM_STEPS[item.activeStepIndex]
   if (GATED_STEP_INDEXES.has(item.activeStepIndex) && !stepIsComplete(item.frm, step, fieldState)) {
@@ -3082,6 +3277,18 @@ async function itemNext() {
   // problem to report when the figures could not be recomputed at all.
   if (activeItemRecalcError.value) {
     item.stepError = activeItemRecalcError.value
+    return
+  }
+  // Dimensions / Volumes: the inputs the whole costing rests on. On
+  // Commercials (Save item) every check runs, so jumping there via the
+  // sub-step tabs doesn't skip them.
+  const inputsError = ['dimensions', 'volumes'].includes(step.key)
+    ? costingInputsError(item.frm, step.key)
+    : step.key === 'commercials'
+      ? costingInputsError(item.frm)
+      : ''
+  if (inputsError) {
+    item.stepError = inputsError
     return
   }
   if (step.key === 'volumes') {
@@ -3121,7 +3328,7 @@ async function itemNext() {
         draftMode.value = null
       }
     } catch (e) {
-      item.stepError = e?.message ?? String(e)
+      item.stepError = plainError(e)
       item.saving = false
       return
     }
@@ -3184,6 +3391,14 @@ async function submitAll() {
     submitAllError.value = `Finish these items' Commercials step before submitting: ${names}.`
     return
   }
+  const unpriced = items.value
+    .map((item, i) => ({ item, label: itemLabel(item, i) }))
+    .filter(({ item }) => item.submitState !== 'succeeded' && costingInputsError(item.frm))
+  if (unpriced.length) {
+    const { item, label } = unpriced[0]
+    submitAllError.value = `${label}: ${costingInputsError(item.frm)}`
+    return
+  }
   submitAllError.value = ''
   submitPhase.value = 'running'
 
@@ -3193,7 +3408,7 @@ async function submitAll() {
     try {
       await saveDraftQuotation()
     } catch (e) {
-      submitAllError.value = e?.message ?? String(e)
+      submitAllError.value = plainError(e)
       submitPhase.value = 'idle'
       return
     }
@@ -3252,7 +3467,7 @@ async function submitAll() {
       item.submitState = 'succeeded'
     } catch (e) {
       item.submitState = 'failed'
-      item.submitError = e?.message ?? String(e)
+      item.submitError = plainError(e)
       submitPhase.value = 'partial-failure'
       return
     }
@@ -3393,8 +3608,17 @@ async function loadDuplicate(dup) {
   // Rows go in before the frm is published: the Terms checklist watcher
   // seeds default terms into an empty table the moment it sees a new header.
   const header = await bootFrm(HEADER_DOCTYPE, {
-    initialDoc: { custom_type: 'Tank', ...dup.header.fields, doctype: HEADER_DOCTYPE },
-    scripts: [addressQueryScript]
+    // A copy is a new quote: today's date, and the same one-month validity a
+    // new quote gets (the source's dates are deliberately not copied, which
+    // left Valid Till blank -- end-to-end test, 2026-10-13).
+    initialDoc: {
+      custom_type: 'Tank',
+      ...dup.header.fields,
+      transaction_date: todayIso(),
+      valid_till: monthAfterIso(todayIso()),
+      doctype: HEADER_DOCTYPE
+    },
+    scripts: [addressQueryScript, portQueryScript]
   })
   addDuplicatedRows(header, dup.header.tables)
   quotationHeaderFrm.value = header
@@ -3451,7 +3675,7 @@ async function finalizeQuotation() {
     // Same presentation the Submit action already uses for its own failures:
     // the backend's message (already thrown / already submitted / no items)
     // lands on the step and the user stays right where they were.
-    submitAllError.value = e?.message ?? String(e)
+    submitAllError.value = plainError(e)
   } finally {
     finishSubmitting.value = false
   }
@@ -3460,7 +3684,76 @@ async function finalizeQuotation() {
 /** The Review step's one Submit button: maps any items not yet on the
  *  Quotation (`submitAll()`), then submits the Quotation itself
  *  (`finalizeQuotation()`), in one go. */
+/** Things a quotation can be submitted without, but almost never should:
+ *  an export quote whose freight came out at ₹0 (no freight rate for this
+ *  customer / quarter, and no override), no customer address, no payment
+ *  terms. An end-to-end test on 2026-10-13 submitted one with all three, and
+ *  only learnt about the freight afterwards from the submitted quote's page.
+ *  Each line names where to fix it; Submit then needs an explicit "submit
+ *  anyway" so it is a decision, not an accident. */
+const submitWarnings = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc
+  if (!doc || quotationDocstatus.value === 1) return []
+  const out = []
+  const freight = Number(doc.hitech_total_freight_cost) || Number(doc.hitech_total_freight_cost_override) || 0
+  if (doc.hitech_region === 'Export' && freight <= 0) {
+    out.push({
+      step: 'exim',
+      text: 'Freight is ₹0 on this export quote: there is no international freight rate for this customer and quarter. Add one in International Freight Rates, or enter a Total Freight Cost Override on Exim / Incoterms.'
+    })
+  }
+  if (!doc.customer_address) {
+    out.push({ step: 'address', text: 'No customer address is selected (Address & Delivery).' })
+  }
+  if (!doc.payment_terms_template && !(doc[PAYMENT_TABLE_FIELD] ?? []).length) {
+    out.push({ step: 'payment', text: 'No payment terms are set (Payment Terms).' })
+  }
+  termConflicts.value.forEach((text, i) => out.push({ step: 'terms', key: `terms-${i}`, text }))
+  return out
+})
+/** Ticked checklist terms that say something different from the quote's own
+ *  settings -- both printed on the same quotation (end-to-end test,
+ *  2026-10-13: "Validity 30 days" + "Payment 30% advance" ticked on a quote
+ *  valid 31 days with a "100% Net 30" payment template). Only checks that can
+ *  be made exactly: a "Validity N days" term against Date -> Valid Till, and
+ *  payment-type terms while a Payment Terms template also sets the payment. */
+const PAYMENT_TERM_RE = /\b(payment|advance|balance|proforma|letter of credit|LC)\b/i
+const termConflicts = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc
+  if (!doc) return []
+  const ticked = termChecklist.value.filter((t) => t.row?.selected).map((t) => String(t.text || ''))
+  const out = []
+  if (doc.transaction_date && doc.valid_till) {
+    const days = Math.round((new Date(doc.valid_till) - new Date(doc.transaction_date)) / 86400000)
+    for (const text of ticked) {
+      const m = text.match(/validity\D{0,20}(\d+)\s*days/i)
+      if (m && Math.abs(Number(m[1]) - days) > 1) {
+        out.push(`"${text}" is ticked, but this quote is valid for ${days} days (Date to Valid Till).`)
+      }
+    }
+  }
+  if (doc.payment_terms_template) {
+    const paymentTerms = ticked.filter((text) => PAYMENT_TERM_RE.test(text))
+    if (paymentTerms.length) {
+      out.push(
+        `Payment Terms template "${doc.payment_terms_template}" sets the payment, but these ticked terms also describe payment: ${paymentTerms
+          .map((t) => `"${t}"`)
+          .join(', ')}. Untick them or change the template.`
+      )
+    }
+  }
+  return out
+})
+
+const submitAnyway = ref(false)
+// A changed set of warnings needs a fresh decision.
+watch(() => submitWarnings.value.map((w) => w.key || w.step).join(','), () => (submitAnyway.value = false))
+
 async function submitQuotation() {
+  if (submitWarnings.value.length && !submitAnyway.value) {
+    submitAllError.value = 'Check the warnings above, then tick "Submit anyway" to continue.'
+    return
+  }
   if (!allSucceeded.value) {
     await submitAll()
     if (!allSucceeded.value) return
@@ -3510,7 +3803,7 @@ watch(() => props.quotation, load)
         <span class="qw-save-pill">{{ saveState }}</span>
       </div>
 
-      <div ref="wizardEl" class="frappe-form">
+      <div ref="wizardEl" class="frappe-form" :class="{ 'qw-quiet-required': !showRequired }">
         <!-- 01 · Customer & Order (shared, once) -->
         <section v-if="activePageStep === 'customer'">
           <p v-if="activeItemLocked" class="qw-step-lede">
@@ -3519,28 +3812,40 @@ watch(() => props.quotation, load)
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">01</span>Customer & Order</h2>
             <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
-              <WizardStep :frm="orderFrm" :fields="layoutFields('customer', SHARED_STEP.fields)" :keep-read-only="layoutReadOnly('customer')" read-only-filter="exclude" />
-              <!-- Quotation Date (moved here from Exim / Incoterms, 2026-10-12):
-                   it's the quote's own date and picks the quarter for the
-                   freight rate and the exchange rates, so it's set up front
-                   with the rest of the order. See `EXIM_DATE_FIELDS`. -->
-              <div class="qw-order-dates">
-                <!-- One box per field of the layout's `customer_dates` section
-                     (Quotation fields), each with its own note where it has one. -->
-                <div v-for="fieldname in orderDateFields" :key="fieldname" class="qw-exim-date">
-                  <WizardStep
-                    :frm="quotationHeaderFrm"
-                    :fields="[fieldname]"
-                    :keep-read-only="layoutReadOnly('customer_dates')"
-                    read-only-filter="exclude"
-                  />
-                  <p v-if="ORDER_DATE_NOTES[fieldname]" class="qw-exim-date__note">{{ ORDER_DATE_NOTES[fieldname] }}</p>
+              <!-- Two layout sections share this step: `customer` (Costing Worksheet
+                   fields, a plain grid) and `customer_dates` (Quotation Date /
+                   Valid Till, boxes with a note each). They are drawn as runs in
+                   the layout table's own row order, so moving the date rows above
+                   the customer rows moves them up here too. Quotation Date
+                   (moved here from Exim / Incoterms, 2026-10-12) picks the
+                   quarter for the freight rate and the exchange rates. -->
+              <div class="qw-order-blocks">
+              <template v-for="(block, b) in customerStepBlocks" :key="b">
+                <WizardStep
+                  v-if="block.section === 'customer'"
+                  :frm="orderFrm"
+                  :fields="block.fields"
+                  :keep-read-only="layoutReadOnly('customer')"
+                  read-only-filter="exclude"
+                />
+                <div v-else class="qw-order-dates">
+                  <div v-for="fieldname in block.fields" :key="fieldname" class="qw-exim-date">
+                    <WizardStep
+                      :frm="quotationHeaderFrm"
+                      :fields="[fieldname]"
+                      :keep-read-only="layoutReadOnly('customer_dates')"
+                      read-only-filter="exclude"
+                    />
+                    <p v-if="ORDER_DATE_NOTES[fieldname]" class="qw-exim-date__note">{{ ORDER_DATE_NOTES[fieldname] }}</p>
+                  </div>
                 </div>
+              </template>
               </div>
             </fieldset>
           </div>
           <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
           <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
+          <div v-if="customerStepError" class="qw-step-error">{{ customerStepError }}</div>
           <div class="qw-footer">
             <button type="button" class="qw-back-btn" disabled>← Back</button>
             <div class="qw-footer__actions">
@@ -3555,8 +3860,8 @@ watch(() => props.quotation, load)
               <button
                 type="button"
                 class="qw-next-btn"
-                :disabled="activeItemLocked || !stepIsComplete(orderFrm, SHARED_STEP, fieldState)"
-                @click="pageNext"
+                :disabled="activeItemLocked"
+                @click="customerStepNext"
               >
                 Next
               </button>
@@ -3594,6 +3899,13 @@ watch(() => props.quotation, load)
 
           <template v-if="activeItem">
             <div :key="activeItem.key">
+              <!-- Where you are in the nested costing sheet: which item, and
+                   which of its own steps (it has its own six inside step 02). -->
+              <p class="qw-item-position">
+                Item {{ items.findIndex((i) => i.key === activeItem.key) + 1 }} of {{ items.length }}
+                · {{ itemLabel(activeItem, items.findIndex((i) => i.key === activeItem.key)) }}
+                · step {{ activeItem.activeStepIndex + 1 }} of {{ ITEM_STEPS.length }}: {{ ITEM_STEPS[activeItem.activeStepIndex]?.title }}
+              </p>
               <WizardProgress
                 :steps="ITEM_STEPS"
                 :active-index="activeItem.activeStepIndex"
@@ -3635,6 +3947,13 @@ watch(() => props.quotation, load)
                           :keep-read-only="layoutReadOnly(`item_${step.key}`)"
                           read-only-filter="exclude"
                         />
+                        <p
+                          v-if="step.key === 'commercials' && minDealPriceForMargin(activeItem.frm)"
+                          class="qw-margin-hint"
+                        >
+                          Minimum deal price for a {{ MIN_PURE_MARGIN_PERCENT }}% margin:
+                          <strong>₹{{ minDealPriceForMargin(activeItem.frm).toFixed(2) }}/kg</strong>
+                        </p>
                         <div v-if="step.key === 'commercials'" class="qw-derived__rows" style="margin-top: 16px;">
                           <div
                             v-for="row in commercialsMarginRows"
@@ -3715,10 +4034,10 @@ watch(() => props.quotation, load)
                 <thead>
                   <tr>
                     <th>Item</th>
-                    <th>Deal price</th>
+                    <th>Deal price (₹/kg)</th>
                     <th>Qty</th>
                     <th>Weight (kg)</th>
-                    <th>Built-up cost</th>
+                    <th>Built-up cost (₹/kg)</th>
                     <th>Margin %</th>
                     <th>Total deal value</th>
                     <th>Final amount</th>
@@ -3759,7 +4078,7 @@ watch(() => props.quotation, load)
                     </td>
                     <td v-if="showContainersRequiredColumn" class="qw-pricing-table__num">
                       <span v-if="row.containersRequiredPreview === null">—</span>
-                      <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">Doesn't fit</span>
+                      <span v-else-if="row.containersRequiredPreview === 0" class="qw-derived__warning">{{ row.dimensionsMissing ? 'Add dimensions' : "Doesn't fit" }}</span>
                       <span v-else-if="row.hasContainerOverrides" title="Some containers have their own gap / pallet">
                         {{ row.containersRequiredPreview }} (varies/ctr)
                       </span>
@@ -3792,26 +4111,30 @@ watch(() => props.quotation, load)
                  the banner at the top of this step. -->
 
             <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
+            <WizardStep
+              :frm="quotationHeaderFrm"
+              :fields="layoutFields('pricing_header', PRICING_HEADER_FIELDS)"
+              :keep-read-only="layoutReadOnly('pricing_header')"
+              read-only-filter="exclude"
+              style="margin-bottom: 12px;"
+            />
             <div class="qw-totals-grid qw-items-totals-grid">
               <div class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Quantity</span>
                 <span class="qw-totals-box__v">{{ itemsSummary.totalQuantity }}</span>
               </div>
-              <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Total (Company Currency)</span>
-                <span class="qw-totals-box__v">{{ itemsSummary.total }}</span>
+              <!-- One line per figure the customer pays (the same block as
+                   Review's "Quote total"); this used to repeat the item total
+                   four times as Total / Net Total, each in two currencies. -->
+              <div v-for="row in quoteTotals.rows.filter((r) => r.label !== 'Taxes / duties')" :key="row.label" class="qw-totals-box">
+                <span class="qw-totals-box__k">{{ row.label }}</span>
+                <span class="qw-totals-box__v">{{ row.inr }}</span>
+                <span v-if="row.fc" class="qw-derived__hint" style="margin: 2px 0 0;">{{ row.fc }}</span>
               </div>
               <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Total<template v-if="quoteRate"> ({{ quoteCurrency }})</template></span>
-                <span class="qw-totals-box__v">{{ quoteRate ? inQuoteCurrency(itemsSummary.totalRaw) : itemsSummary.total }}</span>
-              </div>
-              <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Net Total (Company Currency)</span>
-                <span class="qw-totals-box__v">{{ itemsSummary.netTotal }}</span>
-              </div>
-              <div class="qw-totals-box">
-                <span class="qw-totals-box__k">Net Total<template v-if="quoteRate"> ({{ quoteCurrency }})</template></span>
-                <span class="qw-totals-box__v">{{ quoteRate ? inQuoteCurrency(itemsSummary.totalRaw) : itemsSummary.netTotal }}</span>
+                <span class="qw-totals-box__k">Grand total</span>
+                <span class="qw-totals-box__v">{{ quoteTotals.grandInr }}</span>
+                <span v-if="quoteTotals.grandFc" class="qw-derived__hint" style="margin: 2px 0 0;">{{ quoteTotals.grandFc }}</span>
               </div>
               <!-- The ERPNext totals above are always in company currency
                    (INR) -- this wizard never converts them itself. For a
@@ -3829,7 +4152,11 @@ watch(() => props.quotation, load)
               <div v-if="itemsSummary.showContainers" class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Containers Required (est.)</span>
                 <span v-if="itemsSummary.hasNonFitting" class="qw-derived__warning">
-                  One or more items don't fit their container — see the row above
+                  {{
+                    itemsPricingRows.some((r) => r.containersRequiredPreview === 0 && r.dimensionsMissing)
+                      ? "Enter each tank's external dimensions (Costing Sheet → Dimensions) to plan the containers"
+                      : "One or more items don't fit their container — see the row above"
+                  }}
                 </span>
                 <span v-else class="qw-totals-box__v">{{ itemsSummary.totalContainersRequired }}</span>
               </div>
@@ -4032,6 +4359,11 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'address'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Address & Delivery</h2>
+            <p v-if="customerAddressCount === 0" class="qw-step-lede qw-address-missing">
+              {{ orderFrm?.doc?.customer }} has no address on file, so nothing could be filled in.
+              <RouterLink :to="`/form/Customer/${encodeURIComponent(orderFrm?.doc?.customer || '')}`" target="_blank">Add an address to the customer</RouterLink>,
+              then pick it here.
+            </p>
             <WizardStep
               :frm="quotationHeaderFrm"
               :fields="layoutFields('address', visibleAddressFields)"
@@ -4238,6 +4570,12 @@ watch(() => props.quotation, load)
             <p class="qw-step-lede">
               {{ termChecklist.length || 26 }} terms, sensible defaults pre-ticked. Selection is per quote.
             </p>
+            <div v-if="termConflicts.length" class="qw-submit-warnings" role="alert">
+              <div class="qw-submit-warnings__title">These terms don't match the quote</div>
+              <ul class="qw-submit-warnings__list" style="margin-bottom:0;">
+                <li v-for="c in termConflicts" :key="c">{{ c }}</li>
+              </ul>
+            </div>
             <div v-if="termsError" class="qw-step-error">{{ termsError }}</div>
             <p v-else-if="termsLoading" class="qw-step-lede">Loading terms…</p>
             <div v-else class="qw-terms-grid">
@@ -4336,6 +4674,19 @@ watch(() => props.quotation, load)
             :checking="exchangeRateRecheckPending"
             @recheck="recheckExchangeRates"
           />
+          <!-- The number the customer will be quoted, first: Review used to
+               list every section but never the total. -->
+          <div class="qw-quote-total">
+            <div class="qw-quote-total__head">Quote total</div>
+            <div v-for="row in quoteTotals.rows" :key="row.label" class="qw-quote-total__row">
+              <span>{{ row.label }}<span v-if="row.hint" class="qw-quote-total__hint"> · {{ row.hint }}</span></span>
+              <span class="qw-quote-total__v">{{ row.inr }}<span v-if="row.fc" class="qw-quote-total__fc">{{ row.fc }}</span></span>
+            </div>
+            <div class="qw-quote-total__row qw-quote-total__row--grand">
+              <span>Grand total</span>
+              <span class="qw-quote-total__v">{{ quoteTotals.grandInr }}<span v-if="quoteTotals.grandFc" class="qw-quote-total__fc">{{ quoteTotals.grandFc }}</span></span>
+            </div>
+          </div>
           <div v-for="sec in reviewSections" :key="sec.key" class="qw-review-card">
             <div class="qw-review-card__head">
               <span class="qw-review-card__n">{{ sec.n }}</span>
@@ -4411,6 +4762,19 @@ watch(() => props.quotation, load)
             </div>
           </div>
 
+          <div v-if="submitWarnings.length && !activeItemLocked" class="qw-submit-warnings" role="alert">
+            <div class="qw-submit-warnings__title">Before you submit</div>
+            <ul class="qw-submit-warnings__list">
+              <li v-for="w in submitWarnings" :key="w.key || w.step">
+                {{ w.text }}
+                <button type="button" class="qw-submit-warnings__fix" @click="selectPageStep(PAGE_STEPS.findIndex((p) => p.key === w.step))">Fix</button>
+              </li>
+            </ul>
+            <label class="qw-submit-warnings__ack">
+              <input v-model="submitAnyway" type="checkbox" /> Submit anyway
+            </label>
+          </div>
+
           <div v-if="submitAllError" class="qw-step-error">{{ submitAllError }}</div>
 
           <div class="qw-footer">
@@ -4448,7 +4812,8 @@ watch(() => props.quotation, load)
                 v-if="!activeItemLocked"
                 type="button"
                 class="qw-next-btn"
-                :disabled="!canSubmit || finishSubmitting"
+                :disabled="!canSubmit || finishSubmitting || (submitWarnings.length > 0 && !submitAnyway)"
+                :title="submitWarnings.length > 0 && !submitAnyway ? 'Check “Before you submit” above, then tick “Submit anyway”.' : undefined"
                 @click="submitQuotation"
               >
                 {{ submitPhase === 'running' || finishSubmitting ? 'Submitting…' : submitPhase === 'partial-failure' ? 'Retry' : 'Submit' }}
@@ -5302,7 +5667,109 @@ watch(() => props.quotation, load)
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  margin-top: 14px;
+}
+
+/* Step 01's blocks (field grid, date boxes) in whatever order the layout puts
+   them, with the same space between them either way round. */
+.qw-item-position {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.qw-address-missing {
+  color: #b45309;
+}
+
+.qw-margin-hint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #475569;
+}
+
+.qw-quote-total {
+  margin: 0 0 18px;
+  padding: 16px 20px;
+  border: 1px solid var(--qw-border);
+  border-radius: 12px;
+  background: #fff;
+}
+.qw-quote-total__head {
+  font: 800 15px/1.2 'Nunito', system-ui, sans-serif;
+  margin-bottom: 10px;
+  color: var(--qw-text);
+}
+.qw-quote-total__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-top: 1px solid #f1f5f9;
+  font-size: 14px;
+  color: #334155;
+}
+.qw-quote-total__row--grand {
+  font-weight: 800;
+  font-size: 16px;
+  color: #0b3465;
+  border-top: 2px solid #dbe3ec;
+}
+.qw-quote-total__v {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.qw-quote-total__fc {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #64748b;
+}
+.qw-quote-total__hint {
+  color: #b45309;
+  font-size: 12.5px;
+}
+
+.qw-submit-warnings {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid #f5c26b;
+  border-radius: 10px;
+  background: #fff8eb;
+  color: #7a4b00;
+  font-size: 13.5px;
+}
+.qw-submit-warnings__title {
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+.qw-submit-warnings__list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  line-height: 1.55;
+}
+.qw-submit-warnings__fix {
+  margin-left: 6px;
+  border: none;
+  background: none;
+  color: #0b3465;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.qw-submit-warnings__ack {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.qw-order-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .qw-order-dates .qw-exim-date {

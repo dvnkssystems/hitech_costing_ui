@@ -113,12 +113,12 @@ const live = computed(() => hasBackend)
 const PRODUCT_TYPES = [
   {
     key: 'Tank',
-    desc: 'Costed product quote. Runs the eight-step wizard and lands on a costing worksheet.',
+    desc: 'A transformer tank, costed from its materials, paint and complexity.',
     enabled: true
   },
   {
     key: 'Radiator',
-    desc: 'Costed product quote, same wizard — pick a radiator Tank Type (e.g. "Radiator Line") below.',
+    desc: 'A radiator, costed the same way. Pick its tank type (e.g. "Radiator Line") on the next screen.',
     enabled: true
   }
 ]
@@ -229,8 +229,8 @@ onMounted(() => {
     <template v-else>
       <h1 class="qw-heading">What type of quotation?</h1>
       <p class="qw-lede">
-        These are Quotation's real Type values. Both run the same costing wizard and create the
-        Quotation from an approved worksheet — Type just labels which one this quote is.
+        Pick what you are quoting. Both use the same steps: customer, costing, pricing, delivery,
+        terms and review.
       </p>
 
       <div class="qw-type-grid">
@@ -253,9 +253,9 @@ onMounted(() => {
       <div v-if="type" class="qw-tank-section">
         <h2 class="qw-section-title">Tank type</h2>
         <p class="qw-lede">
-          Optional — pre-fills step 2's Tank type field from a real
-          <RouterLink :to="listRouteFor('Tank Type')">Tank Type</RouterLink> record. You can change it in the
-          wizard either way.
+          Pick the design you are costing to start with it filled in, or start blank and choose it
+          later. You can change it in the costing sheet either way.
+          <RouterLink :to="listRouteFor('Tank Type')">Manage tank types</RouterLink>
         </p>
 
         <div v-if="!live" class="qw-notice">

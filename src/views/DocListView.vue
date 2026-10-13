@@ -261,6 +261,15 @@ const emptyMessage = computed(
  * only a developer wanted to know. A count is the one fact that changes with
  * what they just did.
  */
+/** The leading ID column's heading: when the names were proved to be a field's
+ *  value (Customer named by Customer Name), that field's label -- "ID" over a
+ *  column of company names read oddly (2026-10-13). */
+const idColumnLabel = computed(() => {
+  const field = identity.value?.duplicate
+  const col = field && columns.value.find((c) => c.fieldname === field)
+  return col?.label || 'ID'
+})
+
 const countLine = computed(() => {
   if (loading.value && !rows.value.length) return 'Loading…'
   if (!total.value) return filtered.value ? 'No matching records' : 'No records yet'
@@ -825,7 +834,7 @@ onMounted(load)
                   v-if="showIdColumn"
                   style="text-align:left; padding:13px 18px; font-size:12px; font-weight:700; color:#64748B; letter-spacing:.04em; text-transform:uppercase;"
                 >
-                  ID
+                  {{ idColumnLabel }}
                 </th>
                 <th
                   v-for="col in visibleColumns"

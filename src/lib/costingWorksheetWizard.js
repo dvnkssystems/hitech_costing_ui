@@ -217,6 +217,11 @@ export const ITEM_STEPS = [
  *  field below. */
 export const TYPE_FIELDS = ['custom_type']
 export const TAX_FIELDS = ['taxes_and_charges', 'disable_rounded_total']
+/** Quotation-level pricing on Items & Pricing: the additional discount
+ *  (moved off Address & Delivery, 2026-10-13 -- a discount is pricing, not
+ *  delivery). */
+export const PRICING_HEADER_FIELDS = ['additional_discount_percentage']
+
 export const ADDRESS_FIELDS = [
   'customer_address',
   // Real, read-only core Quotation field — the formatted address text the
@@ -230,7 +235,6 @@ export const ADDRESS_FIELDS = [
   // (not `shipping_address_name_display` or similar), despite sharing a label
   // with the Link field above it.
   'shipping_address',
-  'additional_discount_percentage'
 ]
 /** The Exim / Incoterms step's fields — the freight-calc custom field set
  *  added to Quotation/Sales Order by the backend's Phase 1
@@ -601,6 +605,48 @@ export function volumesSplitError(frm) {
   return `Tank Weight (${float(tank)} kg) + Accessory Weight (${float(accessory)} kg) = ${float(split)} kg, which does not match Total Finished Weight (${float(total)} kg) from the Volumes table. Fix the split before continuing.`
 }
 
+/** A save / submit error in plain words. Frappe's validation messages name
+ *  the DocType ("Error: Value missing for Costing Worksheet: Customer"), which
+ *  reads as a system fault; the estimator only needs which field to fill. Any
+ *  other message passes through, minus a leading "Error:". */
+export function plainError(e) {
+  const text = String(e?.message ?? e ?? '').replace(/^\s*(Error|ValidationError|MandatoryError):\s*/i, '').trim()
+  const missing = text.match(/^Value missing for [^:]+:\s*(.+)$/i)
+  if (missing) return `Please fill in: ${missing[1]}.`
+  const mandatory = text.match(/^\[?[^\]]*\]?\s*Missing Fields?\s*:?\s*(.+)$/i)
+  if (mandatory) return `Please fill in: ${mandatory[1]}.`
+  return text
+}
+
+/** The costing inputs every item needs before its figures mean anything.
+ *  Mandatory-field checks pass a worksheet with an empty Volumes table and
+ *  0 mm dimensions (they default to 0, which is "filled"), and such an item
+ *  prices at ₹0 / "doesn't fit" any container -- found by an end-to-end test
+ *  on 2026-10-13 that submitted one. `stepKey` narrows the check to one
+ *  sub-step; omitted, every check runs (Save item, Submit). Returns the first
+ *  problem in plain words, or ''. */
+const DIMENSION_FIELDS = [
+  ['length_mm', 'internal length'],
+  ['width_mm', 'internal width'],
+  ['height_mm', 'internal height'],
+  ['ext_length_mm', 'external length'],
+  ['ext_width_mm', 'external width'],
+  ['ext_height_mm', 'external height']
+]
+
+export function costingInputsError(frm, stepKey = null) {
+  const doc = frm?.doc ?? {}
+  if (!stepKey || stepKey === 'dimensions') {
+    const missing = DIMENSION_FIELDS.filter(([f]) => !(Number(doc[f]) > 0)).map(([, label]) => label)
+    if (missing.length) return `Enter the tank's ${missing.join(', ')} (mm) on Dimensions. They size the paint area and the container load.`
+  }
+  if (!stepKey || stepKey === 'volumes') {
+    const rows = (doc.volumes ?? []).filter((r) => r.material && Number(r.weight_kg) > 0)
+    if (!rows.length) return 'Add at least one material row with its finished weight (kg) on Volumes & Weights. Without it the item costs ₹0.'
+  }
+  return ''
+}
+
 /** Mirrors the backend's submit-time check (`costing_worksheet.py`,
  *  `_validate_before_submit`'s `MIN_PURE_MARGIN_PERCENT` guard) that Pure
  *  Margin % never goes to submission below the floor. Run here too, on the
@@ -608,12 +654,30 @@ export function volumesSplitError(frm) {
  *  "Save item" instead of only at Review & Submit. */
 export const MIN_PURE_MARGIN_PERCENT = 20
 
+/** The lowest Deal Price - FG (INR/kg) that reaches the margin floor, from the
+ *  backend's own formula (`costing_worksheet.py`): pure margin = deal price -
+ *  Total FG Cost - Yield Cost, margin % = pure margin / deal price. So the
+ *  price is (FG cost + yield cost) / (1 - floor), rounded UP to the paisa so
+ *  typing it in really does clear the floor. Null until there is a cost.
+ *  Saves the estimator guessing (₹190 gave 19.49% in testing). */
+export function minDealPriceForMargin(frm, floorPercent = MIN_PURE_MARGIN_PERCENT) {
+  const cost = (Number(frm?.doc?.total_fg_cost_inr_kg) || 0) + (Number(frm?.doc?.yield_cost_inr_kg) || 0)
+  if (!(cost > 0)) return null
+  return Math.ceil((cost / (1 - floorPercent / 100)) * 100) / 100
+}
+
 export function pureMarginError(frm) {
   const margin = Number(frm.doc?.pure_margin_percent) || 0
   if (margin >= MIN_PURE_MARGIN_PERCENT) return ''
+  const minPrice = minDealPriceForMargin(frm)
   // Same reason as `volumesSplitError`: a margin of 19.999951% is below the
   // floor and must not read as "20.00%".
-  return `Pure Margin % (${percent(margin)}) is below the minimum required margin of ${MIN_PURE_MARGIN_PERCENT}%. Increase Deal Price - FG or reduce cost before continuing.`
+  return (
+    `Pure Margin % (${percent(margin)}) is below the minimum required margin of ${MIN_PURE_MARGIN_PERCENT}%. ` +
+    (minPrice
+      ? `Set Deal Price - FG to at least ₹${minPrice.toFixed(2)}/kg, or reduce cost.`
+      : 'Increase Deal Price - FG or reduce cost before continuing.')
+  )
 }
 
 /* ── Taxes & Charges step ────────────────────────────────────────────────── */

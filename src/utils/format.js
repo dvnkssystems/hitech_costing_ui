@@ -25,8 +25,14 @@ export const FLOAT_PRECISION = 6
  */
 const CURRENCY_MIN_PRECISION = 2
 
+/** Indian digit grouping (1,00,000) on every screen, whatever the browser's
+ *  language: the company currency is INR and the printed quotation already
+ *  groups this way, so the console used to show ₹400,000.00 next to a print
+ *  of ₹4,00,000.00 (end-to-end review, 2026-10-13). */
+const NUMBER_LOCALE = 'en-IN'
+
 function grouped(n, minimumFractionDigits, maximumFractionDigits) {
-  return Number(n || 0).toLocaleString(undefined, {
+  return Number(n || 0).toLocaleString(NUMBER_LOCALE, {
     minimumFractionDigits: Math.min(minimumFractionDigits, maximumFractionDigits),
     maximumFractionDigits
   })
@@ -92,6 +98,16 @@ export function numberByFieldtype(value, fieldtype) {
 export function money(n, currency = 'INR') {
   const code = String(currency || 'INR').toUpperCase()
   return code === 'INR' ? `₹${decimal(n)}` : `${code} ${decimal(n)}`
+}
+
+/** An amount someone is billed or quoted -- a line total, freight, a grand
+ *  total -- at exactly 2 decimals: ₹15,677,003.8152 on the quotation list read
+ *  as noise. Per-kg costing figures keep `money()`'s 4 decimals (see
+ *  CURRENCY_PRECISION). */
+export function moneyTotal(n, currency = 'INR') {
+  const code = String(currency || 'INR').toUpperCase()
+  const text = grouped(n, 2, 2)
+  return code === 'INR' ? `₹${text}` : `${code} ${text}`
 }
 
 /**

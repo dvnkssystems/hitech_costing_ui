@@ -43,11 +43,24 @@ export function printRecord(doctype, name) {
   }
 }
 
+/** A PDF failure in words a user can act on. The server's PDF engine
+ *  (wkhtmltopdf) reports its own network faults verbatim -- "Exit with code 1
+ *  due to network error: HostNotFoundError" when it cannot reach the site to
+ *  fetch styles and images -- which is a server setting, not anything the user
+ *  did (2026-10-13). Other messages pass through. */
+export function pdfErrorMessage(e) {
+  const text = String(e?.message || '')
+  if (/network error|HostNotFound|ConnectionRefused|Exit with code/i.test(text)) {
+    return 'The server could not build the PDF: its PDF engine cannot reach this site to load the quotation\'s styles and images. Use Print in the meantime, and ask your administrator to check the PDF / site host settings.'
+  }
+  return text || 'The server could not produce the PDF.'
+}
+
 /** Download one record's PDF; a failure is reported the way `printRecord` does. */
 export async function downloadRecordPdf(doctype, name) {
   try {
     await downloadPdf(doctype, name)
   } catch (e) {
-    msgprint(e?.message || 'The server could not produce the PDF.', 'Could not download the PDF')
+    msgprint(pdfErrorMessage(e), 'Could not download the PDF')
   }
 }

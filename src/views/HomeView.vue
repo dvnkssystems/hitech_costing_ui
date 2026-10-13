@@ -441,8 +441,7 @@ onMounted(load)
                 </td>
                 <td>{{ r.customer_name || r.party_name || '—' }}</td>
                 <td>
-                  <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                  <span v-else style="color:#94A0AE; font-size:13px;">—</span>
+                  <span :style="worksheetStatusStyle(r.status || 'Draft')">{{ r.status || 'Draft' }}</span>
                 </td>
                 <td class="recent__modified" style="color:#64748B; white-space:nowrap;">{{ r.modified ? formatDate(String(r.modified).slice(0, 10)) : '—' }}</td>
               </tr>
@@ -568,14 +567,19 @@ onMounted(load)
 }
 .recent th {
   text-align: left;
-  padding: 11px 22px;
+  padding: 11px 16px;
   font-size: 12px;
   font-weight: 700;
   color: #64748B;
   background: #F8FAFC;
   border-bottom: 1px solid #EAEEF3;
 }
-.recent td { padding: 12px 22px; }
+.recent td { padding: 12px 16px; }
+/* Four columns in half the page: the ID and date never wrap, the customer
+   name does -- the Modified column used to run off the panel's right edge. */
+.recent td:nth-child(2) { overflow-wrap: anywhere; }
+.recent th:last-child,
+.recent td:last-child { white-space: nowrap; padding-right: 18px; }
 .recent__row { cursor: pointer; border-bottom: 1px solid #F1F5F9; }
 
 .kpi:focus-visible,

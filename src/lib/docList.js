@@ -168,6 +168,15 @@ export function nameModeHint(meta) {
 
   // Naming series, format expressions, and anything a controller's own
   // `autoname` produces: generated, but shaped for a human to quote back.
+  // Unless the site names records by their title after all -- Customer says
+  // "naming_series:" but "Customer Naming By: Customer Name" makes every name
+  // the customer's name, and the list showed it twice (2026-10-13). The rows
+  // decide (`identityFromRows`): if names match the title, the ID leads and
+  // the duplicate column goes; otherwise this stays a chip.
+  const title = String(meta?.title_field ?? '').trim()
+  if (title && (meta?.fields ?? []).some((f) => f.fieldname === title)) {
+    return { mode: 'chip', nameField: title, provisional: true }
+  }
   return { mode: 'chip', nameField: '', provisional: false }
 }
 
@@ -531,6 +540,12 @@ export async function fetchDocList(
   ])
 
   const list = rows ?? []
+  // A search has no count request (get_count takes no or_filters), but a
+  // first page that came back short of a full page IS the whole result:
+  // say "2 records", not "2+" (2026-10-13).
+  if (total === null && page === 1 && list.length < LIST_PAGE_SIZE) {
+    return { rows: list, total: list.length, exactTotal: true }
+  }
   return { rows: list, total: total ?? list.length, exactTotal: total !== null }
 }
 

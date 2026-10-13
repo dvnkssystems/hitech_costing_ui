@@ -16,12 +16,13 @@ defineEmits(['select'])
 </script>
 
 <template>
-  <div class="wizard-crumbs" role="list">
+  <!-- A real list of real buttons: `role="listitem"` on the <button> itself
+       replaced its button role, so keyboard / screen-reader users (and
+       automated checks) could not see the steps as controls. -->
+  <ol class="wizard-crumbs" aria-label="Quotation steps">
+    <li v-for="(step, i) in steps" :key="step.key" class="wizard-crumbs__item">
     <button
-      v-for="(step, i) in steps"
-      :key="step.key"
       type="button"
-      role="listitem"
       class="wizard-crumb"
       :class="{
         'is-active': i === activeIndex,
@@ -30,18 +31,21 @@ defineEmits(['select'])
       }"
       :disabled="!unlockedSteps.has(i)"
       :aria-current="i === activeIndex ? 'step' : undefined"
+      :title="step.title"
       @click="$emit('select', i)"
     >
       <span class="wizard-crumb__n">{{ String(i + 1).padStart(2, '0') }}</span>
       <span class="wizard-crumb__label">{{ step.title }}</span>
     </button>
-  </div>
+    </li>
+  </ol>
 </template>
 
 <style scoped>
 .wizard-crumbs {
   display: flex;
-  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
   border: 1px solid #D7DEE8;
   border-radius: 8px;
   overflow: hidden;
@@ -49,28 +53,37 @@ defineEmits(['select'])
   margin-bottom: 26px;
 }
 
-.wizard-crumb {
-  flex: 1 1 116px;
+.wizard-crumbs__item {
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  border-right: 1px solid #D7DEE8;
+}
+
+.wizard-crumbs__item:last-child {
+  border-right: none;
+}
+
+/* Names wrap onto a second line rather than being cut ("03 Items &
+   Prici…"), and the row never breaks in two: eight equal shares of
+   whatever width there is. */
+.wizard-crumb {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 12px 8px;
+  padding: 9px 8px;
   border: none;
-  border-right: 1px solid #D7DEE8;
   background: #fff;
   color: #5E6B7A;
   font: 600 12px/1 'Nunito', system-ui, sans-serif;
   letter-spacing: 0.02em;
+  line-height: 1.25;
+  text-align: center;
   cursor: pointer;
-  overflow: hidden;
-  white-space: nowrap;
   transition: background 0.12s, color 0.12s;
-}
-
-.wizard-crumb:last-child {
-  border-right: none;
 }
 
 .wizard-crumb__n {
@@ -80,8 +93,7 @@ defineEmits(['select'])
 }
 
 .wizard-crumb__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .wizard-crumb.is-done {

@@ -23,7 +23,7 @@ import { hasBackend } from '@/lib/frappe'
 import { formRouteFor, defaultListActionRouteFor } from '@/lib/frappeRouting'
 import { STATUS_STAGES, QUOTATION_PIPELINE_STAGES } from '@/lib/home'
 import { worksheetStatusStyle, docstatusBadge } from '@/utils/styles'
-import { money, formatDate } from '@/utils/format'
+import { money, formatDate, moneyTotal } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
 
 const DOCTYPE = 'Quotation'
@@ -47,9 +47,10 @@ const TABS = [
   { key: 'All', label: 'All' },
   ...QUOTATION_PIPELINE_STAGES.map((stage) => ({
     key: stage.key,
-    // "Rejected" is a UI label over the worksheet's "Lost" status — there's no
-    // separate Rejected status anywhere in the data model.
-    label: stage.key === 'Lost' ? 'Rejected' : stage.label,
+    // Same words as Home's pipeline (Draft / Pending approval / Approved /
+    // Quoted / Lost) -- this used to say "Rejected" for Lost, so the two
+    // screens disagreed about the same quotes.
+    label: stage.label,
     match: stage.match
   }))
 ]
@@ -231,7 +232,7 @@ onMounted(load)
     <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; margin-bottom:22px;">
       <div>
         <h1 style="margin:0; font-size:26px; font-weight:800; letter-spacing:-.025em;">Quotation</h1>
-        <div style="font-size:13.5px; color:#64748B; margin-top:5px;">Live from the Quotation DocType.</div>
+        <div style="font-size:13.5px; color:#64748B; margin-top:5px;">Every quotation, newest first. Filter by stage, product, branch or owner.</div>
       </div>
       <button
         v-if="live"
@@ -362,7 +363,7 @@ onMounted(load)
                 <td style="padding:14px 18px; color:#334155;">{{ r.customer_name || r.party_name || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.product || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.transaction_date ? formatDate(r.transaction_date) : '—' }}</td>
-                <td style="padding:14px 18px; text-align:right; color:#334155;">{{ money(r.grand_total) }}</td>
+                <td style="padding:14px 18px; text-align:right; color:#334155;">{{ moneyTotal(r.grand_total) }}</td>
                 <!-- While the Quotation is still Draft its own docstatus says nothing an
                      estimator needs (it would read "Draft" on every row), so the cell shows
                      the worksheet-derived pipeline status instead. Once it is submitted or
@@ -374,11 +375,13 @@ onMounted(load)
                      the row says View rather than Open. -->
                 <td style="padding:14px 18px;">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <template v-if="r.docstatus === 0">
-                      <span v-if="r.status" :style="worksheetStatusStyle(r.status)">{{ r.status }}</span>
-                      <span v-else style="color:#94A0AE; font-size:13px;">—</span>
-                    </template>
-                    <span v-else :style="docstatusBadge(r.docstatus).style">{{ docstatusBadge(r.docstatus).label }}</span>
+                    <!-- One vocabulary with Home: the costing stage for every quote
+                         (a submitted quote's worksheets are Quoted), "Draft" for a
+                         quote with no worksheet yet, and the docstatus only for a
+                         cancelled one. It used to say "Submitted" here and "Quoted"
+                         on Home for the same quotation. -->
+                    <span v-if="r.docstatus === 2" :style="docstatusBadge(2).style">{{ docstatusBadge(2).label }}</span>
+                    <span v-else :style="worksheetStatusStyle(r.status || 'Draft')">{{ r.status || 'Draft' }}</span>
                   </div>
                 </td>
                 <td style="padding:14px 18px; text-align:right; color:#A79C94; white-space:nowrap;">

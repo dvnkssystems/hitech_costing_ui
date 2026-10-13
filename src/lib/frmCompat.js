@@ -429,6 +429,24 @@ function patchWorkflowApplyStaleness(frappe) {
   }
 }
 
+/** Whether `doctype` has an active Workflow, asked once per DocType per page
+ *  load. Costing Worksheet's approval workflow was removed, and asking for
+ *  its transitions anyway logged a 404 "Workflow not found" console error on
+ *  every saved quote (2026-10-13). */
+const workflowActive = new Map()
+async function hasActiveWorkflow(frappe, doctype) {
+  if (!workflowActive.has(doctype)) {
+    workflowActive.set(
+      doctype,
+      frappe
+        .call('frappe.client.get_count', { doctype: 'Workflow', filters: { document_type: doctype, is_active: 1 } })
+        .then((count) => Number(count) > 0)
+        .catch(() => true) // can't tell: fall back to asking, as before
+    )
+  }
+  return workflowActive.get(doctype)
+}
+
 export function installWorkflowActions(doctype, { stateField = 'workflow_state' } = {}) {
   return (frappe) => {
     patchWorkflowApplyStaleness(frappe)
@@ -438,6 +456,11 @@ export function installWorkflowActions(doctype, { stateField = 'workflow_state' 
         if (frm.is_new()) {
           frm.doc.__workflow_transitions = []
           frm.doc.__workflow_state = ''
+          return
+        }
+        if (!(await hasActiveWorkflow(frm.frappe, doctype))) {
+          frm.doc.__workflow_transitions = []
+          frm.doc.__workflow_state = frm.doc[stateField] ?? ''
           return
         }
         try {
