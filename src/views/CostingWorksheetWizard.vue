@@ -2786,10 +2786,30 @@ const COMPLEXITY_STEP_INDEX = ITEM_STEPS.findIndex((s) => s.key === 'complexity'
  *  already exist (a resumed, already-scored item) so this never clobbers
  *  real answers. */
 function autoLoadComplexityQuestions(item) {
-  if (!item || item.activeStepIndex !== COMPLEXITY_STEP_INDEX) return
-  if (item.frm.doc?.complexity_ratings?.length) return
-  loadComplexityQuestions()
+  if (!item || item.activeStepIndex !== COMPLEXITY_STEP_INDEX || item.loadingQuestions) return
+  const doc = item.frm.doc
+  if (!doc) return
+  // A row with no question (an "Add Row" left blank) isn't a real answer —
+  // it only breaks the live calculation ("Order Complexity Question None not
+  // found") — so it doesn't count as the questions having been loaded.
+  const rows = doc.complexity_ratings || []
+  if (rows.some((row) => row.question)) return
+  if (rows.length) doc.complexity_ratings = []
+  item.loadingQuestions = true
+  item.frm
+    .call('load_complexity_questions')
+    .then(() => item.frm.refresh_field('complexity_ratings'))
+    .finally(() => {
+      item.loadingQuestions = false
+    })
 }
+// Also runs when an item *lands* on Complexity without stepping onto it — a
+// resumed draft restores `activeStepIndex` directly, and drafts don't carry
+// the ratings table, so the grid used to come back empty with no load.
+watch(
+  () => [activeItem.value, activeItem.value?.activeStepIndex],
+  ([item]) => autoLoadComplexityQuestions(item)
+)
 
 /** Deal Price - FG starts at 0 for every new item; default it to the item's
  *  own built-up cost (Total FG Cost (INR/kg)) the first time Commercials is
