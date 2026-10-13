@@ -8,11 +8,20 @@ import { formRouteFor } from '@/lib/frappeRouting'
 import { formatDate, moneyCompact, integer, percent } from '@/utils/format'
 import { worksheetStatusStyle } from '@/utils/styles'
 import LucideIcon from '@/components/LucideIcon.vue'
+import { loadCustomDashboard } from '@/lib/customDashboard'
+
+/** The custom_ui `Custom UI Dashboard` this page draws (KPI cards, widgets,
+ *  header button, title), created by hitech_costing's
+ *  `setup/home_dashboard.py` and edited in the desk. Without it (custom_ui
+ *  too old, or the record deleted) the page falls back to its built-in
+ *  figures from `lib/home.js`. */
+const DASHBOARD = 'Hitech Home'
 
 const router = useRouter()
 const session = useSessionStore()
 
 const stats = ref(null)
+const dash = ref(null)
 const loading = ref(false)
 const error = ref('')
 const live = computed(() => hasBackend)
@@ -46,6 +55,69 @@ const emptyPipeline = QUOTATION_PIPELINE_STAGES.map((s) => ({ ...s, count: 0, sh
 const pipeline = computed(() => stats.value?.quotationPipeline ?? emptyPipeline)
 const recentQuotations = computed(() => stats.value?.recentQuotations ?? [])
 
+const widgetOfType = (type) => dash.value?.widgets.find((w) => w.type === type) ?? null
+const STAGE_COLORS = ['#5E6B7A', '#F59E0B', '#107830', '#107830', '#E63946']
+
+/** Pipeline panel: the dashboard's Performance Tiles widget, or built-in. */
+const pipelineView = computed(() => {
+  const widget = widgetOfType('performance_tiles')
+  if (dash.value && widget) {
+    const tiles = widget.data?.tiles ?? []
+    return {
+      title: widget.title || 'Pipeline',
+      total: widget.data?.total ?? tiles.reduce((sum, t) => sum + (Number(t.value) || 0), 0),
+      stages: tiles.map((t, i) => ({
+        key: t.key ?? t.label,
+        label: t.label,
+        count: t.value,
+        share: Number(t.max) ? (Number(t.value) / Number(t.max)) * 100 : 0,
+        color: t.color || STAGE_COLORS[i % STAGE_COLORS.length],
+        to: t.route || null
+      }))
+    }
+  }
+  if (dash.value) return null
+  return {
+    title: 'Pipeline by status',
+    total: stats.value?.quotationPipelineTotal,
+    stages: pipeline.value.map((s) => ({ ...s, to: stageRoute(s.key) }))
+  }
+})
+
+/** Recent-quotations panel: the dashboard's Recommendations widget, or built-in. */
+const recentView = computed(() => {
+  const widget = widgetOfType('recommendations')
+  if (dash.value && widget) {
+    return {
+      title: widget.title || 'Recent',
+      rows: (widget.data?.rows ?? []).map((r) => ({
+        name: r.name,
+        customer_name: r.customer,
+        status: r.status,
+        modified: r.modified,
+        missingExchangeRate: r.warning
+      }))
+    }
+  }
+  if (dash.value) return null
+  return { title: 'Recent quotations', rows: recentQuotations.value }
+})
+
+const pageTitle = computed(() =>
+  dash.value?.config?.title
+    ? dash.value.config.title.replace('{first_name}', greetingName.value)
+    : `Welcome back, ${greetingName.value}`
+)
+const footnote = computed(() =>
+  dash.value
+    ? dash.value.config.subtitle || ''
+    : "Costing figures reflect whatever is in the DocType today. Every rate, band and multiplier behind them is seed data pending the real workbook — see the module's cost-model notes before quoting a real job off these numbers."
+)
+const headerButtons = computed(() => {
+  if (!dash.value) return [{ label: 'New Quotation', icon: 'plus', route: '/quotation/new' }]
+  return (dash.value.config.buttons ?? []).filter((b) => b.route && b.placement !== 'selection')
+})
+
 const monthLabel = new Date().toLocaleDateString(undefined, { month: 'short' })
 
 /**
@@ -62,7 +134,66 @@ const monthLabel = new Date().toLocaleDateString(undefined, { month: 'short' })
 const listRoute = (doctype, query = {}) => ({ name: 'doc-list', params: { doctype }, query })
 const stageRoute = (stageKey) => listRoute('Quotation', { costing_status: stageKey })
 
+const KPI_COLORS = {
+  primary: { bg: '#E9EFF7', fg: '#0B3465' },
+  secondary: { bg: '#F1F5F9', fg: '#475569' },
+  success: { bg: 'rgba(16,120,48,.1)', fg: '#107830' },
+  info: { bg: '#EFF6FF', fg: '#2563EB' },
+  warning: { bg: '#FEF3C7', fg: '#B45309' },
+  error: { bg: '#FEF2F2', fg: '#DC2626' }
+}
+
+/** A KPI's drill-down: its source doctype's list, with the KPI's simple
+ *  filters (`=` and `is set`) as the list's query. */
+function kpiRoute(kpi) {
+  const doctype = kpi.frappe?.doctype
+  if (!doctype) return null
+  const query = {}
+  for (const f of kpi.frappe?.filters ?? []) {
+    const [field, op, value] = f.length === 4 ? f.slice(1) : f
+    if (op === '=') query[field] = value
+    else if (op === 'is') query[field] = value === 'set' ? '~set' : '~not set'
+  }
+  return listRoute(doctype, query)
+}
+
+function kpiValue(kpi) {
+  const v = kpi.value
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v !== 'number') return `${kpi.prefix || ''}${v}`
+  if (kpi.prefix === '₹') return moneyCompact(v)
+  return `${kpi.prefix || ''}${n(v)}`
+}
+
+function dashboardCard(kpi) {
+  const palette = KPI_COLORS[kpi.color] ?? KPI_COLORS.secondary
+  const active = Number(kpi.value) > 0
+  const warning = kpi.color === 'error' && active
+  const badge = kpi.badge || ''
+  const trend = /^[+-]\d/.test(badge)
+  const negative = badge.startsWith('-')
+  const [text, ...rest] = trend ? badge.split(' ') : [badge]
+  return {
+    label: (kpi.title || '').replace('{month}', monthLabel),
+    value: kpiValue(kpi),
+    icon: kpi.color === 'error' && !active ? 'coins' : kpi.icon || 'circle',
+    bg: kpi.color === 'error' && !active ? '#F1F5F9' : palette.bg,
+    fg: kpi.color === 'error' && !active ? '#475569' : palette.fg,
+    to: kpiRoute(kpi),
+    warning,
+    note: badge
+      ? {
+          text: trend ? text : badge,
+          suffix: trend ? rest.join(' ') : '',
+          icon: trend ? 'trending-up' : warning ? 'triangle-alert' : kpi.color === 'warning' ? 'clock' : 'check-circle-2',
+          color: trend ? (negative ? '#E63946' : '#107830') : warning || kpi.color === 'warning' ? palette.fg : '#64748B'
+        }
+      : null
+  }
+}
+
 const cards = computed(() => {
+  if (dash.value) return dash.value.kpis.map(dashboardCard)
   const s = stats.value
   const growth = s?.quotationGrowth
   return [
@@ -141,14 +272,15 @@ const cards = computed(() => {
   ]
 })
 
-const go = (to) => router.push(to)
+const go = (to) => to && router.push(to)
 
 async function load() {
   if (!live.value) return
   loading.value = true
   error.value = ''
   try {
-    stats.value = await fetchHomeStats()
+    dash.value = await loadCustomDashboard(DASHBOARD)
+    if (!dash.value) stats.value = await fetchHomeStats()
   } catch (e) {
     error.value = e?.message ?? String(e)
   } finally {
@@ -164,16 +296,18 @@ onMounted(load)
     <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; margin-bottom:26px;">
       <div style="min-width:0;">
         <div style="font-size:13px; color:#94A0AE; font-weight:600;">{{ todayLabel }}</div>
-        <h1 class="home__title">Welcome back, {{ greetingName }}</h1>
+        <h1 class="home__title">{{ pageTitle }}</h1>
       </div>
       <div style="display:flex; gap:11px; flex-wrap:wrap; align-items:center;">
         <span v-if="loading" style="font-size:13px; color:#94A0AE; font-weight:600;">Loading…</span>
         <button
-          @click="go('/quotation/new')"
+          v-for="b in headerButtons"
+          :key="b.label"
+          @click="go(b.route)"
           style="display:flex; align-items:center; gap:8px; background:#0B3465; color:#fff; border:none; padding:12px 18px; border-radius:11px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 4px 12px rgba(11, 52, 101, .28); font-family:inherit;"
           class="hv1 home__cta"
         >
-          <span style="font-size:17px;"><LucideIcon name="plus" /></span> New Quotation
+          <span v-if="b.icon" style="font-size:17px;"><LucideIcon :name="b.icon" /></span> {{ b.label }}
         </button>
       </div>
     </div>
@@ -225,6 +359,7 @@ onMounted(load)
           </div>
         </div>
         <div
+          v-if="card.note"
           :style="{ marginTop:'13px', fontSize:'12.5px', color: card.note.color, fontWeight:'600', display:'flex', alignItems:'flex-start', gap:'6px' }"
         >
           <span style="font-size:15px; flex:none; margin-top:1px;"><LucideIcon :name="card.note.icon" /></span>
@@ -239,19 +374,19 @@ onMounted(load)
     <!-- pipeline + recent quotations -->
     <div class="panels">
       <!-- status pipeline -->
-      <div class="panel" style="padding:24px 24px 16px;">
+      <div v-if="pipelineView" class="panel" style="padding:24px 24px 16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-          <h2 style="font-size:16px; font-weight:700; margin:0;">Pipeline by status</h2>
-          <span style="font-size:13px; color:#94A0AE; font-weight:600;">{{ n(stats?.quotationPipelineTotal) }} total</span>
+          <h2 style="font-size:16px; font-weight:700; margin:0;">{{ pipelineView.title }}</h2>
+          <span style="font-size:13px; color:#94A0AE; font-weight:600;">{{ n(pipelineView.total) }} total</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:2px;">
           <button
-            v-for="stage in pipeline"
+            v-for="stage in pipelineView.stages"
             :key="stage.key"
             type="button"
             class="stage"
             :title="`Open ${stage.label} quotations`"
-            @click="go(stageRoute(stage.key))"
+            @click="go(stage.to)"
           >
             <span style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px;">
               <span style="font-size:13.5px; color:#334155; font-weight:600;">{{ stage.label }}</span>
@@ -268,9 +403,9 @@ onMounted(load)
       </div>
 
       <!-- recent quotations -->
-      <div class="panel" style="overflow:hidden;">
+      <div v-if="recentView" class="panel" style="overflow:hidden;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:20px 22px 4px;">
-          <h2 style="font-size:16px; font-weight:700; margin:0;">Recent quotations</h2>
+          <h2 style="font-size:16px; font-weight:700; margin:0;">{{ recentView.title }}</h2>
           <RouterLink :to="listRoute('Quotation')" class="panel__link">
             View all <LucideIcon name="chevron-right" />
           </RouterLink>
@@ -287,7 +422,7 @@ onMounted(load)
             </thead>
             <tbody>
               <tr
-                v-for="r in recentQuotations"
+                v-for="r in recentView.rows"
                 :key="r.name"
                 tabindex="0"
                 role="link"
@@ -311,7 +446,7 @@ onMounted(load)
                 </td>
                 <td class="recent__modified" style="color:#64748B; white-space:nowrap;">{{ r.modified ? formatDate(String(r.modified).slice(0, 10)) : '—' }}</td>
               </tr>
-              <tr v-if="!recentQuotations.length">
+              <tr v-if="!recentView.rows.length">
                 <td colspan="4" style="padding:28px 22px; text-align:center; color:#94A0AE; font-size:13.5px; font-weight:600;">
                   No quotations yet.
                 </td>
@@ -322,11 +457,7 @@ onMounted(load)
       </div>
     </div>
 
-    <p style="margin-top:22px; font-size:12px; color:#94A0AE; line-height:1.6;">
-      Costing figures reflect whatever is in the DocType today. Every rate, band and multiplier behind
-      them is seed data pending the real workbook — see the module's cost-model notes before quoting a
-      real job off these numbers.
-    </p>
+    <p v-if="footnote" style="margin-top:22px; font-size:12px; color:#94A0AE; line-height:1.6;">{{ footnote }}</p>
   </div>
 </template>
 
