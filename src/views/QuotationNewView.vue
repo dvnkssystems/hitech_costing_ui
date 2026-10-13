@@ -307,7 +307,7 @@ onMounted(() => {
   --qw-body: #33414F;
   --qw-muted: #5E6B7A;
   --qw-faint: #94A0AE;
-  font-family: 'Raleway', system-ui, sans-serif;
+  font-family: 'Nunito', system-ui, sans-serif;
   color: var(--qw-body);
   padding: 30px 36px 80px;
   margin: 0 auto;
@@ -339,14 +339,14 @@ onMounted(() => {
 
 .qw-heading {
   margin: 0 0 8px;
-  font: 900 32px/1.15 'Raleway', system-ui, sans-serif;
+  font: 900 32px/1.15 'Nunito', system-ui, sans-serif;
   letter-spacing: -0.02em;
   color: var(--qw-text);
 }
 
 .qw-lede {
   margin: 0 0 22px;
-  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
+  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
   max-width: 68ch;
 }
@@ -378,12 +378,12 @@ onMounted(() => {
 }
 
 .qw-draft-banner__title {
-  font: 700 15.5px/1.4 'Raleway', system-ui, sans-serif;
+  font: 700 15.5px/1.4 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
 .qw-draft-banner__desc {
-  font: 400 13.5px/20px 'Raleway', system-ui, sans-serif;
+  font: 400 13.5px/20px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
   margin-top: 4px;
 }
@@ -401,7 +401,7 @@ onMounted(() => {
   border: 1px solid var(--qw-primary);
   padding: 9px 18px;
   border-radius: 10px;
-  font: 700 13.5px/1 'Raleway', system-ui, sans-serif;
+  font: 700 13.5px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -447,13 +447,13 @@ onMounted(() => {
 }
 
 .qw-type-card__name {
-  font: 800 24px/1.2 'Raleway', system-ui, sans-serif;
+  font: 800 24px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
   margin: 8px 0 6px;
 }
 
 .qw-type-card__desc {
-  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
+  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
 }
 
@@ -465,7 +465,7 @@ onMounted(() => {
 
 .qw-section-title {
   margin: 0 0 6px;
-  font: 800 24px/1.2 'Raleway', system-ui, sans-serif;
+  font: 800 24px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -482,7 +482,7 @@ onMounted(() => {
   border: 1px solid var(--qw-border);
   border-radius: 8px;
   padding: 16px;
-  font: 700 15px/1.3 'Raleway', system-ui, sans-serif;
+  font: 700 15px/1.3 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
   box-shadow: 0 2px 8px rgba(38, 38, 38, 0.08);
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -548,7 +548,7 @@ onMounted(() => {
   border: 1px solid var(--qw-border);
   padding: 9px 15px;
   border-radius: 10px;
-  font: 600 13.5px/1 'Raleway', system-ui, sans-serif;
+  font: 600 13.5px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
 }
 

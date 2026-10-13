@@ -61,7 +61,7 @@ defineEmits(['select'])
   border-right: 1px solid #D7DEE8;
   background: #fff;
   color: #5E6B7A;
-  font: 600 12px/1 'Raleway', system-ui, sans-serif;
+  font: 600 12px/1 'Nunito', system-ui, sans-serif;
   letter-spacing: 0.02em;
   cursor: pointer;
   overflow: hidden;

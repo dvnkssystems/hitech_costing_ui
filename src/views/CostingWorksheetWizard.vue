@@ -4176,7 +4176,7 @@ watch(() => props.quotation, load)
 </template>
 
 <style scoped>
-/* Hi-Tech Radiators brandbook (Raleway / IBM Plex Mono, navy-on-canvas
+/* Hi-Tech Radiators brandbook (Nunito / IBM Plex Mono, navy-on-canvas
    palette), scoped to this page only — see src/assets/brand.css for the
    shared tokens this mirrors, and frappe-form.css for the SDK-control
    tokens re-tinted the same way. */
@@ -4191,7 +4191,7 @@ watch(() => props.quotation, load)
   --qw-body: #33414F;
   --qw-muted: #5E6B7A;
   --qw-faint: #94A0AE;
-  font-family: 'Raleway', system-ui, sans-serif;
+  font-family: 'Nunito', system-ui, sans-serif;
   color: var(--qw-body);
   padding: 30px 36px 80px;
   margin: 0 auto;
@@ -4223,7 +4223,7 @@ watch(() => props.quotation, load)
 
 .qw-heading {
   margin: 0 0 22px;
-  font: 900 32px/1.15 'Raleway', system-ui, sans-serif;
+  font: 900 32px/1.15 'Nunito', system-ui, sans-serif;
   letter-spacing: -0.02em;
   color: var(--qw-text);
 }
@@ -4295,7 +4295,7 @@ watch(() => props.quotation, load)
 
 .qw-save-pill {
   flex: none;
-  font: 700 11px/1 'Raleway', system-ui, sans-serif;
+  font: 700 11px/1 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
   background: var(--qw-row-border);
   border-radius: 999px;
@@ -4339,7 +4339,7 @@ watch(() => props.quotation, load)
 
 .qw-step-lede {
   margin: 0 0 18px;
-  font: 400 15px/22px 'Raleway', system-ui, sans-serif;
+  font: 400 15px/22px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
   max-width: 64ch;
 }
@@ -4371,7 +4371,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-review-card__title {
-  font: 800 20px/1.2 'Raleway', system-ui, sans-serif;
+  font: 800 20px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -4381,7 +4381,7 @@ watch(() => props.quotation, load)
   border: none;
   padding: 6px 10px;
   border-radius: 8px;
-  font: 700 13px/1 'Raleway', system-ui, sans-serif;
+  font: 700 13px/1 'Nunito', system-ui, sans-serif;
   color: var(--qw-primary-dark);
   cursor: pointer;
 }
@@ -4413,12 +4413,12 @@ watch(() => props.quotation, load)
 }
 
 .qw-review-card__k {
-  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
+  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
   color: var(--qw-faint);
 }
 
 .qw-review-card__v {
-  font: 400 15px/20px 'Raleway', system-ui, sans-serif;
+  font: 400 15px/20px 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
   overflow-wrap: anywhere;
   /* Lets `address_display`/`shipping_address`'s <br>-to-newline conversion
@@ -4518,7 +4518,7 @@ watch(() => props.quotation, load)
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font: 400 14px/1.5 'Raleway', system-ui, sans-serif;
+  font: 400 14px/1.5 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -4534,7 +4534,7 @@ watch(() => props.quotation, load)
   width: 100%;
   border-collapse: collapse;
   margin-top: 16px;
-  font: 400 13.5px/1.4 'Raleway', system-ui, sans-serif;
+  font: 400 13.5px/1.4 'Nunito', system-ui, sans-serif;
 }
 
 .qw-quotation-items th {
@@ -4642,7 +4642,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-container-split__muted {
-  font: 500 12px/1 'Raleway', system-ui, sans-serif;
+  font: 500 12px/1 'Nunito', system-ui, sans-serif;
   color: var(--qw-faint);
 }
 
@@ -4674,7 +4674,7 @@ watch(() => props.quotation, load)
   padding: 0;
   border: none;
   background: none;
-  font: 600 11.5px/1 'Raleway', system-ui, sans-serif;
+  font: 600 11.5px/1 'Nunito', system-ui, sans-serif;
   color: var(--qw-primary);
   cursor: pointer;
   text-decoration: underline;
@@ -4707,7 +4707,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-totals-box__k {
-  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
+  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
   color: var(--qw-faint);
 }
 
@@ -4723,7 +4723,7 @@ watch(() => props.quotation, load)
 .qw-inline-input {
   width: 100%;
   min-width: 120px;
-  font: 400 13.5px/1.4 'Raleway', system-ui, sans-serif;
+  font: 400 13.5px/1.4 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
   background: #fff;
   border: 1px solid var(--qw-border);
@@ -4760,7 +4760,7 @@ watch(() => props.quotation, load)
   padding: 9px 0;
   border-bottom: 1px solid var(--qw-row-border);
   cursor: pointer;
-  font: 400 14px/1.4 'Raleway', system-ui, sans-serif;
+  font: 400 14px/1.4 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -4789,12 +4789,12 @@ watch(() => props.quotation, load)
 
 .qw-terms-notes__title {
   margin: 0 0 12px;
-  font: 700 15px/1.2 'Raleway', system-ui, sans-serif;
+  font: 700 15px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
 .qw-submit-badge {
-  font: 700 11px/1 'Raleway', system-ui, sans-serif;
+  font: 700 11px/1 'Nunito', system-ui, sans-serif;
   border-radius: 999px;
   padding: 5px 9px;
   text-transform: capitalize;
@@ -4842,7 +4842,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-item-tabs__eyebrow {
-  font: 700 11px/1 'Raleway', system-ui, sans-serif;
+  font: 700 11px/1 'Nunito', system-ui, sans-serif;
   color: var(--qw-faint);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4850,7 +4850,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-item-tab {
-  font: 700 13px/1 'Raleway', system-ui, sans-serif;
+  font: 700 13px/1 'Nunito', system-ui, sans-serif;
   border-radius: 8px;
   padding: 9px 14px;
   cursor: pointer;
@@ -4882,7 +4882,7 @@ watch(() => props.quotation, load)
   align-items: baseline;
   gap: 10px;
   margin: 0 0 18px;
-  font: 800 20px/1.2 'Raleway', system-ui, sans-serif;
+  font: 800 20px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--qw-text);
 }
 
@@ -4909,7 +4909,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-derived__hint {
-  font: 400 12px/17px 'Raleway', system-ui, sans-serif;
+  font: 400 12px/17px 'Nunito', system-ui, sans-serif;
   color: var(--qw-faint);
   margin: 5px 0 14px;
 }
@@ -4940,7 +4940,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-derived__k {
-  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
+  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
 }
 
@@ -4963,7 +4963,7 @@ watch(() => props.quotation, load)
 }
 
 .qw-derived__warning {
-  font: 600 11.5px/1.4 'Raleway', system-ui, sans-serif;
+  font: 600 11.5px/1.4 'Nunito', system-ui, sans-serif;
   color: #E63946;
 }
 
@@ -4997,7 +4997,7 @@ watch(() => props.quotation, load)
 
 .qw-exim-date__note {
   margin: 2px 0 10px;
-  font: 400 13px/18px 'Raleway', system-ui, sans-serif;
+  font: 400 13px/18px 'Nunito', system-ui, sans-serif;
   color: var(--qw-muted);
 }
 
@@ -5016,7 +5016,7 @@ watch(() => props.quotation, load)
   display: flex;
   align-items: center;
   gap: 6px;
-  font: 700 12.5px/1.3 'Raleway', system-ui, sans-serif;
+  font: 700 12.5px/1.3 'Nunito', system-ui, sans-serif;
   color: #E63946;
 }
 
@@ -5036,7 +5036,7 @@ watch(() => props.quotation, load)
   border: 1px solid var(--qw-border);
   padding: 9px 15px;
   border-radius: 10px;
-  font: 600 13.5px/1 'Raleway', system-ui, sans-serif;
+  font: 600 13.5px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -5137,7 +5137,7 @@ watch(() => props.quotation, load)
   border: 2px solid var(--qw-primary);
   padding: 11px 20px;
   border-radius: 10px;
-  font: 700 14px/1 'Raleway', system-ui, sans-serif;
+  font: 700 14px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -5156,7 +5156,7 @@ watch(() => props.quotation, load)
   border: none;
   padding: 11px 22px;
   border-radius: 10px;
-  font: 700 14px/1 'Raleway', system-ui, sans-serif;
+  font: 700 14px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(11, 52, 101, 0.22);
 }

@@ -1405,7 +1405,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--cf-border);
   border-radius: 12px;
   box-shadow: 0 24px 64px rgba(11, 52, 101, 0.28);
-  font-family: 'Raleway', system-ui, sans-serif;
+  font-family: 'Nunito', system-ui, sans-serif;
   color: var(--cf-text);
   outline: none;
   overflow: hidden;
@@ -1429,7 +1429,7 @@ onBeforeUnmount(() => {
 
 .cf3d__title {
   margin-top: 6px;
-  font: 700 18px/1.2 'Raleway', system-ui, sans-serif;
+  font: 700 18px/1.2 'Nunito', system-ui, sans-serif;
 }
 
 .cf3d__title-count {
@@ -1506,7 +1506,7 @@ onBeforeUnmount(() => {
   padding: 32px;
   text-align: center;
   background: #f4f6fa;
-  font: 400 14px/1.6 'Raleway', system-ui, sans-serif;
+  font: 400 14px/1.6 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1519,7 +1519,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--cf-border);
   border-radius: 8px;
   background: #fff;
-  font: 500 13px/1.45 'Raleway', system-ui, sans-serif;
+  font: 500 13px/1.45 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
   pointer-events: none;
 }
@@ -1546,7 +1546,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--cf-border);
-  font: 500 12.5px/1.45 'Raleway', system-ui, sans-serif;
+  font: 500 12.5px/1.45 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
   white-space: pre-line;
 }
@@ -1576,7 +1576,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__verdict-text {
-  font: 700 14px/1.3 'Raleway', system-ui, sans-serif;
+  font: 700 14px/1.3 'Nunito', system-ui, sans-serif;
 }
 
 .cf3d__verdict--ok {
@@ -1600,7 +1600,7 @@ onBeforeUnmount(() => {
 .cf3d__verdict-notes {
   margin: 6px 0 0;
   padding-left: 18px;
-  font: 500 12px/1.5 'Raleway', system-ui, sans-serif;
+  font: 500 12px/1.5 'Nunito', system-ui, sans-serif;
 }
 
 .cf3d__section {
@@ -1618,7 +1618,7 @@ onBeforeUnmount(() => {
 
 .cf3d__section-title {
   margin: 0;
-  font: 700 13px/1.2 'Raleway', system-ui, sans-serif;
+  font: 700 13px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--cf-navy);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1633,7 +1633,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font: 600 13px/1.4 'Raleway', system-ui, sans-serif;
+  font: 600 13px/1.4 'Nunito', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -1646,7 +1646,7 @@ onBeforeUnmount(() => {
 
 .cf3d__rotated {
   margin: 0;
-  font: 500 12px/1.45 'Raleway', system-ui, sans-serif;
+  font: 500 12px/1.45 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1660,12 +1660,12 @@ onBeforeUnmount(() => {
 
 .cf3d__axis-title {
   padding: 0 4px;
-  font: 700 12.5px/1.2 'Raleway', system-ui, sans-serif;
+  font: 700 12.5px/1.2 'Nunito', system-ui, sans-serif;
 }
 
 .cf3d__axis-hint {
   margin: 0 0 8px;
-  font: 400 11.5px/1.45 'Raleway', system-ui, sans-serif;
+  font: 400 11.5px/1.45 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1686,7 +1686,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__gap-label {
-  font: 600 11px/1.2 'Raleway', system-ui, sans-serif;
+  font: 600 11px/1.2 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1732,7 +1732,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: #fff;
   color: var(--cf-text);
-  font: 600 13px/1 'Raleway', system-ui, sans-serif;
+  font: 600 13px/1 'Nunito', system-ui, sans-serif;
   cursor: pointer;
 }
 
@@ -1782,7 +1782,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__figure dt {
-  font: 600 12px/1.4 'Raleway', system-ui, sans-serif;
+  font: 600 12px/1.4 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1795,7 +1795,7 @@ onBeforeUnmount(() => {
 
 .cf3d__figure-note {
   display: block;
-  font: 500 11px/1.35 'Raleway', system-ui, sans-serif;
+  font: 500 11px/1.35 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1816,7 +1816,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__k {
-  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
+  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1840,7 +1840,7 @@ onBeforeUnmount(() => {
 
 .cf3d__note {
   margin: 4px 0 0;
-  font: 400 12px/1.55 'Raleway', system-ui, sans-serif;
+  font: 400 12px/1.55 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1983,7 +1983,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__picker-key {
-  font: 500 11px/1.3 'Raleway', system-ui, sans-serif;
+  font: 500 11px/1.3 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -1994,7 +1994,7 @@ onBeforeUnmount(() => {
 
 .cf3d__own-lede {
   margin: 0;
-  font: 400 12px/1.55 'Raleway', system-ui, sans-serif;
+  font: 400 12px/1.55 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -2022,7 +2022,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__own-axis dt {
-  font: 500 11px/1.35 'Raleway', system-ui, sans-serif;
+  font: 500 11px/1.35 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -2056,7 +2056,7 @@ onBeforeUnmount(() => {
 }
 
 .cf3d__fact dt {
-  font: 600 12px/16px 'Raleway', system-ui, sans-serif;
+  font: 600 12px/16px 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 
@@ -2086,7 +2086,7 @@ onBeforeUnmount(() => {
 
 .cf3d__action-help {
   margin: 8px 0 0;
-  font: 500 11.5px/1.45 'Raleway', system-ui, sans-serif;
+  font: 500 11.5px/1.45 'Nunito', system-ui, sans-serif;
   color: var(--cf-muted);
 }
 

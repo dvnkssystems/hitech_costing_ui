@@ -4,7 +4,7 @@
  *
  * Navy carries the brand and every primary action. Green is reserved for
  * confirmation, approval and positive movement — never a decorative fill.
- * Raleway sets everything the reader reads; IBM Plex Mono sets everything
+ * Nunito sets everything the reader reads; IBM Plex Mono sets everything
  * the reader compares (quotation numbers, item codes, weights, rates,
  * totals) so digits align column to column.
  */
@@ -31,7 +31,7 @@
   --ht-navy-shadow: rgba(11, 52, 101, .22);
 
   /* Type */
-  --ht-font-sans: 'Raleway', system-ui, sans-serif;
+  --ht-font-sans: 'Nunito', system-ui, sans-serif;
   --ht-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
   /* Radius — the mark is built from square-cut bars, so corners stay tight */

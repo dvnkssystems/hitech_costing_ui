@@ -6,7 +6,7 @@ import router from './router'
 // builds on (see src/assets/brand.css for the Hi-Tech Radiators brandbook).
 import './assets/brand.css'
 // SDK styles next so this app's global rules in main.css win where the two
-// collide — the form then picks up the app's Raleway font and navy focus ring
+// collide — the form then picks up the app's Nunito font and navy focus ring
 // instead of the SDK's defaults.
 import '@frappe-vue-sdk/vue/style.css'
 import './assets/main.css'
