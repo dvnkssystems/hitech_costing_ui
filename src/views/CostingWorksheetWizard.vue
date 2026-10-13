@@ -49,6 +49,7 @@ import {
   EXIM_FREIGHT_TABLE_FIELDS,
   EXIM_HIDDEN_FIELDS,
 EXIM_DATE_FIELDS,
+  VALIDITY_FIELDS,
   CURRENCY_FIELDS,
   EXIM_FLAGS_FIELD,
   EXIM_ITEM_DEAL_VALUE_FIELDS,
@@ -464,7 +465,8 @@ const reviewSections = computed(() => [
     rows: [
       { label: 'Type', value: quotationHeaderFrm.value?.doc?.custom_type },
       ...sectionRows(orderFrm.value, SHARED_STEP.fields),
-      ...sectionRows(quotationHeaderFrm.value, EXIM_DATE_FIELDS)
+      ...sectionRows(quotationHeaderFrm.value, EXIM_DATE_FIELDS),
+      ...sectionRows(quotationHeaderFrm.value, VALIDITY_FIELDS)
     ]
   },
   { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
@@ -1088,6 +1090,15 @@ function todayIso() {
   const now = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+/** One calendar month after a `YYYY-MM-DD` date — the desk Quotation's
+ *  default `valid_till` (`frappe.datetime.add_months(transaction_date, 1)`). */
+function monthAfterIso(iso) {
+  const [y, m, d] = iso.split('-').map(Number)
+  const last = new Date(y, m + 1, 0).getDate()
+  const pad = (n) => String(n).padStart(2, '0')
+  const next = new Date(y, m, Math.min(d, last))
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`
 }
 function headerTransactionDate() {
   return quotationHeaderFrm.value?.doc?.transaction_date || todayIso()
@@ -2318,6 +2329,7 @@ const DRAFT_HEADER_FIELDS = [
   ...TAX_FIELDS,
   ...ADDRESS_FIELDS,
   ...CURRENCY_FIELDS,
+  ...VALIDITY_FIELDS,
   ...EXIM_FIELDS,
   ...TERMS_FIELDS,
   TAX_TABLE_FIELD,
@@ -2630,7 +2642,13 @@ async function load() {
         // Exim step's Date control showed blank until the estimator picked one
         // by hand, even though every exchange-rate/freight-quarter lookup
         // already silently fell back to today anyway via `headerTransactionDate()`.
-        initialDoc: { doctype: HEADER_DOCTYPE, custom_type: 'Tank', transaction_date: todayIso(), ...headerSeed },
+        initialDoc: {
+          doctype: HEADER_DOCTYPE,
+          custom_type: 'Tank',
+          transaction_date: todayIso(),
+          valid_till: monthAfterIso(todayIso()),
+          ...headerSeed
+        },
         scripts: [addressQueryScript]
       })
 
@@ -2940,6 +2958,7 @@ async function submitAll() {
         // `currency`/`conversion_rate`/`transaction_date` — accepted by the
         // backend's `submit_and_map` header allowlist alongside the rest.
         ...CURRENCY_FIELDS,
+        ...VALIDITY_FIELDS,
         ...EXIM_FIELDS,
         ...TERMS_FIELDS,
         TERMS_TABLE_FIELD,
@@ -3115,7 +3134,7 @@ async function duplicateQuotation() {
   try {
     clearDraft(DRAFT_STORAGE_KEY)
     const headerFrm = quotationHeaderFrm.value
-    const headerFieldnames = DRAFT_HEADER_FIELDS.filter((fieldname) => fieldname !== 'transaction_date')
+    const headerFieldnames = DRAFT_HEADER_FIELDS.filter((fieldname) => fieldname !== 'transaction_date' && fieldname !== 'valid_till')
     seedPendingDoc(DUPLICATE_SEED_KEY, {
       from: quotationName.value,
       order: pick(orderFrm.value?.doc, SHARED_FIELDNAMES),
@@ -3271,11 +3290,17 @@ watch(() => props.quotation, load)
                    it's the quote's own date and picks the quarter for the
                    freight rate and the exchange rates, so it's set up front
                    with the rest of the order. See `EXIM_DATE_FIELDS`. -->
-              <div class="qw-exim-date" style="margin-top: 14px;">
-                <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
-                <p class="qw-exim-date__note">
-                  Sets the quarter used for the freight rate and the exchange rates.
-                </p>
+              <div class="qw-order-dates">
+                <div class="qw-exim-date">
+                  <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
+                  <p class="qw-exim-date__note">
+                    Sets the quarter used for the freight rate and the exchange rates.
+                  </p>
+                </div>
+                <div class="qw-exim-date">
+                  <WizardStep :frm="quotationHeaderFrm" :fields="VALIDITY_FIELDS" read-only-filter="exclude" />
+                  <p class="qw-exim-date__note">The quotation expires after this date.</p>
+                </div>
               </div>
             </fieldset>
           </div>
@@ -4980,6 +5005,19 @@ watch(() => props.quotation, load)
   height: 1px;
   background: var(--qw-border);
   margin: 18px 0 16px;
+}
+
+/* Quotation Date and Valid Till, side by side on Customer & Order. */
+.qw-order-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.qw-order-dates .qw-exim-date {
+  flex: 1 1 280px;
+  margin-bottom: 0;
 }
 
 /* Quotation Date's own block on the Exim step: a single control plus the one

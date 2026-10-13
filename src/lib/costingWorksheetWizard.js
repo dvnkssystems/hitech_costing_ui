@@ -472,6 +472,12 @@ export const CURRENCY_FIELDS = ['currency', 'conversion_rate', 'transaction_date
  */
 export const EXIM_DATE_FIELDS = ['transaction_date']
 /**
+ * Valid Till — the Quotation's own `valid_till`, set on Customer & Order
+ * beside Quotation Date. Defaults to one month after the quote date, as the
+ * desk Quotation form does; ERPNext rejects a date before `transaction_date`.
+ */
+export const VALIDITY_FIELDS = ['valid_till']
+/**
  * The currency field offered on the Items & Pricing step — now the ONLY
  * place the quote's currency is chosen.
  *
