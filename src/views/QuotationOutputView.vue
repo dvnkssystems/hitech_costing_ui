@@ -15,6 +15,7 @@
  * manage.
  */
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { listRouteFor, formRouteFor } from '@/lib/frappeRouting'
@@ -29,6 +30,13 @@ const props = defineProps({
 })
 
 const live = computed(() => hasBackend)
+const router = useRouter()
+
+// Submitted quotations open here, not in the wizard, so Duplicate hands off to
+// the wizard: it loads this quotation and runs its own Duplicate.
+function onDuplicate() {
+  router.push({ path: '/wizard/costing-worksheet', query: { quotation: props.name, duplicate: '1' } })
+}
 const loading = ref(true)
 const error = ref('')
 const doc = ref(null)
@@ -488,11 +496,12 @@ watch(() => props.name, load)
         </button>
         <button
           type="button"
-          disabled
-          title="Not available yet"
-          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#94A0AE; cursor:not-allowed; font-family:inherit;"
+          @click="onDuplicate"
+          title="Start a new quotation pre-filled from this one"
+          style="display:flex; align-items:center; gap:8px; height:44px; padding:0 20px; border-radius:11px; background:#fff; border:1px solid #E2E8F0; font-size:14px; font-weight:600; color:#0B3465; cursor:pointer; font-family:inherit;"
+          class="hv1"
         >
-          <LucideIcon name="mail" /> Email — coming soon
+          <LucideIcon name="copy" /> Duplicate
         </button>
       </div>
     </template>

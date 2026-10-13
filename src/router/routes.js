@@ -50,7 +50,11 @@ export const routes = [
     // `?quotation=` (not a path param) carries an existing Quotation to
     // resume — `props: true` only maps route params, not the query string,
     // so this needs its own mapping to reach both.
-    props: (route) => ({ name: route.params.name, quotation: route.query.quotation ?? '' }),
+    props: (route) => ({
+      name: route.params.name,
+      quotation: route.query.quotation ?? '',
+      duplicate: route.query.duplicate === '1'
+    }),
     meta: { nav: 'form' }
   },
   // "What kind of quotation?" — sits in front of the wizard above. Its own

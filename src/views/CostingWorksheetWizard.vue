@@ -34,6 +34,8 @@ import ChildRowDrawer from '@/components/ChildRowDrawer.vue'
 import WizardStep from '@/components/wizard/WizardStep.vue'
 import WizardProgress from '@/components/wizard/WizardProgress.vue'
 import ExchangeRateMissingBanner from '@/components/wizard/ExchangeRateMissingBanner.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
+import { createWizardLayout } from '@/lib/wizardLayout'
 // Lazy: pulls in three.js (~600KB) and nobody needs it until they click
 // "View container load in 3D", so keep it out of the wizard's own chunk.
 import { containerBreakdown, containerOverridesPayload, numberOrNull } from '@/lib/containerLoad.js'
@@ -54,6 +56,7 @@ EXIM_DATE_FIELDS,
   EXIM_FLAGS_FIELD,
   EXIM_ITEM_DEAL_VALUE_FIELDS,
   TERMS_FIELDS,
+  TC_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
   PAYMENT_FIELDS,
@@ -76,7 +79,8 @@ import {
   hideEmptyReadOnlyFields,
   hideNamingSeries,
   restoreOnloadCustomButtons,
-  installWorkflowActions
+  installWorkflowActions,
+  debounceLiveCalculate
 } from '@/lib/frmCompat'
 import { installDeskApis, installAmend, takePendingDoc, seedPendingDoc } from '@/lib/mappedDoc'
 import {
@@ -91,6 +95,16 @@ import {
 
 const DOCTYPE = 'Costing Worksheet'
 const HEADER_DOCTYPE = 'Quotation'
+
+/** Which fields each section shows, from custom_ui's `Custom UI Wizard Layout`
+ *  "Costing Quotation Wizard" record (seeded by hitech_costing's
+ *  `setup/wizard_layout.py` with the built-in lists below, so an untouched
+ *  record changes nothing). Section keys: customer, customer_dates, item_<step key>,
+ *  pricing_container, address, address_display, exim, exim_calculated,
+ *  terms_notes, terms_template, payment, payment_schedule. */
+const wizardLayout = createWizardLayout('Costing Quotation Wizard')
+const layoutFields = (section, builtIn) => wizardLayout.fields(section, builtIn)
+const layoutReadOnly = (section) => wizardLayout.readOnly(section)
 
 const PAGE_STEPS = [
   { key: 'customer', title: 'Customer & Order' },
@@ -108,7 +122,10 @@ const props = defineProps({
   // Resume every Costing Worksheet already mapped onto an existing Quotation,
   // rather than a single in-progress worksheet — see `load()`. Set by
   // `QuotationOpenView` for a Draft Quotation opened from the list.
-  quotation: { type: String, default: '' }
+  quotation: { type: String, default: '' },
+  // `?duplicate=1` — set by the submitted Quotation's review screen, which
+  // has no wizard of its own: load `quotation`, then run `duplicateQuotation()`.
+  duplicate: { type: Boolean, default: false }
 })
 
 const router = useRouter()
@@ -120,6 +137,29 @@ const live = computed(() => hasBackend)
 const orderFrm = shallowRef(null)
 const quotationHeaderFrm = shallowRef(null)
 const items = ref([])
+const tcLayoutFields = computed(() => layoutFields('terms_template', TC_FIELDS))
+/** Customer & Order's Quotation fields (Date, Valid Till), drawn as boxes
+ *  with a note under each — the layout's `customer_dates` section. */
+const orderDateFields = computed(() => layoutFields('customer_dates', [...EXIM_DATE_FIELDS, ...VALIDITY_FIELDS]))
+const ORDER_DATE_NOTES = {
+  transaction_date: 'Sets the quarter used for the freight rate and the exchange rates.',
+  valid_till: 'The quotation expires after this date.'
+}
+onMounted(wizardLayout.load)
+// Label / Read Only from the layout go onto each frm's own field definitions,
+// whenever a frm is booted (items come and go) or the layout arrives.
+watch(
+  () => [
+    wizardLayout.state.sections,
+    orderFrm.value,
+    quotationHeaderFrm.value,
+    ...items.value.map((item) => item.frm)
+  ],
+  () => {
+    wizardLayout.applyTo(quotationHeaderFrm.value, HEADER_DOCTYPE)
+    for (const item of items.value) wizardLayout.applyTo(item.frm, DOCTYPE)
+  }
+)
 const activeItemKey = ref(null)
 const activeItem = computed(() => items.value.find((i) => i.key === activeItemKey.value) ?? null)
 const activeItemStep = computed(() => (activeItem.value ? ITEM_STEPS[activeItem.value.activeStepIndex] : null))
@@ -173,10 +213,25 @@ const visibleAddressFields = computed(() => ADDRESS_FIELDS)
 // for) are off this step on request (client, 2026-10-12): a missing quarterly
 // rate is fixed in Exchange Rates, not typed into the quote — the warning
 // block under the freight table says so.
+// Country of Origin / Destination, Port of Loading and the two Pre-Carriage
+// fields are off the step too (client, 2026-10-13): nothing prices or prints
+// them -- they're shipping-document fields, still on the desk Quotation form.
+// Port of Discharge stays: it picks between a customer's per-port freight rates.
+// Destination Inland Cost is off as well (client, 2026-10-13): the freight
+// master's DAP Add-on already prices the port-to-door leg, so a manual entry
+// here only double-counts it. An old quote's value still shows as its own row
+// in the freight table.
 const EXIM_STEP_EXCLUDED_FIELDS = new Set([
+  'hitech_destination_inland_cost',
+  'hitech_destination_inland_applied',
   'hitech_region',
   'named_place',
   'hitech_mode_of_transport',
+  'hitech_country_of_origin',
+  'hitech_country_of_destination',
+  'hitech_port_of_loading',
+  'hitech_pre_carriage_by',
+  'hitech_place_of_pre_carrier',
   'hitech_cif_exchange_rate_override',
   'hitech_dap_exchange_rate_override',
   'hitech_exchange_rate_override_currency'
@@ -451,7 +506,12 @@ const termsReviewRows = computed(() => {
   // step itself uses instead. `list` (not `value`) signals the template to
   // branch into that layout.
   if (selectedTexts.length) rows.push({ label: 'Selected terms', list: selectedTexts })
-  return rows.concat(sectionRows(quotationHeaderFrm.value, TERMS_FIELDS))
+  return rows.concat(
+    sectionRows(quotationHeaderFrm.value, [
+      ...layoutFields('terms_notes', TERMS_FIELDS),
+      ...layoutFields('terms_template', TC_FIELDS).filter((f) => f !== 'terms')
+    ])
+  )
 })
 
 const reviewSections = computed(() => [
@@ -464,12 +524,11 @@ const reviewSections = computed(() => [
     // ...) like the rest of this section — added manually instead.
     rows: [
       { label: 'Type', value: quotationHeaderFrm.value?.doc?.custom_type },
-      ...sectionRows(orderFrm.value, SHARED_STEP.fields),
-      ...sectionRows(quotationHeaderFrm.value, EXIM_DATE_FIELDS),
-      ...sectionRows(quotationHeaderFrm.value, VALIDITY_FIELDS)
+      ...sectionRows(orderFrm.value, layoutFields('customer', SHARED_STEP.fields)),
+      ...sectionRows(quotationHeaderFrm.value, orderDateFields.value)
     ]
   },
-  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, visibleAddressFields.value) },
+  { key: 'address', n: '02', title: 'Address & Delivery', rows: sectionRows(quotationHeaderFrm.value, layoutFields('address', visibleAddressFields.value)) },
   {
     key: 'exim',
     n: '03',
@@ -489,7 +548,7 @@ const reviewSections = computed(() => [
     // which quarter everything below it was priced in.
     rows: sectionRows(
       quotationHeaderFrm.value,
-      visibleEximFields.value.filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
+      layoutFields('exim', visibleEximFields.value).filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
     )
   },
   { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value },
@@ -672,6 +731,76 @@ const termsSelectedCount = computed(() => termChecklist.value.filter((t) => t.ro
  *    Review creates it; its header stays in the local draft until then.
  * Nothing to save once the Quotation is submitted (`activeItemLocked`).
  */
+/** The header fields that go onto the Quotation — the backend's
+ *  `QUOTATION_HEADER_FIELDS` allow-list filters this again server-side. */
+function quotationHeaderPayload() {
+  if (!quotationHeaderFrm.value) return {}
+  return pick(quotationHeaderFrm.value.doc, [
+    ...TYPE_FIELDS,
+    ...TAX_FIELDS,
+    TAX_TABLE_FIELD,
+    ...ADDRESS_FIELDS,
+    ...CURRENCY_FIELDS,
+    ...VALIDITY_FIELDS,
+    ...EXIM_FIELDS,
+    ...TERMS_FIELDS,
+    ...TC_FIELDS,
+    TERMS_TABLE_FIELD,
+    ...PAYMENT_FIELDS,
+    PAYMENT_TABLE_FIELD,
+    // Fields added to a step in the backend wizard layout; the backend
+    // accepts the same list (hitech_costing `configured_header_fields`).
+    ...wizardLayout.editableFields(HEADER_DOCTYPE)
+  ])
+}
+
+/** True while this session's Quotation is a draft that still has items to
+ *  map — created by Save (header still edited on the local header frm), or
+ *  reopened before Submit. Its header goes through `saveDraftQuotation` and
+ *  its lines through `syncDraftQuotationItems`, not the header frm's own
+ *  save. Save writes the lines too, so "has items" no longer means "mapped":
+ *  an item whose worksheet has no `quotation` yet is what's still pending. */
+function draftQuotationPending() {
+  const header = quotationHeaderFrm.value
+  if (!quotationName.value || !header || singleItemMode.value || quotationDocstatus.value === 1) return false
+  if (header.is_new?.()) return true
+  if (!(Array.isArray(header.doc?.items) && header.doc.items.length)) return true
+  return items.value.some((item) => !item.frm.doc?.quotation)
+}
+
+/** Creates (first time) or updates the draft Quotation from the header frm —
+ *  see `save_draft_quotation` in the backend's `quotation.py`. */
+async function saveDraftQuotation() {
+  const order = orderFrm.value?.doc ?? {}
+  const name = await call('hitech_costing.quotation.save_draft_quotation', {
+    customer: order.customer,
+    company: order.company || items.value[0]?.frm.doc?.company || undefined,
+    header: JSON.stringify(quotationHeaderPayload()),
+    ...(quotationName.value ? { name: quotationName.value } : {})
+  })
+  if (name) quotationName.value = name
+  return name
+}
+
+/** Puts every saved, not-yet-mapped worksheet on the draft Quotation as a
+ *  line at its current rate / qty / description, so the draft shows its
+ *  items before Submit — see `sync_draft_quotation_items` in the backend's
+ *  `quotation.py`. Submit then finalises those same rows. */
+async function syncDraftQuotationItems() {
+  if (!quotationName.value) return
+  const lines = items.value
+    .filter((item) => !item.frm.is_new?.() && item.frm.doc?.name && !item.frm.doc.quotation)
+    .map((item) => ({
+      costing_worksheet: item.frm.doc.name,
+      quantity: normalizedQuantity(item),
+      description: item.description || undefined
+    }))
+  await call('hitech_costing.quotation.sync_draft_quotation_items', {
+    name: quotationName.value,
+    lines: JSON.stringify(lines)
+  })
+}
+
 const stepSaving = ref(false)
 const stepSaveError = ref('')
 const stepSaveMessage = ref('')
@@ -682,16 +811,29 @@ async function saveProgress() {
   stepSaveError.value = ''
   stepSaveMessage.value = ''
   try {
+    // A new quotation becomes a draft Quotation on its first Save (once a
+    // customer is picked), so it has its real ID from then on.
+    const headerIsLocal = Boolean(quotationHeaderFrm.value?.is_new?.())
+    const firstSave = headerIsLocal && !quotationName.value && !singleItemMode.value
+    if ((firstSave && orderFrm.value?.doc?.customer) || draftQuotationPending()) await saveDraftQuotation()
+    const linkItems = draftQuotationPending()
     for (const item of items.value) {
       if (item.frm.docstatus === 1) continue
-      if (!item.frm.is_new() && !item.frm.is_dirty?.()) continue
+      // Tie each not-yet-mapped worksheet to that draft, so reopening the
+      // Quotation brings its items back. Set on `doc` directly: after a
+      // worksheet's first save the SDK's `set_value` can't find it in
+      // `locals` (see `debounceLiveCalculate`).
+      const relink = linkItems && !item.frm.doc.quotation && item.frm.doc.draft_quotation !== quotationName.value
+      if (relink) item.frm.doc.draft_quotation = quotationName.value
+      if (!relink && !item.frm.is_new() && !item.frm.is_dirty?.()) continue
       await item.frm.save()
       markSaved(item.frm)
     }
-    if (quotationName.value && quotationHeaderFrm.value) await quotationHeaderFrm.value.save()
+    if (linkItems) await syncDraftQuotationItems()
+    if (quotationName.value && !headerIsLocal && !linkItems) await quotationHeaderFrm.value.save()
     stepSaveMessage.value = quotationName.value
       ? `Saved to ${quotationName.value}`
-      : 'Costing sheets saved — the Quotation itself is created when you Submit on Review'
+      : 'Costing sheets saved — pick a customer to create the Quotation'
     clearTimeout(stepSaveMessageTimer)
     stepSaveMessageTimer = setTimeout(() => (stepSaveMessage.value = ''), 4000)
   } catch (e) {
@@ -700,6 +842,35 @@ async function saveProgress() {
     stepSaving.value = false
   }
 }
+
+/** Picking a Terms and Conditions template fills Term Details with its text,
+ *  rendered against the quotation the way the desk's `tc_name` trigger does
+ *  (ERPNext's `get_terms_and_conditions`). Term Details stays editable after;
+ *  clearing the template leaves whatever text is there, as the desk does. */
+const tcError = ref('')
+async function applyTermsTemplate(template) {
+  const frm = quotationHeaderFrm.value
+  if (!frm || !template) return
+  tcError.value = ''
+  try {
+    const html = await call('erpnext.setup.doctype.terms_and_conditions.terms_and_conditions.get_terms_and_conditions', {
+      template_name: template,
+      doc: frm.doc
+    })
+    if (quotationHeaderFrm.value !== frm || frm.doc?.tc_name !== template) return
+    frm.set_value('terms', html ?? '')
+  } catch (e) {
+    tcError.value = e?.message ?? String(e)
+  }
+}
+watch(
+  () => quotationHeaderFrm.value?.doc?.tc_name,
+  (template, previous) => {
+    // First run on load: keep a saved quotation's own (possibly edited) text.
+    if (previous === undefined) return
+    applyTermsTemplate(template)
+  }
+)
 
 /* ── Payment Terms ─────────────────────────────────────────────────────── */
 /** Picking a Payment Terms Template fills the Payment Schedule with its rows,
@@ -1982,6 +2153,15 @@ watch(activeItemKey, () => {
   // immediately off whatever units_per_container/quantity it already has.
   syncContainersRequiredPreview()
 })
+// Saving a worksheet that isn't on a Quotation yet (a draft before Submit)
+// comes back with containers_required = 0: the backend reads the order qty
+// off the mapped Quotation Item, and there isn't one until Submit, which
+// recomputes it properly. Put the live count back whenever a save/reload
+// overwrites it, so the field doesn't read 0 next to "1 container" below.
+watch(
+  () => [activeItem.value?.frm?.doc?.containers_required, activeItem.value?.frm?.doc?.units_per_container],
+  () => syncContainersRequiredPreview()
+)
 // Reopening a saved quotation lands on Items & Pricing with the item's
 // container fields already filled, so none of the per-field watchers above
 // fire -- and the Load plan / Utilization rows, the per-container table (and
@@ -2156,6 +2336,7 @@ async function bootFrm(doctype, { name = null, initialDoc = null, scripts = [] }
   installDeskApis(result.frappe, router)
   await restoreOnloadCustomButtons(result.frm)
   installAmend(result.frm, router)
+  if (doctype === DOCTYPE) debounceLiveCalculate(result.frm)
   return coerceTableFields(result.frm)
 }
 
@@ -2332,6 +2513,7 @@ const DRAFT_HEADER_FIELDS = [
   ...VALIDITY_FIELDS,
   ...EXIM_FIELDS,
   ...TERMS_FIELDS,
+  ...TC_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
   ...PAYMENT_FIELDS,
@@ -2432,19 +2614,21 @@ function itemDraftFields(frm) {
 function buildDraftSnapshot() {
   return {
     savedAt: new Date().toISOString(),
+    // The draft Quotation the first Save created, if any.
+    quotationName: quotationName.value,
     order: orderFrm.value ? pick(orderFrm.value.doc, SHARED_FIELDNAMES) : null,
     header: quotationHeaderFrm.value ? pick(quotationHeaderFrm.value.doc, DRAFT_HEADER_FIELDS) : null,
-    // Only items never yet saved to the server -- once an item reaches its
-    // own Commercials "Save item", the real Costing Worksheet record is the
-    // source of truth for it, same as everywhere else in this file.
-    items: items.value
-      .filter((item) => item.frm.is_new())
-      .map((item) => ({
-        fields: itemDraftFields(item.frm),
-        quantity: item.quantity,
-        description: item.description,
-        activeStepIndex: item.activeStepIndex
-      }))
+    // Every item, in order. A saved one (Save pressed, so it's a real
+    // Costing Worksheet now) is kept by name and reloaded from the server on
+    // restore; it used to be dropped from the draft entirely, so restoring
+    // gave a blank "Item 1" while the saved worksheet sat orphaned.
+    items: items.value.map((item) => ({
+      savedName: item.frm.is_new() ? null : item.frm.doc.name,
+      fields: itemDraftFields(item.frm),
+      quantity: item.quantity,
+      description: item.description,
+      activeStepIndex: item.activeStepIndex
+    }))
   }
 }
 
@@ -2493,7 +2677,9 @@ let draftSaveTimer = null
  *  `clearDraft()` calls right after a real save (see `itemNext()`,
  *  `submitAll()`) keep it from going stale instead.*/
 function shouldPersistDraft() {
-  if (draftMode.value === 'new') return !quotationName.value
+  // A draft Quotation created by Save doesn't end 'new' mode -- items not
+  // yet mapped onto it still live only here until Submit.
+  if (draftMode.value === 'new') return submitPhase.value !== 'done' && (!quotationName.value || draftQuotationPending())
   return draftMode.value === 'resume'
 }
 /** Debounced so a fast typist doesn't hit `localStorage.setItem` on every
@@ -2520,6 +2706,10 @@ function flushDraftSave() {
  *  exists (this runs after `addItem(seed)`); any further draft items create
  *  their own tab first. */
 async function applyDraftToFrms(draft) {
+  if (draft.quotationName) {
+    const row = await db.get_value('Quotation', draft.quotationName, 'docstatus').catch(() => null)
+    if (row && Number(row.docstatus) === 0) quotationName.value = draft.quotationName
+  }
   for (const [fieldname, value] of Object.entries(draft.order ?? {})) {
     if (value === undefined) continue
     await orderFrm.value.set_value(fieldname, value)
@@ -2530,9 +2720,27 @@ async function applyDraftToFrms(draft) {
   }
   const draftItems = draft.items ?? []
   for (let i = 0; i < draftItems.length; i++) {
-    const target = i === 0 ? items.value[0] : await addItem()
+    const { savedName, fields = {}, quantity, description, activeStepIndex } = draftItems[i]
+    let target
+    if (savedName) {
+      let frm = null
+      try {
+        frm = await bootFrm(DOCTYPE, { name: savedName, scripts: itemScripts(DOCTYPE) })
+      } catch {
+        // Deleted since the draft was written -- skip rather than fail the restore.
+        continue
+      }
+      target = makeItem(frm, uid())
+      if (i === 0 && items.value[0]?.frm.is_new()) {
+        items.value = [target, ...items.value.slice(1)]
+        activeItemKey.value = target.key
+      } else {
+        items.value = [...items.value, target]
+      }
+    } else {
+      target = i === 0 ? items.value[0] : await addItem()
+    }
     if (!target) continue
-    const { fields = {}, quantity, description, activeStepIndex } = draftItems[i]
     for (const [fieldname, value] of Object.entries(fields)) {
       if (value === undefined) continue
       await target.frm.set_value(fieldname, value)
@@ -2605,11 +2813,20 @@ async function load() {
       quotationName.value = props.quotation
       quotationDocstatus.value = quotationHeaderFrm.value.doc.docstatus ?? 0
 
-      const linked = await db.get_list(DOCTYPE, {
+      const mapped = await db.get_list(DOCTYPE, {
         filters: { quotation: props.quotation },
         fields: ['name'],
         limit_page_length: 0
       })
+      // Saved under this draft by the wizard's Save but not mapped yet --
+      // Submit maps them onto it.
+      const pending = await db.get_list(DOCTYPE, {
+        filters: { draft_quotation: props.quotation, quotation: ['is', 'not set'] },
+        fields: ['name'],
+        order_by: 'creation asc',
+        limit_page_length: 0
+      })
+      const linked = [...mapped, ...pending.filter((row) => !mapped.some((m) => m.name === row.name))]
       // The header frm above already loaded the Quotation with its child
       // rows, so each worksheet's ordered quantity and line description are
       // in hand -- no extra round trip, and no reopening at quantity 1.
@@ -2722,6 +2939,7 @@ async function load() {
   } finally {
     loading.value = false
   }
+  if (props.duplicate && props.quotation && !error.value) await duplicateQuotation()
 }
 
 /** Customer & Order is filled once, but edited any time after items already
@@ -2969,23 +3187,18 @@ async function submitAll() {
   submitAllError.value = ''
   submitPhase.value = 'running'
 
-  const header = quotationHeaderFrm.value
-    ? pick(quotationHeaderFrm.value.doc, [
-        ...TYPE_FIELDS,
-        ...TAX_FIELDS,
-        TAX_TABLE_FIELD,
-        ...ADDRESS_FIELDS,
-        // `currency`/`conversion_rate`/`transaction_date` — accepted by the
-        // backend's `submit_and_map` header allowlist alongside the rest.
-        ...CURRENCY_FIELDS,
-        ...VALIDITY_FIELDS,
-        ...EXIM_FIELDS,
-        ...TERMS_FIELDS,
-        TERMS_TABLE_FIELD,
-        ...PAYMENT_FIELDS,
-        PAYMENT_TABLE_FIELD
-      ])
-    : {}
+  // A draft created by Save holds the header from that Save; bring it up to
+  // date before the items are mapped onto it.
+  if (draftQuotationPending()) {
+    try {
+      await saveDraftQuotation()
+    } catch (e) {
+      submitAllError.value = e?.message ?? String(e)
+      submitPhase.value = 'idle'
+      return
+    }
+  }
+  const header = quotationHeaderPayload()
 
   for (const item of items.value) {
     if (item.submitState === 'succeeded') continue
@@ -3101,6 +3314,7 @@ const DUPLICATE_DROPPED_FIELDS = new Set([
   'parenttype',
   'parentfield',
   'quotation',
+  'draft_quotation',
   'status'
 ])
 const duplicatedFrom = ref(null)
@@ -3305,21 +3519,22 @@ watch(() => props.quotation, load)
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">01</span>Customer & Order</h2>
             <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
-              <WizardStep :frm="orderFrm" :fields="SHARED_STEP.fields" read-only-filter="exclude" />
+              <WizardStep :frm="orderFrm" :fields="layoutFields('customer', SHARED_STEP.fields)" :keep-read-only="layoutReadOnly('customer')" read-only-filter="exclude" />
               <!-- Quotation Date (moved here from Exim / Incoterms, 2026-10-12):
                    it's the quote's own date and picks the quarter for the
                    freight rate and the exchange rates, so it's set up front
                    with the rest of the order. See `EXIM_DATE_FIELDS`. -->
               <div class="qw-order-dates">
-                <div class="qw-exim-date">
-                  <WizardStep :frm="quotationHeaderFrm" :fields="EXIM_DATE_FIELDS" read-only-filter="exclude" />
-                  <p class="qw-exim-date__note">
-                    Sets the quarter used for the freight rate and the exchange rates.
-                  </p>
-                </div>
-                <div class="qw-exim-date">
-                  <WizardStep :frm="quotationHeaderFrm" :fields="VALIDITY_FIELDS" read-only-filter="exclude" />
-                  <p class="qw-exim-date__note">The quotation expires after this date.</p>
+                <!-- One box per field of the layout's `customer_dates` section
+                     (Quotation fields), each with its own note where it has one. -->
+                <div v-for="fieldname in orderDateFields" :key="fieldname" class="qw-exim-date">
+                  <WizardStep
+                    :frm="quotationHeaderFrm"
+                    :fields="[fieldname]"
+                    :keep-read-only="layoutReadOnly('customer_dates')"
+                    read-only-filter="exclude"
+                  />
+                  <p v-if="ORDER_DATE_NOTES[fieldname]" class="qw-exim-date__note">{{ ORDER_DATE_NOTES[fieldname] }}</p>
                 </div>
               </div>
             </fieldset>
@@ -3414,7 +3629,12 @@ watch(() => props.quotation, load)
                         {{ step.title }}
                       </h2>
                       <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
-                        <WizardStep :frm="activeItem.frm" :fields="step.fields" read-only-filter="exclude" />
+                        <WizardStep
+                          :frm="activeItem.frm"
+                          :fields="layoutFields(`item_${step.key}`, step.fields)"
+                          :keep-read-only="layoutReadOnly(`item_${step.key}`)"
+                          read-only-filter="exclude"
+                        />
                         <div v-if="step.key === 'commercials'" class="qw-derived__rows" style="margin-top: 16px;">
                           <div
                             v-for="row in commercialsMarginRows"
@@ -3639,7 +3859,12 @@ watch(() => props.quotation, load)
               </div>
               <template v-if="activeItem">
                 <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
-                  <WizardStep :frm="activeItem.frm" :fields="CONTAINER_LOGISTICS_FIELDS" read-only-filter="exclude" />
+                  <WizardStep
+                    :frm="activeItem.frm"
+                    :fields="layoutFields('pricing_container', CONTAINER_LOGISTICS_FIELDS)"
+                    :keep-read-only="layoutReadOnly('pricing_container')"
+                    read-only-filter="exclude"
+                  />
                 </fieldset>
                 <div v-if="containerLogisticsRows.length" class="qw-derived__rows qw-derived__rows--inline" style="margin-top: 16px;">
                   <div
@@ -3807,7 +4032,12 @@ watch(() => props.quotation, load)
         <section v-else-if="activePageStep === 'address'">
           <div class="qw-step-card">
             <h2 class="qw-step-title"><span class="qw-step-title__n">04</span>Address & Delivery</h2>
-            <WizardStep :frm="quotationHeaderFrm" :fields="visibleAddressFields" read-only-filter="exclude" />
+            <WizardStep
+              :frm="quotationHeaderFrm"
+              :fields="layoutFields('address', visibleAddressFields)"
+              :keep-read-only="layoutReadOnly('address')"
+              read-only-filter="exclude"
+            />
             <!-- `address_display`/`shipping_address` are `read_only`, so the
                  "exclude" step above never renders them — same "only" split
                  the Complexity step's Calculated rail uses, just inline here
@@ -3815,7 +4045,7 @@ watch(() => props.quotation, load)
                  under each address picker, not a separate calculated panel. -->
             <WizardStep
               :frm="quotationHeaderFrm"
-              :fields="['address_display', 'shipping_address']"
+              :fields="layoutFields('address_display', ['address_display', 'shipping_address'])"
               read-only-filter="only"
               style="margin-top: 14px;"
             />
@@ -3864,10 +4094,15 @@ watch(() => props.quotation, load)
                  leg the engine had to cost at ₹0. -->
 
 
-            <WizardStep :frm="quotationHeaderFrm" :fields="visibleEximFields" read-only-filter="exclude" />
             <WizardStep
               :frm="quotationHeaderFrm"
-              :fields="eximRailFields"
+              :fields="layoutFields('exim', visibleEximFields)"
+              :keep-read-only="layoutReadOnly('exim')"
+              read-only-filter="exclude"
+            />
+            <WizardStep
+              :frm="quotationHeaderFrm"
+              :fields="layoutFields('exim_calculated', eximRailFields)"
               read-only-filter="only"
               style="margin-top: 14px;"
             />
@@ -4014,7 +4249,28 @@ watch(() => props.quotation, load)
             </div>
             <div class="qw-terms-notes">
               <h3 class="qw-terms-notes__title">Notes & exclusions</h3>
-              <WizardStep :frm="quotationHeaderFrm" :fields="TERMS_FIELDS" read-only-filter="exclude" />
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="layoutFields('terms_notes', TERMS_FIELDS)"
+                :keep-read-only="layoutReadOnly('terms_notes')"
+                read-only-filter="exclude"
+              />
+            </div>
+            <div class="qw-terms-notes">
+              <h3 class="qw-terms-notes__title">Terms and Conditions</h3>
+              <div v-if="tcError" class="qw-step-error">{{ tcError }}</div>
+              <WizardStep :frm="quotationHeaderFrm" :fields="tcLayoutFields.filter((f) => f !== 'terms')" :keep-read-only="layoutReadOnly('terms_template')" read-only-filter="exclude" />
+              <!-- Term Details gets its own rich-text box: the SDK shows an
+                   editable Text Editor field as raw HTML (see RichTextEditor.vue). -->
+              <div v-if="tcLayoutFields.includes('terms')" class="qw-tc-details">
+                <div class="qw-tc-details__label">{{ quotationHeaderFrm.fields_dict?.terms?.df?.label || 'Term Details' }}</div>
+                <RichTextEditor
+                  :model-value="quotationHeaderFrm.doc?.terms || ''"
+                  :disabled="quotationSubmitted() || layoutReadOnly('terms_template').includes('terms')"
+                  placeholder="Pick a Terms template above, or type the terms here."
+                  @update:model-value="(v) => quotationHeaderFrm.set_value('terms', v)"
+                />
+              </div>
             </div>
           </div>
           <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
@@ -4044,8 +4300,13 @@ watch(() => props.quotation, load)
               from the quotation's grand total when it is saved.
             </p>
             <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
-              <WizardStep :frm="quotationHeaderFrm" :fields="PAYMENT_FIELDS" read-only-filter="exclude" />
-              <WizardStep :frm="quotationHeaderFrm" :fields="[PAYMENT_TABLE_FIELD]" />
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="layoutFields('payment', PAYMENT_FIELDS)"
+                :keep-read-only="layoutReadOnly('payment')"
+                read-only-filter="exclude"
+              />
+              <WizardStep :frm="quotationHeaderFrm" :fields="layoutFields('payment_schedule', [PAYMENT_TABLE_FIELD])" />
             </fieldset>
             <div v-if="paymentTermsError" class="qw-step-error">{{ paymentTermsError }}</div>
           </div>
@@ -4832,6 +5093,15 @@ watch(() => props.quotation, load)
   border-top: 1px solid var(--qw-border);
 }
 
+.qw-tc-details {
+  margin-top: 14px;
+}
+.qw-tc-details__label {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qw-text);
+}
 .qw-terms-notes__title {
   margin: 0 0 12px;
   font: 700 15px/1.2 'Nunito', system-ui, sans-serif;

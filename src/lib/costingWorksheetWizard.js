@@ -507,6 +507,12 @@ export const EXIM_ITEM_DEAL_VALUE_FIELDS = ['hitech_item_deal_value_inr', 'hitec
  *  Supersedes the old single `tc_name` template picker for this flow;
  *  `tc_name` itself still exists on Quotation, just isn't part of the wizard. */
 export const TERMS_FIELDS = ['hitech_terms_notes']
+/** The Quotation's own standard "Terms and Conditions" section, shown on the
+ *  Terms step under the checklist to match the desk: a Terms and Conditions
+ *  template (`tc_name`) and the rich text it fills in (`terms`, editable
+ *  per quote). Picking a template fills `terms` — see
+ *  `applyTermsTemplate` in CostingWorksheetWizard.vue. */
+export const TC_FIELDS = ['tc_name', 'terms']
 /** The standard Quotation child table the Taxes step stages real tax rows
  *  onto (fetched from the chosen `taxes_and_charges` template) — see
  *  `computeTaxRow` below for the client-side preview math, and

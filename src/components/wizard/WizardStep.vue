@@ -21,7 +21,10 @@ import { isWide } from '@/lib/formSections'
 const props = defineProps({
   frm: { type: Object, required: true },
   fields: { type: Array, required: true },
-  readOnlyFilter: { type: String, default: 'all' } // 'all' | 'exclude' | 'only'
+  readOnlyFilter: { type: String, default: 'all' }, // 'all' | 'exclude' | 'only'
+  /** Fields made read-only by the backend wizard layout: still shown on an
+   *  "exclude" card, as read-only, rather than dropped like a calculated field. */
+  keepReadOnly: { type: Array, default: () => [] }
 })
 
 function fieldDf(fieldname) {
@@ -29,7 +32,7 @@ function fieldDf(fieldname) {
 }
 
 function matchesReadOnlyFilter(df) {
-  if (props.readOnlyFilter === 'exclude') return !df.read_only
+  if (props.readOnlyFilter === 'exclude') return !df.read_only || props.keepReadOnly.includes(df.fieldname)
   if (props.readOnlyFilter === 'only') return Boolean(df.read_only)
   return true
 }

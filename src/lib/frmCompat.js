@@ -151,6 +151,116 @@ export function coerceTableFields(frm) {
 }
 
 /**
+ * Live recalculation that can't clobber what's being typed.
+ *
+ * **The bug.** The SDK's number controls commit on every keystroke (`onInput`),
+ * and the worksheet's client script calls `frm.call('calculate')` on each one.
+ * `frm.call` then writes EVERY field of the server's reply back onto
+ * `frm.doc` — including the field being typed. Typing "1000" into Tank Weight
+ * fires four calls ("1", "10", "100", "1000"); the reply to "1" can land after
+ * the last keystroke and put Tank Weight back to 1, so the Calculated panel
+ * shows figures for stale inputs until a save reloads the document.
+ *
+ * **What this does.** For `calculate` only: waits for 400ms of quiet before
+ * calling, drops any reply a newer request has superseded, and from the reply
+ * that does land applies only the fields the user hasn't changed since the
+ * request went out. Every caller still gets a promise; a superseded one
+ * resolves with `null`.
+ */
+const CALC_DEBOUNCE_MS = 400
+export function debounceLiveCalculate(frm) {
+  if (!frm || frm.__calcDebounced) return frm
+  frm.__calcDebounced = true
+  const rawCall = frm.call.bind(frm)
+  let timer = null
+  let seq = 0
+  let waiting = []
+  // The SDK's own `frm.call` has the same stale-`docname` match (see below),
+  // so after a save it drops the parent doc of EVERY doc-method reply — e.g.
+  // `load_complexity_questions` ran fine but its rows never reached the grid.
+  // Apply that reply here, before the caller's callback / `.then` sees it.
+  const applyRenamedParent = (r) => {
+    const parentName = String(frm.doc?.name ?? '')
+    if (!parentName || parentName === String(frm.docname)) return
+    const fresh = (Array.isArray(r?.docs) ? r.docs : []).find(
+      (d) => d?.doctype === frm.doctype && String(d.name) === parentName
+    )
+    if (!fresh) return
+    for (const key of Object.keys(fresh)) {
+      if (JSON.stringify(frm.doc[key]) !== JSON.stringify(fresh[key])) frm.doc[key] = fresh[key]
+    }
+  }
+  frm.call = (method, args, callback) => {
+    if (method && typeof method === 'object') {
+      const opts = method
+      if (String(opts.method).includes('.')) return rawCall(opts)
+      return rawCall({
+        ...opts,
+        callback: (r) => {
+          applyRenamedParent(r)
+          return opts.callback?.(r)
+        }
+      })
+    }
+    if (method !== 'calculate') {
+      if (String(method).includes('.')) return rawCall(method, args, callback)
+      return rawCall(method, args, (r) => {
+        applyRenamedParent(r)
+        return callback?.(r)
+      })
+    }
+    clearTimeout(timer)
+    const promise = new Promise((resolve, reject) => waiting.push({ resolve, reject, callback }))
+    timer = setTimeout(() => run(args), CALC_DEBOUNCE_MS)
+    return promise
+  }
+  async function run(args) {
+    const mine = ++seq
+    const callers = waiting
+    waiting = []
+    const sent = JSON.parse(JSON.stringify(frm.doc))
+    try {
+      const r = await frm.frappe.call('run_doc_method', {
+        docs: JSON.stringify(sent),
+        method: 'calculate',
+        ...(args && Object.keys(args).length ? { args: JSON.stringify(args) } : {})
+      })
+      if (mine !== seq) {
+        callers.forEach((c) => c.resolve(null))
+        return
+      }
+      // Match the parent doc by the LIVE `frm.doc.name`, not `frm.docname`:
+      // the SDK's save renames a new worksheet (`New Costing Worksheet (uuid)`
+      // -> `CW-2026-000xx`) by writing the server reply onto `frm.doc`, but it
+      // never updates `frm.docname`. Matching on the stale `frm.docname` then
+      // finds nothing after the first save, so the Calculated panel freezes
+      // until the next full reload -- "live calc stops working after Save".
+      // Never rewrite `frm.docname` itself: the SDK's `frm.set_value` finds the
+      // doc in `locals` under `frm.docname`, and after a save the doc is still
+      // filed there under its OLD name. Pointing `docname` at the new name made
+      // every later edit miss that lookup and get silently dropped.
+      const parentName = String(frm.doc?.name ?? frm.docname)
+      const fresh = (Array.isArray(r?.docs) ? r.docs : []).find(
+        (d) => d?.doctype === frm.doctype && String(d.name) === parentName
+      )
+      if (fresh) {
+        for (const key of Object.keys(fresh)) {
+          const untouched = JSON.stringify(frm.doc[key]) === JSON.stringify(sent[key])
+          if (untouched && JSON.stringify(frm.doc[key]) !== JSON.stringify(fresh[key])) frm.doc[key] = fresh[key]
+        }
+      }
+      callers.forEach((c) => {
+        c.callback?.(r)
+        c.resolve(r)
+      })
+    } catch (e) {
+      callers.forEach((c) => c.reject(e))
+    }
+  }
+  return frm
+}
+
+/**
  * Lock a submitted document, the way Frappe's desk does.
  *
  * **Frappe's rule.** `docstatus` is 0 draft, 1 submitted, 2 cancelled. Once a
