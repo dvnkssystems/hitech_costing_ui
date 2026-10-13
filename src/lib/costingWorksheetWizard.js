@@ -510,6 +510,14 @@ export const TAX_TABLE_FIELD = 'taxes'
 /** The custom child table the Terms step's checklist selection is staged
  *  onto — one row per `Quotation Term` master record. */
 export const TERMS_TABLE_FIELD = 'hitech_quotation_terms'
+/** The Payment Terms step — the Quotation's own standard ERPNext fields (its
+ *  "Terms" tab): a Payment Terms Template and the Payment Schedule it
+ *  expands into. Picking a template fills the schedule (see
+ *  `applyPaymentTermsTemplate` in CostingWorksheetWizard.vue); ERPNext's own
+ *  `set_payment_schedule()` recomputes every row's amount from the final
+ *  grand total on save, so only the portions / due dates here matter. */
+export const PAYMENT_FIELDS = ['payment_terms_template']
+export const PAYMENT_TABLE_FIELD = 'payment_schedule'
 
 /** Only these ITEM_STEPS can ever have a mandatory field — see the file header. */
 export const GATED_STEP_INDEXES = new Set([0, 2, 5])

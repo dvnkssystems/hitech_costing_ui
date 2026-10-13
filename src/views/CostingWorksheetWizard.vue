@@ -55,6 +55,8 @@ EXIM_DATE_FIELDS,
   TERMS_FIELDS,
   TAX_TABLE_FIELD,
   TERMS_TABLE_FIELD,
+  PAYMENT_FIELDS,
+  PAYMENT_TABLE_FIELD,
   GATED_STEP_INDEXES,
   COMMERCIALS_STEP_INDEX,
   stepIsComplete,
@@ -96,6 +98,7 @@ const PAGE_STEPS = [
   { key: 'address', title: 'Address & Delivery' },
   { key: 'exim', title: 'Exim / Incoterms' },
   { key: 'terms', title: 'Terms & Conditions' },
+  { key: 'payment', title: 'Payment Terms' },
   { key: 'review', title: 'Review & Submit' }
 ]
 
@@ -328,11 +331,7 @@ const unlockedPageIndexes = computed(() => {
   if (orderFrm.value && stepIsComplete(orderFrm.value, SHARED_STEP, fieldState)) {
     idx.add(1)
     if (items.value.length > 0) {
-      idx.add(2)
-      idx.add(3)
-      idx.add(4)
-      idx.add(5)
-      idx.add(6)
+      for (let i = 2; i < PAGE_STEPS.length; i++) idx.add(i)
     }
   }
   return idx
@@ -491,7 +490,8 @@ const reviewSections = computed(() => [
       visibleEximFields.value.filter((fieldname) => !EXIM_HIDDEN_FIELDS.includes(fieldname))
     )
   },
-  { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value }
+  { key: 'terms', n: '04', title: 'Terms & Conditions', rows: termsReviewRows.value },
+  { key: 'payment', n: '05', title: 'Payment Terms', rows: paymentReviewRows.value }
 ])
 
 function itemLabel(item, i) {
@@ -698,6 +698,61 @@ async function saveProgress() {
     stepSaving.value = false
   }
 }
+
+/* ── Payment Terms ─────────────────────────────────────────────────────── */
+/** Picking a Payment Terms Template fills the Payment Schedule with its rows,
+ *  the same as the Quotation's own "Terms" tab does in the desk (ERPNext's
+ *  `get_payment_terms`). Amounts here are an estimate off the current total;
+ *  ERPNext recomputes every row from each row's Invoice Portion against the
+ *  real grand total on save. Clearing the template clears the schedule, and
+ *  ERPNext then puts in its default single 100% row. */
+const paymentTermsError = ref('')
+async function applyPaymentTermsTemplate(template) {
+  const frm = quotationHeaderFrm.value
+  if (!frm) return
+  paymentTermsError.value = ''
+  if (!template) {
+    frm.set_value(PAYMENT_TABLE_FIELD, [])
+    return
+  }
+  const inr = (Number(itemsSummary.value?.totalRaw) || 0) + (Number(frm.doc?.hitech_total_freight_cost) || 0)
+  const rate = Number(frm.doc?.conversion_rate) || 1
+  try {
+    const rows = await call('erpnext.controllers.accounts_controller.get_payment_terms', {
+      terms_template: template,
+      posting_date: headerTransactionDate(),
+      grand_total: inr / rate,
+      base_grand_total: inr
+    })
+    if (quotationHeaderFrm.value !== frm || frm.doc?.payment_terms_template !== template) return
+    frm.set_value(PAYMENT_TABLE_FIELD, [])
+    for (const row of rows ?? []) frm.add_child(PAYMENT_TABLE_FIELD, row)
+    frm.set_value(PAYMENT_TABLE_FIELD, frm.doc[PAYMENT_TABLE_FIELD])
+  } catch (e) {
+    paymentTermsError.value = e?.message ?? String(e)
+  }
+}
+watch(
+  () => quotationHeaderFrm.value?.doc?.payment_terms_template,
+  (template, previous) => {
+    // `previous === undefined` is the first run on load: keep a saved
+    // quotation's own schedule as it is.
+    if (previous === undefined) return
+    applyPaymentTermsTemplate(template)
+  }
+)
+const paymentReviewRows = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc
+  if (!doc) return []
+  const rows = [{ label: 'Payment Terms Template', value: doc.payment_terms_template || '—' }]
+  const schedule = (doc[PAYMENT_TABLE_FIELD] ?? []).map(
+    (r) =>
+      `${r.payment_term || r.description || 'Payment'} — ${Number(r.invoice_portion) || 0}%` +
+      (r.due_date ? ` · due ${formatDate(r.due_date)}` : '')
+  )
+  if (schedule.length) rows.push({ label: 'Payment Schedule', list: schedule })
+  return rows
+})
 
 /**
  * Live freight preview for the Exim / Incoterms step — `exim.preview_freight`
@@ -2266,7 +2321,9 @@ const DRAFT_HEADER_FIELDS = [
   ...EXIM_FIELDS,
   ...TERMS_FIELDS,
   TAX_TABLE_FIELD,
-  TERMS_TABLE_FIELD
+  TERMS_TABLE_FIELD,
+  ...PAYMENT_FIELDS,
+  PAYMENT_TABLE_FIELD
 ]
 // Table fields (`volumes`, `complexity_ratings`) are deliberately excluded --
 // restoring a Table field means rebuilding its rows one at a time via
@@ -2885,7 +2942,9 @@ async function submitAll() {
         ...CURRENCY_FIELDS,
         ...EXIM_FIELDS,
         ...TERMS_FIELDS,
-        TERMS_TABLE_FIELD
+        TERMS_TABLE_FIELD,
+        ...PAYMENT_FIELDS,
+        PAYMENT_TABLE_FIELD
       ])
     : {}
 
@@ -3931,7 +3990,39 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 07 · Review & submit -->
+        <!-- 07 · Payment terms (shared, once) -- the Quotation's own "Terms" tab -->
+        <section v-else-if="activePageStep === 'payment'">
+          <div class="qw-step-card">
+            <h2 class="qw-step-title"><span class="qw-step-title__n">07</span>Payment Terms</h2>
+            <p class="qw-step-lede">
+              Pick a Payment Terms Template to fill the schedule, or add the rows yourself. Amounts are recalculated
+              from the quotation's grand total when it is saved.
+            </p>
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+              <WizardStep :frm="quotationHeaderFrm" :fields="PAYMENT_FIELDS" read-only-filter="exclude" />
+              <WizardStep :frm="quotationHeaderFrm" :fields="[PAYMENT_TABLE_FIELD]" />
+            </fieldset>
+            <div v-if="paymentTermsError" class="qw-step-error">{{ paymentTermsError }}</div>
+          </div>
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
+          <div class="qw-footer">
+            <button type="button" class="qw-back-btn" @click="pageBack">← Back</button>
+            <div class="qw-footer__actions">
+                <button
+                  type="button"
+                  class="qw-back-btn"
+                  :disabled="stepSaving || activeItemLocked"
+                  @click="saveProgress"
+                >
+                  {{ stepSaving ? 'Saving…' : 'Save' }}
+                </button>
+              <button type="button" class="qw-next-btn" @click="pageNext">Next</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 08 · Review & submit -->
         <section v-else-if="activePageStep === 'review'">
           <ExchangeRateMissingBanner
             v-if="missingExchangeRates.length"
