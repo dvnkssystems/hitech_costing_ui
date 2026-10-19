@@ -163,7 +163,7 @@ const customerStepBlocks = computed(() => {
 })
 const ORDER_DATE_NOTES = {
   transaction_date: 'Sets the quarter used for the freight rate and the exchange rates.',
-  valid_till: 'The quotation expires after this date.'
+  valid_till: 'Required — the quotation expires after this date.'
 }
 onMounted(wizardLayout.load)
 // Label / Read Only from the layout go onto each frm's own field definitions,
@@ -178,8 +178,17 @@ watch(
   () => {
     wizardLayout.applyTo(quotationHeaderFrm.value, HEADER_DOCTYPE)
     for (const item of items.value) wizardLayout.applyTo(item.frm, DOCTYPE)
+    markValidTillRequired(quotationHeaderFrm.value)
   }
 )
+/** Valid Till is mandatory (client, 2026-10-19; the backend adds a Property
+ *  Setter making it reqd on Quotation too). Set on the frm's own field
+ *  definition so the SDK control carries the required marker and the
+ *  empty-and-required tint, like a DocType-level reqd would. */
+function markValidTillRequired(frm) {
+  const df = frm?.fields_dict?.valid_till?.df
+  if (df && !df.reqd) frm.set_df_property?.('valid_till', 'reqd', 1)
+}
 const activeItemKey = ref(null)
 const activeItem = computed(() => items.value.find((i) => i.key === activeItemKey.value) ?? null)
 const activeItemStep = computed(() => (activeItem.value ? ITEM_STEPS[activeItem.value.activeStepIndex] : null))
@@ -440,14 +449,32 @@ const customerStepMissing = computed(() => {
     })
     .map((df) => df.label || df.fieldname)
 })
+/** Valid Till (Quotation header, on Customer & Order) is mandatory — client,
+ *  2026-10-19. Blocks step 01's Next, every per-step Save and the final
+ *  Submit with the same message, so a cleared date is caught here rather
+ *  than by the server. Not in single-worksheet mode (no Quotation header is
+ *  written there) and not on a submitted quotation (nothing is written). */
+const VALID_TILL_MESSAGE = 'Please fill in Valid Till on Customer & Order — the quotation needs an expiry date.'
 const customerStepError = ref('')
 watch(customerStepMissing, (missing) => {
-  if (!missing.length) customerStepError.value = ''
+  if (!missing.length && customerStepError.value !== VALID_TILL_MESSAGE) customerStepError.value = ''
+})
+const validTillError = computed(() => {
+  const frm = quotationHeaderFrm.value
+  if (!frm || singleItemMode.value || (Boolean(quotationName.value) && quotationDocstatus.value === 1)) return ''
+  return frm.doc?.valid_till ? '' : VALID_TILL_MESSAGE
+})
+watch(validTillError, (message) => {
+  if (!message && customerStepError.value === VALID_TILL_MESSAGE) customerStepError.value = ''
 })
 function customerStepNext() {
   showRequired.value = true
   if (customerStepMissing.value.length) {
     customerStepError.value = `Please fill in: ${customerStepMissing.value.join(', ')}.`
+    return
+  }
+  if (validTillError.value) {
+    customerStepError.value = validTillError.value
     return
   }
   customerStepError.value = ''
@@ -934,6 +961,10 @@ let stepSaveMessageTimer = null
 async function saveProgress() {
   showRequired.value = true
   if (stepSaving.value || activeItemLocked.value) return
+  if (validTillError.value) {
+    stepSaveError.value = validTillError.value
+    return
+  }
   stepSaving.value = true
   stepSaveError.value = ''
   stepSaveMessage.value = ''
@@ -3434,6 +3465,11 @@ const canSubmit = computed(
  */
 async function submitAll() {
   if (!canSubmit.value) return
+  if (validTillError.value) {
+    showRequired.value = true
+    submitAllError.value = validTillError.value
+    return
+  }
   if (missingExchangeRates.value.length) {
     submitAllError.value = `Please set the exchange rate first: ${missingExchangeRates.value.join('; ')}.`
     return
@@ -4857,6 +4893,8 @@ watch(() => props.quotation, load)
             </label>
           </div>
 
+          <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
+          <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>
           <div v-if="submitAllError" class="qw-step-error">{{ submitAllError }}</div>
 
           <div class="qw-footer">

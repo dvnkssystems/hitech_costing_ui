@@ -618,6 +618,13 @@ export function volumesSplitError(frm) {
  *  other message passes through, minus a leading "Error:". */
 export function plainError(e) {
   const text = String(e?.message ?? e ?? '').replace(/^\s*(Error|ValidationError|MandatoryError):\s*/i, '').trim()
+  // Valid Till is reqd on Quotation server-side too (Property Setter, 2026-10-19).
+  // The wizard checks it before every Save / Submit, but should a blank one
+  // still reach the server -- "Value missing for Quotation: Valid Till", or
+  // Frappe's own "[Quotation, SAL-QTN-...]: valid_till" -- say where to fix it.
+  if (/valid[_ ]?till/i.test(text) && /missing|mandatory|required|\]:\s*valid_till/i.test(text)) {
+    return 'Please fill in Valid Till on Customer & Order — the quotation needs an expiry date.'
+  }
   const missing = text.match(/^Value missing for [^:]+:\s*(.+)$/i)
   if (missing) return `Please fill in: ${missing[1]}.`
   const mandatory = text.match(/^\[?[^\]]*\]?\s*Missing Fields?\s*:?\s*(.+)$/i)
