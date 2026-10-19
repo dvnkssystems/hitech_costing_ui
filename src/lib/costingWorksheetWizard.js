@@ -533,13 +533,21 @@ export const TAX_TABLE_FIELD = 'taxes'
 /** The custom child table the Terms step's checklist selection is staged
  *  onto — one row per `Quotation Term` master record. */
 export const TERMS_TABLE_FIELD = 'hitech_quotation_terms'
-/** The Payment Terms step — the Quotation's own standard ERPNext fields (its
- *  "Terms" tab): a Payment Terms Template and the Payment Schedule it
- *  expands into. Picking a template fills the schedule (see
+/** The Delivery & Payment Terms step. `hitech_delivery_terms` (Data,
+ *  "Delivery Terms", e.g. "10-12 weeks from drawing approval") is this app's
+ *  own Quotation custom field, added 2026-10-19 at the client's request and
+ *  carried in the draft Save header and the `submit_and_map` header like
+ *  `hitech_terms_notes`. The rest is the Quotation's own standard ERPNext
+ *  "Terms" tab: a Payment Terms Template and the Payment Schedule it expands
+ *  into. Picking a template fills the schedule (see
  *  `applyPaymentTermsTemplate` in CostingWorksheetWizard.vue); ERPNext's own
  *  `set_payment_schedule()` recomputes every row's amount from the final
- *  grand total on save, so only the portions / due dates here matter. */
-export const PAYMENT_FIELDS = ['payment_terms_template']
+ *  grand total on save, so only the portions / due dates here matter.
+ *
+ *  A site without the custom field yet simply doesn't render it: WizardStep
+ *  and `sectionRows` skip a fieldname the frm has no definition for, and
+ *  `pick()` sends `undefined`, which JSON drops. */
+export const PAYMENT_FIELDS = ['hitech_delivery_terms', 'payment_terms_template']
 export const PAYMENT_TABLE_FIELD = 'payment_schedule'
 
 /** Only these ITEM_STEPS can ever have a mandatory field — see the file header. */

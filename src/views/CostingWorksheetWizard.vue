@@ -118,7 +118,7 @@ const PAGE_STEPS = [
   { key: 'address', title: 'Address & Delivery' },
   { key: 'exim', title: 'Exim / Incoterms' },
   { key: 'terms', title: 'Terms & Conditions' },
-  { key: 'payment', title: 'Payment Terms' },
+  { key: 'payment', title: 'Delivery & Payment Terms' },
   { key: 'review', title: 'Review & Submit' }
 ]
 
@@ -647,7 +647,7 @@ const reviewSections = computed(() => [
     )
   },
   { key: 'terms', n: stepNumber('terms'), title: 'Terms & Conditions', rows: termsReviewRows.value },
-  { key: 'payment', n: stepNumber('payment'), title: 'Payment Terms', rows: paymentReviewRows.value }
+  { key: 'payment', n: stepNumber('payment'), title: 'Delivery & Payment Terms', rows: paymentReviewRows.value }
 ])
 
 function itemLabel(item, i) {
@@ -1079,7 +1079,11 @@ watch(
 const paymentReviewRows = computed(() => {
   const doc = quotationHeaderFrm.value?.doc
   if (!doc) return []
-  const rows = [{ label: 'Payment Terms Template', value: doc.payment_terms_template || '—' }]
+  // Delivery Terms first, as on the step; only once the site has the custom
+  // field (see `PAYMENT_FIELDS`), so an older backend shows no empty row.
+  const deliveryDf = quotationHeaderFrm.value?.fields_dict?.hitech_delivery_terms?.df
+  const rows = deliveryDf ? [{ label: deliveryDf.label || 'Delivery Terms', value: doc.hitech_delivery_terms || '—' }] : []
+  rows.push({ label: 'Payment Terms Template', value: doc.payment_terms_template || '—' })
   const schedule = (doc[PAYMENT_TABLE_FIELD] ?? []).map(
     (r) =>
       `${r.payment_term || r.description || 'Payment'} — ${Number(r.invoice_portion) || 0}%` +
@@ -3794,7 +3798,7 @@ const submitWarnings = computed(() => {
     out.push({ step: 'address', text: 'No customer address is selected (Address & Delivery).' })
   }
   if (!doc.payment_terms_template && !(doc[PAYMENT_TABLE_FIELD] ?? []).length) {
-    out.push({ step: 'payment', text: 'No payment terms are set (Payment Terms).' })
+    out.push({ step: 'payment', text: 'No payment terms are set (Delivery & Payment Terms).' })
   }
   termConflicts.value.forEach((text, i) => out.push({ step: 'terms', key: `terms-${i}`, text }))
   return out
@@ -4747,13 +4751,15 @@ watch(() => props.quotation, load)
           </div>
         </section>
 
-        <!-- 07 · Payment terms (shared, once) -- the Quotation's own "Terms" tab -->
+        <!-- 07 · Delivery & Payment terms (shared, once) -- this app's Delivery
+             Terms field, then the Quotation's own "Terms" tab -->
         <section v-else-if="activePageStep === 'payment'">
           <div class="qw-step-card">
-            <h2 class="qw-step-title"><span class="qw-step-title__n">07</span>Payment Terms</h2>
+            <h2 class="qw-step-title"><span class="qw-step-title__n">07</span>Delivery & Payment Terms</h2>
             <p class="qw-step-lede">
-              Pick a Payment Terms Template to fill the schedule, or add the rows yourself. Amounts are recalculated
-              from the quotation's grand total when it is saved.
+              State the delivery terms (e.g. "10-12 weeks from drawing approval"), then pick a Payment Terms Template
+              to fill the schedule, or add the rows yourself. Amounts are recalculated from the quotation's grand
+              total when it is saved.
             </p>
             <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
               <WizardStep
