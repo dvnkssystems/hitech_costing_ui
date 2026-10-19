@@ -493,10 +493,17 @@ export const VALIDITY_FIELDS = ['valid_till']
  * looked simply absent. With the Exim currency block gone (see above) this is
  * no longer a second control but the only one.
  */
-// `hitech_item_exchange_rate_override` (labelled "Exchange Rate") sits beside
-// it: a manual rate for the quote's currency that overrides the quarter's
-// Item rate when set. Shown only for a non-INR currency (its own depends_on).
-export const ITEMS_CURRENCY_FIELDS = ['currency', 'hitech_item_exchange_rate_override']
+// History: removed on 2026-10-12 (the currency was set silently from the
+// customer's default / the freight rate's currency / INR), and back on
+// 2026-10-19 at the client's request so the estimator chooses at prep time.
+// The control is NOT the generic Link control any more: it offers exactly
+// three choices (company currency INR, USD, the customer's own default
+// currency) — see `currencyChoices` / `pickCurrency` in
+// CostingWorksheetWizard.vue, which render a plain select for this one
+// field. `hitech_item_exchange_rate_override` ("Exchange Rate") used to sit
+// beside it; that manual-rate input stayed removed (a missing quarterly rate
+// is fixed in Exchange Rates, not typed into the quote).
+export const ITEMS_CURRENCY_FIELDS = ['currency']
 /** The one `EXIM_FIELDS` entry that is NOT rendered as a Calculated-rail
  *  row — see the Exim step's own warning block in CostingWorksheetWizard.vue. */
 export const EXIM_FLAGS_FIELD = 'hitech_exchange_rate_flags'

@@ -376,8 +376,8 @@ const anyItemSaved = computed(() => items.value.some((item) => !item.frm.is_new(
 const itemDealValueLabels = computed(() =>
   EXIM_ITEM_DEAL_VALUE_FIELDS.map((fieldname) => quotationHeaderFrm.value?.fields_dict?.[fieldname]?.df?.label || fieldname)
 )
-/** The quote's own currency (`currency` on the Quotation header) — INR unless
- *  the estimator picks otherwise at the top of the Exim step. */
+/** The quote's own currency (`currency` on the Quotation header) — the
+ *  automatic default, or whatever the estimator picked on Items & Pricing. */
 const quoteCurrency = computed(() => String(quotationHeaderFrm.value?.doc?.currency || 'INR').toUpperCase())
 const quoteIsForeignCurrency = computed(() => quoteCurrency.value !== 'INR')
 /** The Item leg of `exchangeRateChips` -- the rate the Item Deal Value below
@@ -1296,17 +1296,39 @@ watch(
 )
 
 /**
- * The quote's currency, set automatically now that Items & Pricing has no
- * Currency picker (client, 2026-10-12): the customer's own Default Currency
- * when it has one, else the currency the matched freight rate is quoted in,
- * else INR. Re-runs when either input changes on a new quote; a saved one
- * keeps its currency unless the customer is changed, and a submitted one is
- * never touched. The `currency` watcher further up then looks up the rate.
+ * The quote's currency: an automatic DEFAULT (the customer's own Default
+ * Currency when it has one, else the currency the matched freight rate is
+ * quoted in, else INR), which the estimator can override with the Currency
+ * picker on Items & Pricing (client, 2026-10-19 — the picker had been
+ * removed on 2026-10-12 and the value set silently).
+ *
+ * Rules: the default is re-applied when either input changes on a new
+ * quote, but never over a value the estimator picked (`currencyPick`) —
+ * until the CUSTOMER changes, which resets the pick. A saved quotation keeps
+ * its currency unless the customer is changed, and a submitted one is never
+ * touched. The `currency` watcher further up then looks up the rate.
  */
 const customerCurrencyCache = new Map()
+/** The current customer's own Default Currency ('' without one) — the third
+ *  of the picker's choices, kept here so the choice list is reactive. */
+const customerDefaultCurrency = ref('')
+async function lookupCustomerCurrency(customer) {
+  if (!customer) return ''
+  if (!customerCurrencyCache.has(customer)) {
+    const row = await db.get_value('Customer', customer, 'default_currency').catch(() => null)
+    customerCurrencyCache.set(customer, String(row?.default_currency || '').toUpperCase())
+  }
+  return customerCurrencyCache.get(customer)
+}
 /** Which customer a saved quotation was opened with. */
 const autoCurrencyBaseline = new WeakMap()
 let autoCurrencyToken = 0
+/** The estimator's own pick: which header frm it was made on and for which
+ *  customer, so the auto default stays off it until the customer changes.
+ *  Persisted in the New Quotation draft as `currencyPickedFor`. */
+const currencyPick = ref({ header: null, customer: '' })
+const currencyPickedByUser = (header, customer) =>
+  Boolean(header) && currencyPick.value.header === header && currencyPick.value.customer === (customer || '')
 // Same lock rule as `activeItemLocked`, which is declared further down and so
 // can't be read by this immediate watcher during setup.
 const quotationSubmitted = () => Boolean(quotationName.value) && quotationDocstatus.value === 1
@@ -1318,7 +1340,13 @@ watch(
   ],
   async ([header, customer, freightCurrency]) => {
     const token = ++autoCurrencyToken
-    if (!header || quotationSubmitted()) return
+    if (!header) return
+    // Looked up first (even on a saved or submitted quote): the picker's
+    // choice list needs it whether or not the default gets applied.
+    const customerCurrency = await lookupCustomerCurrency(customer)
+    if (token !== autoCurrencyToken || header !== quotationHeaderFrm.value) return
+    customerDefaultCurrency.value = customerCurrency
+    if (quotationSubmitted()) return
     // Opening a saved quotation is not a reason to change its currency — it
     // keeps what it was saved with until the CUSTOMER changes here. Only the
     // customer: the freight currency is refilled by the live freight preview
@@ -1331,20 +1359,33 @@ watch(
       if (!autoCurrencyBaseline.has(header)) autoCurrencyBaseline.set(header, customer)
       if (autoCurrencyBaseline.get(header) === customer) return
     }
-    let customerCurrency = ''
-    if (customer) {
-      if (!customerCurrencyCache.has(customer)) {
-        const row = await db.get_value('Customer', customer, 'default_currency').catch(() => null)
-        customerCurrencyCache.set(customer, row?.default_currency || '')
-      }
-      customerCurrency = customerCurrencyCache.get(customer)
-    }
-    if (token !== autoCurrencyToken || header !== quotationHeaderFrm.value || quotationSubmitted()) return
+    // A currency the estimator chose for this customer is theirs to keep.
+    if (currencyPickedByUser(header, customer)) return
     const target = customerCurrency || freightCurrency || 'INR'
     if (header.doc?.currency !== target) await header.set_value('currency', target)
   },
   { immediate: true }
 )
+
+/** The Currency picker's choices (Items & Pricing): the company currency
+ *  (INR), USD, and the customer's own Default Currency when it has one —
+ *  deduplicated, so a USD customer sees two. The quote's current value is
+ *  kept in the list when it is none of those (a saved quote whose default
+ *  came from the freight rate's currency, say), or the select would show
+ *  blank while the doc holds a real currency. */
+const COMPANY_CURRENCY = 'INR'
+const currencyChoices = computed(() =>
+  [...new Set([COMPANY_CURRENCY, 'USD', customerDefaultCurrency.value, quoteCurrency.value].filter(Boolean))]
+)
+/** The estimator chose a currency: record the pick (so the auto default
+ *  leaves it alone until the customer changes) and set it. The `currency`
+ *  watcher then looks up the quarter's rate as before. */
+function pickCurrency(currency) {
+  const header = quotationHeaderFrm.value
+  if (!header || activeItemLocked.value || !currency) return
+  currencyPick.value = { header, customer: orderFrm.value?.doc?.customer || '' }
+  if (header.doc?.currency !== currency) header.set_value('currency', currency)
+}
 
 /** Defaults the manual Exchange Rate's Currency to the currency the matched
  *  freight rate is quoted in (USD on most rows), so the estimator only has
@@ -2812,6 +2853,12 @@ function buildDraftSnapshot() {
     quotationName: quotationName.value,
     order: orderFrm.value ? pick(orderFrm.value.doc, SHARED_FIELDNAMES) : null,
     header: quotationHeaderFrm.value ? pick(quotationHeaderFrm.value.doc, DRAFT_HEADER_FIELDS) : null,
+    // The customer the estimator picked `header.currency` for, if they did:
+    // restoring the draft re-runs the auto-currency default, which must not
+    // undo that pick (see `currencyPick`).
+    currencyPickedFor: currencyPickedByUser(quotationHeaderFrm.value, orderFrm.value?.doc?.customer)
+      ? orderFrm.value?.doc?.customer || null
+      : null,
     // Every item, in order. A saved one (Save pressed, so it's a real
     // Costing Worksheet now) is kept by name and reloaded from the server on
     // restore; it used to be dropped from the draft entirely, so restoring
@@ -2903,6 +2950,11 @@ async function applyDraftToFrms(draft) {
   if (draft.quotationName) {
     const row = await db.get_value('Quotation', draft.quotationName, 'docstatus').catch(() => null)
     if (row && Number(row.docstatus) === 0) quotationName.value = draft.quotationName
+  }
+  // Before the customer goes on: the auto-currency watcher fires on it, and
+  // the pick guard must already be in place for the draft's currency to win.
+  if (draft.currencyPickedFor && draft.currencyPickedFor === draft.order?.customer && quotationHeaderFrm.value) {
+    currencyPick.value = { header: quotationHeaderFrm.value, customer: draft.currencyPickedFor }
   }
   for (const [fieldname, value] of Object.entries(draft.order ?? {})) {
     if (value === undefined) continue
@@ -4105,10 +4157,40 @@ watch(() => props.quotation, load)
               </button>
             </div>
 
-            <!-- No Currency / Exchange Rate controls here any more (client,
-                 2026-10-12): the quote's currency is set automatically (see
-                 the auto-currency watcher), and a missing rate is reported by
-                 the banner at the top of this step. -->
+            <!-- Currency for this quote (client, 2026-10-19; it had been set
+                 silently since 2026-10-12). A plain select with exactly the
+                 three choices in `currencyChoices`, not the generic Link
+                 control to Currency. The automatic default is pre-selected;
+                 a pick here sticks until the customer changes. No Exchange
+                 Rate input: a missing rate is reported by the banner at the
+                 top of this step and fixed in Exchange Rates. -->
+            <div class="qw-items-currency">
+              <label class="qw-items-currency__field">
+                <span class="qw-items-currency__label">Currency</span>
+                <select
+                  class="qw-inline-input qw-items-currency__select"
+                  :value="quoteCurrency"
+                  :disabled="activeItemLocked"
+                  @change="pickCurrency($event.target.value)"
+                >
+                  <option v-for="code in currencyChoices" :key="code" :value="code">{{ code }}</option>
+                </select>
+              </label>
+              <p v-if="!quoteIsForeignCurrency" class="qw-derived__hint qw-items-currency__note">
+                Priced in INR, so there is nothing to convert.
+              </p>
+              <p v-else-if="itemExchangeRateChip" class="qw-items-currency__note" :class="itemExchangeRateChip.missing ? 'qw-derived__warning' : 'qw-derived__hint'">
+                <template v-if="itemExchangeRateChip.missing">
+                  No exchange rate for <strong>{{ itemExchangeRateChip.when }}</strong> ({{ quoteCurrency }} → INR) — add one in Exchange Rates.
+                </template>
+                <template v-else>
+                  Converted at the <strong>{{ itemExchangeRateChip.value }}</strong> ₹ per {{ quoteCurrency }} Item rate · {{ itemExchangeRateChip.when }}.
+                </template>
+              </p>
+              <p v-else-if="exchangeRateChipsPending" class="qw-derived__hint qw-items-currency__note">
+                Looking up the {{ quoteCurrency }} Item rate…
+              </p>
+            </div>
 
             <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
             <WizardStep
@@ -5118,6 +5200,23 @@ watch(() => props.quotation, load)
   padding-top: 14px;
   border-top: 1px solid var(--qw-border);
   max-width: 560px;
+}
+
+.qw-items-currency__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 230px;
+}
+
+.qw-items-currency__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-label);
+}
+
+.qw-items-currency__select {
+  height: var(--app-input-h);
 }
 
 .qw-items-currency__note {
