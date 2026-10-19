@@ -104,7 +104,9 @@ async function load() {
         // `customer` isn't a real field on Quotation — the party is
         // `party_name` (a Dynamic Link); `customer_name` is what's fetched
         // from it and shown.
-        fields: ['name', 'customer_name', 'party_name', 'transaction_date', 'grand_total', 'docstatus', 'modified', 'owner'],
+        // `grand_total` is in the quote's own `currency` (USD on an export
+        // quote); the column is in INR, so it reads `base_grand_total`.
+        fields: ['name', 'customer_name', 'party_name', 'transaction_date', 'grand_total', 'base_grand_total', 'currency', 'docstatus', 'modified', 'owner'],
         order_by: 'modified desc',
         limit_page_length: 0
       }),
@@ -363,7 +365,7 @@ onMounted(load)
                 <td style="padding:14px 18px; color:#334155;">{{ r.customer_name || r.party_name || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.product || '—' }}</td>
                 <td style="padding:14px 18px; color:#334155;">{{ r.transaction_date ? formatDate(r.transaction_date) : '—' }}</td>
-                <td style="padding:14px 18px; text-align:right; color:#334155;">{{ moneyTotal(r.grand_total) }}</td>
+                <td style="padding:14px 18px; text-align:right; color:#334155;">{{ moneyTotal(r.base_grand_total ?? r.grand_total) }}</td>
                 <!-- While the Quotation is still Draft its own docstatus says nothing an
                      estimator needs (it would read "Draft" on every row), so the cell shows
                      the worksheet-derived pipeline status instead. Once it is submitted or

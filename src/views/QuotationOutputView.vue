@@ -115,6 +115,12 @@ const orderRows = computed(() => {
   ].filter(Boolean)
 })
 
+/** Item `rate` / `amount` and the header's `total` / `net_total` /
+ *  `grand_total` are in the QUOTE currency (ERPNext convention; the backend
+ *  converts the mapped rate when the currency isn't INR, 2026-10-19) — the
+ *  `base_*` twins are the INR figures. Formatted with the quote's own code,
+ *  never a bare ₹, and the INR grand total shown alongside on a foreign
+ *  quote. */
 const itemRows = computed(() => {
   const items = doc.value?.items ?? []
   return items.map((it) => ({
@@ -122,19 +128,21 @@ const itemRows = computed(() => {
     itemCode: it.item_code,
     description: it.description,
     qty: it.qty,
-    rate: money(it.rate),
-    amount: money(it.amount)
+    rate: money(it.rate, quoteCurrency.value),
+    amount: money(it.amount, quoteCurrency.value)
   }))
 })
 
 const totalsRows = computed(() => {
   if (!doc.value) return []
   const d = doc.value
+  const foreign = quoteCurrency.value !== 'INR'
   return [
-    row('Total', d.total !== undefined ? money(d.total) : null),
+    row('Total', d.total !== undefined ? money(d.total, quoteCurrency.value) : null),
     row('Discount', d.additional_discount_percentage ? percent(d.additional_discount_percentage) : null),
-    row('Net total', d.net_total !== undefined ? money(d.net_total) : null),
-    row('Grand total', d.grand_total !== undefined ? money(d.grand_total) : null)
+    row('Net total', d.net_total !== undefined ? money(d.net_total, quoteCurrency.value) : null),
+    row('Grand total', d.grand_total !== undefined ? money(d.grand_total, quoteCurrency.value) : null),
+    row('Grand total (INR)', foreign && d.base_grand_total !== undefined ? money(d.base_grand_total) : null)
   ].filter(Boolean)
 })
 
