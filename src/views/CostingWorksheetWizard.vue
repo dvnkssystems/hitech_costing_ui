@@ -817,8 +817,11 @@ async function loadTermOptions() {
   termsLoading.value = true
   termsError.value = ''
   try {
+    // Only enabled terms seed a new checklist: retired clauses stay in the
+    // master (disabled) because older quotations still link them.
     termOptions.value = await db.get_list('Quotation Term', {
       fields: ['name', 'term_text', 'sequence', 'default_selected'],
+      filters: { disabled: 0 },
       limit_page_length: 0,
       order_by: 'sequence asc'
     })
