@@ -3122,6 +3122,25 @@ async function load() {
         const line = orderedLines.find((entry) => entry?.costing_worksheet === row.name) ?? null
         items.value = [...items.value, makeItem(frm, uid(), line)]
       }
+      // A draft saved before any costing sheet could be (Save needs a Tank
+      // Type) has none to load, and the page renders nothing without
+      // `orderFrm` -- so start its first item here, from what the draft holds.
+      if (!items.value.length && quotationDocstatus.value === 0) {
+        const quote = quotationHeaderFrm.value.doc
+        orderFrm.value = await bootFrm(DOCTYPE, {
+          initialDoc: {
+            doctype: DOCTYPE,
+            name: `New Costing Worksheet (order-${uid()})`,
+            customer: quote.party_name,
+            company: quote.company,
+            region: quote.hitech_region
+          },
+          scripts: itemScripts(DOCTYPE)
+        })
+        await addItem()
+        activePageStep.value = 'customer'
+        return
+      }
       orderFrm.value = items.value[0]?.frm ?? null
       activeItemKey.value = items.value[0]?.key ?? null
       // Opened from the Quotation list — land on the summary, not back in
