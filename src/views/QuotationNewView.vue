@@ -139,6 +139,9 @@ const visibleTankTypes = computed(() =>
 )
 
 const inProgressDraft = ref(readInProgressDraft())
+/** A Save on any wizard step creates the draft Quotation, but the wizard keeps
+ *  this local copy until Submit -- so the banner must not call it unsaved. */
+const draftQuotationName = computed(() => inProgressDraft.value?.quotationName || null)
 const draftCustomerLabel = computed(() => inProgressDraft.value?.order?.customer || null)
 const draftSavedAgo = computed(() => (inProgressDraft.value ? timeAgo(inProgressDraft.value.savedAt) || 'a moment ago' : ''))
 
@@ -216,7 +219,11 @@ onMounted(() => {
         <div class="qw-draft-banner__title">
           You have an in-progress quotation from {{ draftSavedAgo }}<template v-if="draftCustomerLabel"> for {{ draftCustomerLabel }}</template>.
         </div>
-        <div class="qw-draft-banner__desc">
+        <div v-if="draftQuotationName" class="qw-draft-banner__desc">
+          Saved as {{ draftQuotationName }} — pick up where you left off, or start a fresh quote below (the saved draft
+          stays in Quotations either way).
+        </div>
+        <div v-else class="qw-draft-banner__desc">
           It was never saved — pick up where you left off, or discard it and start a fresh quote below.
         </div>
       </div>

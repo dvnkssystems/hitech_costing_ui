@@ -3279,6 +3279,10 @@ watch(
   scheduleDraftSave,
   { deep: true }
 )
+// The first Save's new Quotation ID changes no field above, so without this
+// the local copy kept `quotationName: null` until the next edit -- and the
+// New Quote page then called a saved quote "never saved".
+watch(quotationName, scheduleDraftSave)
 
 /**
  * This installed SDK build's `save()` writes the server's response fields
