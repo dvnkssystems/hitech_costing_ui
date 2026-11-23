@@ -20,7 +20,7 @@ import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { listRouteFor, formRouteFor } from '@/lib/frappeRouting'
 import { printRecord, downloadRecordPdf } from '@/lib/rowActions'
-import { STATUS_STAGES } from '@/lib/home'
+import { STATUS_STAGES, quotationStatus } from '@/lib/home'
 import { worksheetStatusStyle } from '@/utils/styles'
 import { money, decimal, float, percent, formatDate } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
@@ -45,17 +45,17 @@ const termOptions = ref([])
 
 const WORKSHEET_FIELDS = ['name', 'status', 'tank_type', 'total_deal_value']
 
-/** Earliest-pipeline-stage status across every linked worksheet — the
- *  "weakest link" stands in for a per-quotation status, since none exists. */
+/** Earliest-pipeline-stage status across every linked worksheet (the
+ *  "weakest link"), settled against the Quotation's own docstatus by
+ *  `quotationStatus` -- only a submitted Quotation reads as Quoted. */
 const aggregateStatus = computed(() => {
-  if (!worksheets.value.length) return null
   let best = null
   for (const w of worksheets.value) {
     const idx = STATUS_STAGES.findIndex((s) => s.key === w.status)
     if (idx === -1) continue
     if (best === null || idx < best) best = idx
   }
-  return best === null ? null : STATUS_STAGES[best].key
+  return doc.value ? quotationStatus(doc.value, best === null ? null : STATUS_STAGES[best].key) : null
 })
 
 function row(label, value) {

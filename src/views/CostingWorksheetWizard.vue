@@ -749,7 +749,11 @@ function inQuoteCurrency(amountInr) {
  *  "As applicable", and so does this. */
 const quoteTotals = computed(() => {
   const doc = quotationHeaderFrm.value?.doc ?? {}
-  const items = Number(itemsSummary.value?.totalRaw) || 0
+  // A submitted Quotation's totals are what was sent: show its saved items
+  // total (INR) rather than re-deriving it from the costing sheets, so the
+  // Review screen always agrees with the list and the PDF.
+  const submitted = Boolean(quotationName.value) && quotationDocstatus.value === 1 && doc.base_total != null
+  const items = submitted ? Number(doc.base_total) || 0 : Number(itemsSummary.value?.totalRaw) || 0
   const override = Number(doc.hitech_total_freight_cost_override) || 0
   const freight = override > 0 ? override : Number(doc.hitech_total_freight_cost) || 0
   // ERPNext takes the additional discount off the grand total (items +
@@ -769,7 +773,15 @@ const quoteTotals = computed(() => {
         label: override > 0 ? 'Freight & logistics (override)' : 'Freight & logistics',
         inr: moneyTotal(freight),
         fc: fc(freight),
-        hint: freight > 0 ? '' : doc.hitech_region === 'Export' ? 'No freight rate found for this customer and quarter' : ''
+        // Domestic too: the Domestic Freight Rate Master can be empty, and a
+        // silent ₹0 read as "free delivery" (QA, 2026-11-23).
+        hint: freight > 0
+          ? ''
+          : doc.hitech_region === 'Export'
+            ? 'No freight rate found for this customer and quarter'
+            : doc.hitech_region === 'Domestic'
+              ? 'No domestic freight rate found — add one in Domestic Freight Rates'
+              : ''
       },
       { label: 'Taxes / duties', inr: 'As applicable', fc: '' }
     ],
@@ -1219,6 +1231,11 @@ function buildFreightPreviewItems() {
 
 async function runFreightPreview() {
   if (!quotationHeaderFrm.value) return
+  // A submitted Quotation's freight is final: re-running the engine on open
+  // (today's quarter, today's rates) overwrote the saved figure on screen --
+  // SAL-QTN-2026-00004's Review showed ₹0 freight against ₹9,64,385.19
+  // saved and printed (QA, 2026-11-23).
+  if (quotationName.value && quotationDocstatus.value === 1) return
   const token = ++freightPreviewToken
   freightPreviewPending.value = true
   try {
@@ -2652,7 +2669,12 @@ function stepsUnlockedByData(frm) {
  * worked out for a single tank instead of what was actually ordered.
  */
 function makeItem(frm, key, line = null) {
-  const orderedQty = Number(line?.qty)
+  // Quotations made before per-unit pricing (SAL-QTN-2026-00001/00002) carry
+  // one line priced per kg: qty = the tank's weight in Kg, rate = ₹/kg. That
+  // line is ONE tank -- read as 9,350 units it multiplied the whole deal
+  // value by 9,350 on the Review screen (QA, 2026-11-23).
+  const perKgLine = /^kgs?$/i.test(String(line?.uom ?? '').trim())
+  const orderedQty = perKgLine ? 1 : Number(line?.qty)
   return shallowReactive({
     key,
     frm,
@@ -3922,6 +3944,11 @@ watch(() => props.quotation, load)
       </div>
 
       <div ref="wizardEl" class="frappe-form" :class="{ 'qw-quiet-required': !showRequired }">
+        <!-- Outside the step v-if chain below, so it can't break it. Customer
+             and Costing Sheet carry their own wording of this message. -->
+        <p v-if="activeItemLocked && !['customer', 'items'].includes(activePageStep)" class="qw-step-lede">
+          This Quotation (<strong>{{ quotationName }}</strong>) has been submitted and can no longer be edited.
+        </p>
         <!-- 01 · Customer & Order (shared, once) -->
         <section v-if="activePageStep === 'customer'">
           <p v-if="activeItemLocked" class="qw-step-lede">
@@ -4003,9 +4030,9 @@ watch(() => props.quotation, load)
                 {{ itemLabel(item, i) }}
                 <span v-if="item.submitState === 'succeeded'" class="qw-item-tab__badge">✓</span>
               </button>
-              <button type="button" class="qw-ghost-btn qw-ghost-btn--dashed" @click="addItem()">+ Add item</button>
+              <button v-if="!activeItemLocked" type="button" class="qw-ghost-btn qw-ghost-btn--dashed" @click="addItem()">+ Add item</button>
               <button
-                v-if="activeItem && activeItem.frm.docstatus !== 1"
+                v-if="!activeItemLocked && activeItem && activeItem.frm.docstatus !== 1"
                 type="button"
                 class="qw-ghost-btn"
                 @click="removeItem(activeItemKey)"
@@ -4177,7 +4204,7 @@ watch(() => props.quotation, load)
                         step="1"
                         class="qw-inline-input qw-inline-input--qty"
                         v-model.number="row.item.quantity"
-                        :disabled="row.item.frm.docstatus === 1"
+                        :disabled="activeItemLocked || row.item.frm.docstatus === 1"
                       />
                     </td>
                     <td class="qw-pricing-table__num">{{ row.weight }}</td>
@@ -4190,7 +4217,7 @@ watch(() => props.quotation, load)
                         type="text"
                         class="qw-inline-input"
                         v-model="row.item.description"
-                        :disabled="row.item.frm.docstatus === 1"
+                        :disabled="activeItemLocked || row.item.frm.docstatus === 1"
                         :placeholder="`${row.label} tank — as per Costing Worksheet`"
                       />
                     </td>
@@ -4205,7 +4232,7 @@ watch(() => props.quotation, load)
                     <td class="qw-pricing-table__actions">
                       <button type="button" class="qw-review-card__edit" @click="goToItem(row.key)">Costing →</button>
                       <button
-                        v-if="row.item.frm.docstatus !== 1"
+                        v-if="!activeItemLocked && row.item.frm.docstatus !== 1"
                         type="button"
                         class="qw-review-card__edit qw-review-card__edit--danger"
                         @click="removeItem(row.key)"
@@ -4217,7 +4244,7 @@ watch(() => props.quotation, load)
                 </tbody>
               </table>
             </div>
-            <div class="qw-step-actions">
+            <div v-if="!activeItemLocked" class="qw-step-actions">
               <button type="button" class="qw-ghost-btn qw-ghost-btn--dashed" @click="addItem()">
                 + Add item — opens a new costing sheet
               </button>
@@ -4259,13 +4286,15 @@ watch(() => props.quotation, load)
             </div>
 
             <h3 class="qw-terms-notes__title qw-items-totals-heading">Totals</h3>
-            <WizardStep
-              :frm="quotationHeaderFrm"
-              :fields="layoutFields('pricing_header', PRICING_HEADER_FIELDS)"
-              :keep-read-only="layoutReadOnly('pricing_header')"
-              read-only-filter="exclude"
-              style="margin-bottom: 12px;"
-            />
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="layoutFields('pricing_header', PRICING_HEADER_FIELDS)"
+                :keep-read-only="layoutReadOnly('pricing_header')"
+                read-only-filter="exclude"
+                style="margin-bottom: 12px;"
+              />
+            </fieldset>
             <div class="qw-totals-grid qw-items-totals-grid">
               <div class="qw-totals-box">
                 <span class="qw-totals-box__k">Total Quantity</span>
@@ -4512,12 +4541,14 @@ watch(() => props.quotation, load)
               <RouterLink :to="`/form/Customer/${encodeURIComponent(orderFrm?.doc?.customer || '')}`" target="_blank">Add an address to the customer</RouterLink>,
               then pick it here.
             </p>
-            <WizardStep
-              :frm="quotationHeaderFrm"
-              :fields="layoutFields('address', visibleAddressFields)"
-              :keep-read-only="layoutReadOnly('address')"
-              read-only-filter="exclude"
-            />
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="layoutFields('address', visibleAddressFields)"
+                :keep-read-only="layoutReadOnly('address')"
+                read-only-filter="exclude"
+              />
+            </fieldset>
             <!-- `address_display`/`shipping_address` are `read_only`, so the
                  "exclude" step above never renders them — same "only" split
                  the Complexity step's Calculated rail uses, just inline here
@@ -4574,12 +4605,14 @@ watch(() => props.quotation, load)
                  leg the engine had to cost at ₹0. -->
 
 
-            <WizardStep
-              :frm="quotationHeaderFrm"
-              :fields="layoutFields('exim', visibleEximFields)"
-              :keep-read-only="layoutReadOnly('exim')"
-              read-only-filter="exclude"
-            />
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
+              <WizardStep
+                :frm="quotationHeaderFrm"
+                :fields="layoutFields('exim', visibleEximFields)"
+                :keep-read-only="layoutReadOnly('exim')"
+                read-only-filter="exclude"
+              />
+            </fieldset>
             <WizardStep
               :frm="quotationHeaderFrm"
               :fields="layoutFields('exim_calculated', eximRailFields)"
@@ -4724,6 +4757,7 @@ watch(() => props.quotation, load)
                 <li v-for="c in termConflicts" :key="c">{{ c }}</li>
               </ul>
             </div>
+            <fieldset :disabled="activeItemLocked" style="border: none; padding: 0; margin: 0;">
             <div v-if="termsError" class="qw-step-error">{{ termsError }}</div>
             <p v-else-if="termsLoading" class="qw-step-lede">Loading terms…</p>
             <div v-else class="qw-terms-grid">
@@ -4758,6 +4792,7 @@ watch(() => props.quotation, load)
                 />
               </div>
             </div>
+            </fieldset>
           </div>
           <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
           <p v-else-if="stepSaveMessage" class="qw-derived__hint" style="text-align: right;">{{ stepSaveMessage }}</p>

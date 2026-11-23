@@ -118,12 +118,18 @@ const PRODUCT_TYPES = [
   },
   {
     key: 'Radiator',
-    desc: 'A radiator, costed the same way. Pick its tank type (e.g. "Radiator Line") on the next screen.',
-    enabled: true
+    // Off until radiator costing exists (QA, 2026-11-23): the costing sheet
+    // only prices tank lines -- Radiator Line has no material or consumable
+    // rates and is kept only to tag its departments out of tank labour -- so
+    // a Radiator quote could be started but never costed.
+    desc: 'Coming soon — radiator costing is not set up yet.',
+    enabled: false
   }
 ]
 
-const type = ref(readSavedType()) // null | 'Tank' | 'Radiator'
+// A saved pick of a type that has since been switched off is dropped.
+const savedType = readSavedType()
+const type = ref(PRODUCT_TYPES.some((t) => t.key === savedType && t.enabled) ? savedType : null) // null | 'Tank' | 'Radiator'
 const tankTypes = ref([])
 const loading = ref(false)
 const error = ref('')

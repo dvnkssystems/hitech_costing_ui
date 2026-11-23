@@ -17,10 +17,10 @@ export function monthBounds(offset = 0) {
 
 /**
  * `status` is a Select on `Costing Worksheet` with exactly these six states.
- * A Quotation carries no approval status of its own — every screen that
- * needs one (this dashboard, `QuotationListView.vue`, `QuotationOutputView.vue`)
- * derives it as the "weakest link" among the Quotation's linked Costing
- * Worksheets: whichever linked worksheet sits earliest in this list order.
+ * A Quotation carries no approval status of its own, so a draft Quotation's
+ * stage is the "weakest link" among its linked Costing Worksheets: whichever
+ * sits earliest in this list order. Whether it is Quoted comes from the
+ * Quotation itself -- see `quotationStatus`.
  */
 export const STATUS_STAGES = [
   { key: 'Draft', label: 'Draft', color: '#5E6B7A' },
@@ -48,8 +48,35 @@ export const QUOTATION_PIPELINE_STAGES = [
   { key: 'Lost', label: 'Lost', color: '#E63946', match: (s) => s === 'Lost' }
 ]
 
-/** Weakest-link worksheet status per Quotation `name`, for however many
- *  `names` are asked for. Shared by every stat below that needs one. */
+/**
+ * A Quotation's status as every screen shows it. The Quotation itself decides
+ * whether it has been quoted: only a submitted one (docstatus 1) is "Quoted"
+ * (or "Lost", once marked lost in ERPNext), and a cancelled one is
+ * "Cancelled". A draft Quotation shows its costing sheets' approval stage --
+ * but never "Quoted": a worksheet turns Quoted as soon as it is mapped onto
+ * the draft, long before the quote is submitted and sent (QA, 2026-11-23:
+ * draft quotes listed as Quoted while their PDF said DRAFT).
+ */
+export function quotationStatus(quotation, worksheetStatus) {
+  const docstatus = Number(quotation?.docstatus) || 0
+  if (docstatus === 2) return 'Cancelled'
+  if (docstatus === 1) return quotation?.status === 'Lost' || worksheetStatus === 'Lost' ? 'Lost' : 'Quoted'
+  return !worksheetStatus || worksheetStatus === 'Quoted' ? 'Draft' : worksheetStatus
+}
+
+/** Status per Quotation `name` (see `quotationStatus`) for the given
+ *  Quotation rows, which must carry `name`, `docstatus` and `status`.
+ *  Shared by every stat below that needs one. */
+async function statusByQuotation(quotations) {
+  const statusFor = new Map()
+  const names = (quotations ?? []).map((q) => q.name)
+  if (!names.length) return statusFor
+  const worksheetStatus = await worksheetStatusByQuotation(names)
+  for (const q of quotations) statusFor.set(q.name, { status: quotationStatus(q, worksheetStatus.get(q.name)?.status) })
+  return statusFor
+}
+
+/** Weakest-link worksheet status per Quotation `name`. */
 async function worksheetStatusByQuotation(names) {
   const statusFor = new Map()
   if (!names?.length) return statusFor
@@ -76,10 +103,9 @@ export async function quotationNamesInStage(stageKey) {
   const stage = QUOTATION_PIPELINE_STAGES.find((s) => s.key === stageKey)
   if (!stage) return []
 
-  const rows = await db.get_list(QUOTATION_DOCTYPE, { fields: ['name'], limit_page_length: 0 })
-  const names = (rows ?? []).map((r) => r.name)
-  const statusFor = await worksheetStatusByQuotation(names)
-  return names.filter((name) => stage.match(statusFor.get(name)?.status ?? null))
+  const rows = await db.get_list(QUOTATION_DOCTYPE, { fields: ['name', 'docstatus', 'status'], limit_page_length: 0 })
+  const statusFor = await statusByQuotation(rows)
+  return (rows ?? []).map((r) => r.name).filter((name) => stage.match(statusFor.get(name)?.status ?? null))
 }
 
 /** Month-over-month change in Quotations created, as a percentage. */
@@ -156,10 +182,10 @@ export function hasMissingExchangeRate(row) {
 
 async function quotationPipeline() {
   const rows = await db.get_list(QUOTATION_DOCTYPE, {
-    fields: ['name', 'grand_total', 'currency', 'conversion_rate', 'hitech_total_freight_cost', 'hitech_exchange_rate_flags'],
+    fields: ['name', 'docstatus', 'status', 'grand_total', 'currency', 'conversion_rate', 'hitech_total_freight_cost', 'hitech_exchange_rate_flags'],
     limit_page_length: 0
   })
-  const statusFor = await worksheetStatusByQuotation((rows ?? []).map((r) => r.name))
+  const statusFor = await statusByQuotation(rows)
 
   const stages = QUOTATION_PIPELINE_STAGES.map((stage) => ({ ...stage, count: 0 }))
   let pendingBuHead = 0
@@ -174,7 +200,7 @@ async function quotationPipeline() {
     if (stage) stage.count += 1
     if (status === 'Pending BU Head') pendingBuHead += 1
     if (status === 'Pending CFO') pendingCfo += 1
-    if (status !== 'Lost') {
+    if (status !== 'Lost' && status !== 'Cancelled') {
       openValue += grandTotalInr(r)
       openCount += 1
       if (hasMissingExchangeRate(r)) missingExchangeRates += 1
@@ -204,6 +230,8 @@ async function recentQuotations() {
     // (a Dynamic Link; `customer_name` is fetched from it and what's shown).
     fields: [
       'name',
+      'docstatus',
+      'status',
       'customer_name',
       'party_name',
       'modified',
@@ -217,7 +245,7 @@ async function recentQuotations() {
   })
   if (!rows?.length) return []
 
-  const statusFor = await worksheetStatusByQuotation(rows.map((r) => r.name))
+  const statusFor = await statusByQuotation(rows)
   return rows.map((r) => ({
     ...r,
     status: statusFor.get(r.name)?.status ?? null,

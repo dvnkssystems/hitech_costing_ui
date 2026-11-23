@@ -21,7 +21,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { db } from '@/lib/frappeDb'
 import { hasBackend } from '@/lib/frappe'
 import { formRouteFor, defaultListActionRouteFor } from '@/lib/frappeRouting'
-import { STATUS_STAGES, QUOTATION_PIPELINE_STAGES } from '@/lib/home'
+import { STATUS_STAGES, QUOTATION_PIPELINE_STAGES, quotationStatus } from '@/lib/home'
 import { worksheetStatusStyle, docstatusBadge } from '@/utils/styles'
 import { money, formatDate, moneyTotal } from '@/utils/format'
 import LucideIcon from '@/components/LucideIcon.vue'
@@ -106,7 +106,7 @@ async function load() {
         // from it and shown.
         // `grand_total` is in the quote's own `currency` (USD on an export
         // quote); the column is in INR, so it reads `base_grand_total`.
-        fields: ['name', 'customer_name', 'party_name', 'transaction_date', 'grand_total', 'base_grand_total', 'currency', 'docstatus', 'modified', 'owner'],
+        fields: ['name', 'customer_name', 'party_name', 'transaction_date', 'grand_total', 'base_grand_total', 'currency', 'docstatus', 'status', 'modified', 'owner'],
         order_by: 'modified desc',
         limit_page_length: 0
       }),
@@ -135,7 +135,7 @@ async function load() {
       const agg = byQuotation.get(q.name)
       return {
         ...q,
-        status: agg?.status ?? null,
+        status: quotationStatus(q, agg?.status),
         product: agg?.product ?? null,
         branch: agg?.branch ?? null
       }
@@ -377,11 +377,9 @@ onMounted(load)
                      the row says View rather than Open. -->
                 <td style="padding:14px 18px;">
                   <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <!-- One vocabulary with Home: the costing stage for every quote
-                         (a submitted quote's worksheets are Quoted), "Draft" for a
-                         quote with no worksheet yet, and the docstatus only for a
-                         cancelled one. It used to say "Submitted" here and "Quoted"
-                         on Home for the same quotation. -->
+                    <!-- One vocabulary with Home (`quotationStatus`): Quoted only once
+                         the Quotation is submitted, the costing stage while it is a
+                         draft, and the docstatus badge for a cancelled one. -->
                     <span v-if="r.docstatus === 2" :style="docstatusBadge(2).style">{{ docstatusBadge(2).label }}</span>
                     <span v-else :style="worksheetStatusStyle(r.status || 'Draft')">{{ r.status || 'Draft' }}</span>
                   </div>
