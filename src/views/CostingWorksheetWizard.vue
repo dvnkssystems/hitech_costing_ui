@@ -971,6 +971,13 @@ async function syncDraftQuotationItems() {
 
 const stepSaving = ref(false)
 const stepSaveError = ref('')
+// The inline error sits at the foot of the step -- on the long Review page,
+// well below the fold. A toast as well, so a failed Save is never missed
+// (QA, 2026-11-23).
+watch([stepSaveError, submitAllError], ([saveError, submitError], [prevSave, prevSubmit] = []) => {
+  const message = (saveError !== prevSave && saveError) || (submitError !== prevSubmit && submitError)
+  if (message) globalThis.frappe?.show_alert?.({ message, indicator: 'red' }, 8)
+})
 const stepSaveMessage = ref('')
 let stepSaveMessageTimer = null
 async function saveProgress() {
@@ -1056,6 +1063,21 @@ watch(
  *  ERPNext recomputes every row from each row's Invoice Portion against the
  *  real grand total on save. Clearing the template clears the schedule, and
  *  ERPNext then puts in its default single 100% row. */
+/** Delivery Terms is free text, printed as typed when it names an Incoterm
+ *  (quotation_print `delivery_terms_line`) -- so a typed one that differs
+ *  from the Exim step's Incoterm would put two different Incoterms in front
+ *  of the customer (QA, 2026-11-23). Same pattern as the backend's. */
+const INCOTERM_IN_TEXT = /\b(EXW|EX[- ]?WORKS|FCA|FAS|FOB|CFR|CNF|CIF|CPT|CIP|DAP|DPU|DAT|DDP)\b/i
+const deliveryIncotermConflict = computed(() => {
+  const doc = quotationHeaderFrm.value?.doc ?? {}
+  const match = String(doc.hitech_delivery_terms || '').match(INCOTERM_IN_TEXT)
+  if (!match || !doc.incoterm) return ''
+  const typed = match[1].toUpperCase().replace(/[- ]/g, '')
+  const code = typed === 'EXWORKS' ? 'EXW' : typed
+  return code === String(doc.incoterm).toUpperCase()
+    ? ''
+    : `Delivery Terms mentions ${match[1]}, but the Incoterm on Exim / Incoterms is ${doc.incoterm}. The PDF prints the Delivery Terms as typed — make them match.`
+})
 const paymentTermsError = ref('')
 async function applyPaymentTermsTemplate(template) {
   const frm = quotationHeaderFrm.value
@@ -4092,6 +4114,18 @@ watch(() => props.quotation, load)
                           :keep-read-only="layoutReadOnly(`item_${step.key}`)"
                           read-only-filter="exclude"
                         />
+                        <!-- The two weights are one split of Total Finished Weight:
+                             editing one recalculates the other as the remainder
+                             (`_balance_weight_split`). Unexplained, that read as the
+                             other field "jumping back" (QA, 2026-11-23). -->
+                        <p
+                          v-if="step.fields.includes('tank_weight_kg') && Number(activeItem.frm.doc.total_weight_kg)"
+                          class="qw-margin-hint"
+                        >
+                          Tank Weight + Accessory Weight always add up to the Total Finished Weight
+                          (<strong>{{ Number(activeItem.frm.doc.total_weight_kg).toLocaleString('en-IN') }} kg</strong>) —
+                          change one and the other is recalculated as the remainder.
+                        </p>
                         <p
                           v-if="step.key === 'commercials' && minDealPriceForMargin(activeItem.frm)"
                           class="qw-margin-hint"
@@ -4831,6 +4865,9 @@ watch(() => props.quotation, load)
               />
               <WizardStep :frm="quotationHeaderFrm" :fields="layoutFields('payment_schedule', [PAYMENT_TABLE_FIELD])" />
             </fieldset>
+            <div v-if="deliveryIncotermConflict" class="qw-submit-warnings" role="alert" style="margin-top: 12px;">
+              <div class="qw-submit-warnings__title">{{ deliveryIncotermConflict }}</div>
+            </div>
             <div v-if="paymentTermsError" class="qw-step-error">{{ paymentTermsError }}</div>
           </div>
           <div v-if="stepSaveError" class="qw-step-error">{{ stepSaveError }}</div>
