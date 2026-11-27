@@ -1013,9 +1013,11 @@ async function saveProgress() {
     if (quotationName.value && !headerIsLocal && !linkItems) await quotationHeaderFrm.value.save()
     stepSaveMessage.value = quotationName.value
       ? `Saved to ${quotationName.value}`
-      : 'Costing sheets saved — pick a customer to create the Quotation'
+      : "Costing sheets saved — the quotation isn't created until you pick a customer and Save"
     clearTimeout(stepSaveMessageTimer)
-    stepSaveMessageTimer = setTimeout(() => (stepSaveMessage.value = ''), 4000)
+    // A quotation that doesn't exist yet is exactly what was easy to miss, so
+    // that message stays until the next save replaces it.
+    if (quotationName.value) stepSaveMessageTimer = setTimeout(() => (stepSaveMessage.value = ''), 4000)
   } catch (e) {
     stepSaveError.value = plainError(e)
   } finally {
@@ -3490,6 +3492,18 @@ async function itemNext() {
       return
     }
     item.saving = false
+    // "Save item" saved only this worksheet: the screen moved on with a
+    // correct Grand Total while the quotation had no number for 15+ minutes
+    // (Simran, 24 Nov 2026). It now saves the quotation too, through the same
+    // path as the footer Save. A failure there is reported, not blocking --
+    // the costing sheet itself is already saved.
+    if (!singleItemMode.value) {
+      if (validTillError.value) {
+        stepSaveError.value = `Costing sheet saved, but the quotation isn't: ${validTillError.value}`
+      } else {
+        await saveProgress()
+      }
+    }
     pageNext() // last item step — saving it also advances off the Costing Sheet page
     return
   }
