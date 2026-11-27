@@ -3762,6 +3762,23 @@ async function duplicateQuotation() {
   }
 }
 
+/** The enabled Quotation Terms, or null when they could not be loaded. */
+async function enabledTermNames() {
+  await loadTermOptions()
+  return termOptions.value.length ? new Set(termOptions.value.map((opt) => opt.name)) : null
+}
+/** A copy of a quotation made before the client's T&C sheet (19 Oct 2026)
+ *  carried its retired terms across, and the checklist showed 0 of 17
+ *  (00005-1 / 00007-1 / 00008-1, 24 Nov 2026). Retired rows are dropped, and
+ *  a checklist left empty is seeded with today's defaults by the Terms
+ *  watcher. The backend's `quotation.drop_retired_terms` does the same on
+ *  insert, which also covers Amend; with no enabled list to check against,
+ *  the rows go through as they are and that hook catches them. */
+function withoutRetiredTerms(tables, enabled) {
+  if (!enabled || !tables?.[TERMS_TABLE_FIELD]) return tables
+  return { ...tables, [TERMS_TABLE_FIELD]: tables[TERMS_TABLE_FIELD].filter((row) => enabled.has(row.term)) }
+}
+
 /** `load()`'s counterpart for a parked duplicate — see `duplicateQuotation()`.
  *  Booted like a brand-new session (separate throwaway `orderFrm`, unique
  *  placeholder names) and autosaved as one, but every item arrives filled in,
@@ -3782,7 +3799,7 @@ async function loadDuplicate(dup) {
     },
     scripts: [addressQueryScript, portQueryScript]
   })
-  addDuplicatedRows(header, dup.header.tables)
+  addDuplicatedRows(header, withoutRetiredTerms(dup.header.tables, await enabledTermNames()))
   quotationHeaderFrm.value = header
 
   orderFrm.value = await bootFrm(DOCTYPE, {
